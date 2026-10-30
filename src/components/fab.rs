@@ -121,7 +121,7 @@ pub fn Fab() -> Element {
         // ------------------------------------------------------------
         if menu_open() {
             div {
-                class: "fixed inset-0 z-10",
+                class: "fixed inset-0 z-30 bg-background/20 backdrop-blur-[2px] transition-all",
                 onclick: move |_| menu_open.set(false),
             }
         }
@@ -131,18 +131,18 @@ pub fn Fab() -> Element {
         // ------------------------------------------------------------
         if menu_open() {
             div {
-                class: "fixed bottom-22 right-6 z-40 flex flex-col items-end gap-3",
+                class: "fixed bottom-22 right-6 z-40 flex flex-col items-end gap-3 animate-in fade-in slide-in-from-bottom-3 duration-200",
                 for (action_idx, kind_item) in ALL_KINDS.iter().enumerate() {
                     div {
                         key: "quick-action-{action_idx}",
-                        class: "flex items-center gap-2",
-                        span { class: "rounded-lg border border-border/60 bg-popover px-2.5 py-1 text-xs text-popover-foreground shadow-md",
+                        class: "flex items-center gap-2.5",
+                        span { class: "rounded-xl border border-border/80 bg-popover/95 px-3 py-1 text-xs font-semibold text-popover-foreground shadow-lg backdrop-blur-md",
                             "{kind_item.label()}"
                         }
                         button {
                             r#type: "button",
                             title: "New {kind_item.label()}",
-                            class: "flex size-10 items-center justify-center rounded-full border border-border/60 bg-popover text-foreground shadow-md transition-colors hover:bg-accent hover:text-accent-foreground cursor-pointer",
+                            class: "flex size-11 items-center justify-center rounded-full border border-border/70 bg-popover text-foreground shadow-lg transition-all duration-150 hover:scale-105 hover:border-primary/50 hover:bg-accent cursor-pointer",
                             onclick: move |_| open_kind(*kind_item),
                             {kind_item.icon()}
                         }
@@ -158,13 +158,13 @@ pub fn Fab() -> Element {
             r#type: "button",
             title: "Quick add",
             "aria-label": "Quick add",
-            class: "fixed bottom-6 right-6 z-40 flex size-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:bg-primary/90 active:scale-95 cursor-pointer",
+            class: "fixed bottom-6 right-6 z-40 flex size-13 items-center justify-center rounded-full bg-gradient-to-tr from-indigo-600 via-indigo-500 to-violet-500 text-white shadow-xl shadow-indigo-500/30 transition-all duration-300 hover:scale-105 hover:shadow-indigo-500/40 active:scale-95 cursor-pointer",
             onclick: move |_| {
                 let next = !*menu_open.read();
                 menu_open.set(next);
             },
             svg {
-                class: if menu_open() { "size-7 rotate-45 transition-transform duration-200" } else { "size-7 transition-transform duration-200" },
+                class: if menu_open() { "size-6 rotate-45 transition-transform duration-300" } else { "size-6 transition-transform duration-300" },
                 view_box: "0 0 24 24",
                 fill: "none",
                 stroke: "currentColor",

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use dioxus::prelude::*;
 
 // ============================================================
@@ -5,11 +7,13 @@ use dioxus::prelude::*;
 // ============================================================
 
 #[derive(Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 pub struct CollapsibleContext {
     pub open: Signal<bool>,
     pub disabled: Signal<bool>,
 }
 
+#[allow(dead_code)]
 impl CollapsibleContext {
     pub fn is_open(&self) -> bool {
         *self.open.read()

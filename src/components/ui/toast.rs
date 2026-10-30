@@ -1,6 +1,9 @@
+#![allow(dead_code)]
+
 use dioxus::prelude::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ToastVariant {
     Default,
     Success,
@@ -21,6 +24,7 @@ pub struct ToastState {
     toasts: Signal<Vec<ToastItem>>,
 }
 
+#[allow(dead_code)]
 impl ToastState {
     pub fn show(&self, title: impl Into<String>, description: impl Into<String>) {
         self.push(ToastVariant::Default, title.into(), Some(description.into()));

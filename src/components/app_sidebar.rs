@@ -10,6 +10,7 @@ use crate::components::ui::sidebar::{
     SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuBadge, SidebarMenuButton,
     SidebarMenuItem, SidebarRail,
 };
+use crate::components::ui::theme::ThemeSegmented;
 use crate::Route;
 
 // ============================================================
@@ -23,25 +24,32 @@ pub fn AppSidebar() -> Element {
             collapsible: SidebarCollapsible::Icon,
 
             SidebarHeader {
-                div { class: "flex min-w-0 items-center gap-2",
-                    div { class: "flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground",
-                        svg {
-                            class: "size-4",
-                            view_box: "0 0 24 24",
-                            fill: "none",
-                            stroke: "currentColor",
-                            stroke_width: "3",
-                            stroke_linecap: "round",
-                            stroke_linejoin: "round",
-                            path { d: "M20 6 9 17l-5-5" }
+                div { class: "flex min-w-0 items-center justify-between gap-2 rounded-lg p-1 transition-colors hover:bg-sidebar-accent/50 cursor-pointer",
+                    div { class: "flex min-w-0 items-center gap-2.5",
+                        div { class: "flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-tr from-indigo-600 via-indigo-500 to-violet-500 text-white shadow-xs shadow-indigo-500/25",
+                            svg {
+                                class: "size-4",
+                                view_box: "0 0 24 24",
+                                fill: "none",
+                                stroke: "currentColor",
+                                stroke_width: "2.5",
+                                stroke_linecap: "round",
+                                stroke_linejoin: "round",
+                                path { d: "M20 6 9 17l-5-5" }
+                            }
                         }
-                    }
-                    div { class: "sidebar-text flex min-w-0 flex-col",
-                        span { class: "truncate text-sm font-semibold leading-none text-sidebar-foreground",
-                            "TaskFlow"
-                        }
-                        span { class: "truncate text-[10px] text-sidebar-foreground/60",
-                            "Workspace"
+                        div { class: "sidebar-text flex min-w-0 flex-col",
+                            div { class: "flex items-center gap-1.5",
+                                span { class: "truncate text-xs font-bold leading-none text-sidebar-foreground",
+                                    "TaskFlow"
+                                }
+                                span { class: "rounded bg-primary/15 px-1 py-0.2 text-[9px] font-semibold text-primary",
+                                    "PRO"
+                                }
+                            }
+                            span { class: "mt-0.5 truncate text-[10px] text-sidebar-foreground/60",
+                                "Main Workspace"
+                            }
                         }
                     }
                 }
@@ -49,7 +57,7 @@ pub fn AppSidebar() -> Element {
 
             SidebarContent {
                 SidebarGroup {
-                    SidebarGroupLabel { "Navigation" }
+                    SidebarGroupLabel { "Overview" }
                     SidebarGroupContent {
                         SidebarMenu {
                             NavItem {
@@ -112,17 +120,45 @@ pub fn AppSidebar() -> Element {
                         }
                     }
                 }
+
+                // Sprint progress card (hidden in icon collapsed mode)
+                div { class: "sidebar-text mx-2 my-2 rounded-xl border border-sidebar-border/80 bg-sidebar-accent/30 p-3 shadow-2xs group-data-[collapsible=icon]:hidden",
+                    div { class: "flex items-center justify-between text-xs font-semibold text-sidebar-foreground",
+                        span { "Sprint 24" }
+                        span { class: "font-mono font-bold text-primary", "78%" }
+                    }
+                    div { class: "mt-2 h-1.5 w-full overflow-hidden rounded-full bg-sidebar-border/60",
+                        div {
+                            class: "h-full rounded-full bg-gradient-to-r from-indigo-500 via-indigo-600 to-violet-500",
+                            style: "width: 78%;",
+                        }
+                    }
+                    div { class: "mt-2 flex items-center justify-between text-[10px] text-sidebar-foreground/60",
+                        span { "5 of 7 tasks done" }
+                        span { "2 days left" }
+                    }
+                }
             }
 
             SidebarFooter {
-                div { class: "flex min-w-0 items-center gap-2 rounded-md p-1",
-                    Avatar {
-                        class: "size-7",
-                        AvatarFallback { class: "bg-primary/20 text-xs font-semibold text-primary-foreground", "GR" }
+                div { class: "flex min-w-0 flex-col gap-2 p-1",
+                    div { class: "sidebar-text hidden w-full group-data-[collapsible=icon]:hidden sm:block",
+                        ThemeSegmented { class: "w-full" }
                     }
-                    div { class: "sidebar-text flex min-w-0 flex-col",
-                        span { class: "truncate text-xs font-medium text-sidebar-foreground", "GamerRock" }
-                        span { class: "truncate text-[10px] text-sidebar-foreground/60", "Personal workspace" }
+                    div { class: "flex min-w-0 items-center justify-between gap-2 rounded-lg p-1.5 transition-colors hover:bg-sidebar-accent/50 cursor-pointer",
+                        div { class: "flex min-w-0 items-center gap-2.5",
+                            div { class: "relative",
+                                Avatar {
+                                    class: "size-7.5 ring-1 ring-border/60",
+                                    AvatarFallback { class: "bg-primary text-xs font-bold text-primary-foreground", "GR" }
+                                }
+                                span { class: "absolute -bottom-0.5 -right-0.5 size-2 rounded-full bg-emerald-500 ring-2 ring-sidebar" }
+                            }
+                            div { class: "sidebar-text flex min-w-0 flex-col",
+                                span { class: "truncate text-xs font-semibold text-sidebar-foreground", "GamerRock" }
+                                span { class: "truncate text-[10px] text-sidebar-foreground/60", "developer@taskflow.dev" }
+                            }
+                        }
                     }
                 }
             }

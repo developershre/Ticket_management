@@ -106,3 +106,10 @@ pub mod context_menu;
 pub mod toast;
 #[allow(unused_imports)]
 pub use toast::{ToastProvider, ToastState, ToastVariant};
+
+pub mod theme;
+#[allow(unused_imports)]
+pub use theme::{
+    fetch_system_is_dark, use_theme, ThemeContext, ThemeMode, ThemeProvider, ThemeSegmented,
+    ThemeToggle,
+};

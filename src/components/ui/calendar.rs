@@ -253,7 +253,7 @@ pub fn Calendar(props: CalendarProps) -> Element {
                             ),
                             None => {
                                 if is_selected {
-                                    "size-8 mx-auto flex flex-col items-center justify-center gap-1 rounded-lg bg-zinc-700 text-white dark:bg-zinc-700 dark:text-white font-semibold text-xs shadow-xs transition-colors cursor-pointer".to_string()
+                                    "size-8 mx-auto flex flex-col items-center justify-center gap-1 rounded-lg bg-primary text-primary-foreground font-semibold text-xs shadow-xs transition-colors cursor-pointer".to_string()
                                 } else if is_today {
                                     "size-8 mx-auto flex flex-col items-center justify-center gap-1 rounded-lg border border-primary/50 text-foreground font-semibold text-xs hover:bg-muted transition-colors cursor-pointer".to_string()
                                 } else {

@@ -41,7 +41,16 @@ fn main() {
     // drag region and the minimize/maximize/close buttons instead.
     #[cfg(feature = "desktop")]
     {
+        use components::ui::theme::fetch_system_is_dark;
+        use dioxus::desktop::tao::window::Theme;
         use dioxus::desktop::{Config, LogicalSize, WindowBuilder};
+
+        let is_sys_dark = fetch_system_is_dark();
+        let initial_theme = if is_sys_dark {
+            Theme::Dark
+        } else {
+            Theme::Light
+        };
 
         dioxus::LaunchBuilder::new()
             .with_cfg(
@@ -49,6 +58,7 @@ fn main() {
                     WindowBuilder::new()
                         .with_title("TaskFlow")
                         .with_decorations(false)
+                        .with_theme(Some(initial_theme))
                         .with_inner_size(LogicalSize::new(1200.0, 800.0))
                         .with_min_inner_size(LogicalSize::new(940.0, 600.0)),
                 ),
@@ -62,6 +72,8 @@ fn main() {
     }
 }
 
+use components::ui::theme::{use_theme, ThemeProvider};
+
 #[component]
 fn App() -> Element {
     rsx! {
@@ -69,17 +81,22 @@ fn App() -> Element {
         document::Link { rel: "stylesheet", href: MAIN_CSS }
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
         document::Title { "TaskFlow" }
-        Router::<Route> {}
+        ThemeProvider {
+            Router::<Route> {}
+        }
     }
 }
 
 /// App shell: custom titlebar + sidebar + page outlet + FAB.
 #[component]
 fn AppShell() -> Element {
+    let theme = use_theme();
+    let dark_cls = if theme.is_dark() { "dark" } else { "" };
+
     rsx! {
         ToastProvider {
             SidebarProvider {
-                div { class: "flex h-screen w-full flex-col overflow-hidden bg-background text-foreground",
+                div { class: "{dark_cls} flex h-screen w-full flex-col overflow-hidden bg-background text-foreground transition-colors duration-200",
                     Titlebar { app_name: "TaskFlow".to_string() }
                     div { class: "flex flex-1 overflow-hidden",
                         AppSidebar {}

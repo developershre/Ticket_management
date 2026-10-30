@@ -4,6 +4,7 @@
     "tailwindcss": "^4.3.3"
   },
   "scripts": {
-    "watch":"npx @tailwindcss/cli -i ./tailwind.css -o ./assets/tailwind.css --watch"
+    "build": "npx @tailwindcss/cli -i ./tailwind.css -o ./assets/tailwind.css",
+    "watch": "npx @tailwindcss/cli -i ./tailwind.css -o ./assets/tailwind.css --watch"
   }
 }

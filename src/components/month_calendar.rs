@@ -6,6 +6,7 @@ pub type DateRange = ((u32, u32, u32), (u32, u32, u32));
 
 /// Accent color for an event dot on the calendar grid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum EventColor {
     Blue,
     Green,

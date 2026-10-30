@@ -8,6 +8,7 @@
 use dioxus::prelude::*;
 
 use crate::components::ui::sidebar::SidebarTrigger;
+use crate::components::ui::theme::ThemeToggle;
 use crate::Route;
 
 // ============================================================
@@ -66,24 +67,24 @@ pub fn Titlebar(props: TitlebarProps) -> Element {
             SidebarTrigger {}
 
             // Branding + current page
-            div { class: "flex min-w-0 items-center gap-2 pl-1 pr-3",
-                // Logo mark
-                div { class: "flex size-5 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground",
+            div { class: "flex min-w-0 items-center gap-2.5 pl-1.5 pr-2",
+                // Gradient logo mark
+                div { class: "flex size-6 shrink-0 items-center justify-center rounded-lg bg-gradient-to-tr from-indigo-500 via-indigo-600 to-violet-500 text-white shadow-xs shadow-indigo-500/25",
                     svg {
-                        class: "size-3",
+                        class: "size-3.5",
                         view_box: "0 0 24 24",
                         fill: "none",
                         stroke: "currentColor",
-                        stroke_width: "3",
+                        stroke_width: "2.5",
                         stroke_linecap: "round",
                         stroke_linejoin: "round",
                         path { d: "M20 6 9 17l-5-5" }
                     }
                 }
-                span { class: "truncate text-sm font-semibold tracking-tight text-sidebar-foreground",
+                span { class: "truncate text-sm font-bold tracking-tight text-sidebar-foreground",
                     "{props.app_name}"
                 }
-                span { class: "hidden text-xs text-sidebar-foreground/50 sm:inline",
+                span { class: "hidden items-center rounded-md border border-sidebar-border/80 bg-sidebar-accent/40 px-2 py-0.5 text-[11px] font-medium text-sidebar-foreground/70 sm:inline-flex",
                     "{page_title}"
                 }
             }
@@ -93,13 +94,38 @@ pub fn Titlebar(props: TitlebarProps) -> Element {
             // double-click to maximize/restore.
             // ============================================================
             div {
-                class: "h-full flex-1 cursor-default",
+                class: "flex h-full flex-1 items-center justify-center px-4 cursor-default",
                 onmousedown: move |_| drag_window(),
                 ondoubleclick: move |_| {
                     toggle_maximize();
                     let next = !*maximized.read();
                     maximized.set(next);
                 },
+                // Sleek quick search visual (Linear / Raycast aesthetic)
+                div {
+                    class: "hidden items-center gap-2 rounded-lg border border-sidebar-border/70 bg-background/50 px-3 py-1 text-xs text-muted-foreground shadow-2xs transition-colors hover:border-primary/30 md:flex",
+                    onmousedown: move |e| e.stop_propagation(),
+                    svg {
+                        class: "size-3.5 text-muted-foreground/70",
+                        view_box: "0 0 24 24",
+                        fill: "none",
+                        stroke: "currentColor",
+                        stroke_width: "2",
+                        stroke_linecap: "round",
+                        stroke_linejoin: "round",
+                        circle { cx: "11", cy: "11", r: "8" }
+                        path { d: "m21 21-4.3-4.3" }
+                    }
+                    span { "Search tasks, reminders or events..." }
+                    kbd { class: "ml-4 rounded border border-border/80 bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground shadow-2xs",
+                        "⌘K"
+                    }
+                }
+            }
+
+            // Theme toggle button
+            div { class: "flex items-center px-1.5",
+                ThemeToggle { class: "size-7 border-none bg-transparent hover:bg-sidebar-accent text-sidebar-foreground" }
             }
 
             // Fully custom window controls (no-ops on web)
