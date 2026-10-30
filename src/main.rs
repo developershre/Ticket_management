@@ -1,134 +1,95 @@
 use dioxus::prelude::*;
 
+mod components;
+mod icons;
+mod pages;
+mod state;
+
+use components::app_sidebar::AppSidebar;
+use components::fab::Fab;
+use components::titlebar::Titlebar;
+use components::ui::sidebar::SidebarProvider;
+use components::ui::toast::ToastProvider;
+use pages::calendar_page::CalendarPage;
+use pages::reminders::Reminders;
+use pages::tickets::Tickets;
+
+/// All app routes.
+///
+/// There is intentionally no default dioxus navbar: `AppShell` renders a
+/// completely custom chrome (custom draggable titlebar, sidebar navigation,
+/// FAB) around the router outlet.
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]
 enum Route {
-    #[layout(Navbar)]
+    #[layout(AppShell)]
     #[route("/")]
-    Home {},
-    #[route("/blog/:id")]
-    Blog { id: i32 },
+    Tickets {},
+    #[route("/reminders")]
+    Reminders {},
+    #[route("/calendar")]
+    CalendarPage {},
 }
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
-const HEADER_SVG: Asset = asset!("/assets/header.svg");
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
 fn main() {
-    dioxus::launch(App);
+    // Desktop: the native window frame (navbar + OS action buttons) is
+    // disabled entirely — the custom `Titlebar` component provides the
+    // drag region and the minimize/maximize/close buttons instead.
+    #[cfg(feature = "desktop")]
+    {
+        use dioxus::desktop::{Config, LogicalSize, WindowBuilder};
+
+        dioxus::LaunchBuilder::new()
+            .with_cfg(
+                Config::new().with_window(
+                    WindowBuilder::new()
+                        .with_title("TaskFlow")
+                        .with_decorations(false)
+                        .with_inner_size(LogicalSize::new(1200.0, 800.0))
+                        .with_min_inner_size(LogicalSize::new(940.0, 600.0)),
+                ),
+            )
+            .launch(App);
+    }
+
+    #[cfg(not(feature = "desktop"))]
+    {
+        dioxus::launch(App);
+    }
 }
 
 #[component]
 fn App() -> Element {
     rsx! {
         document::Link { rel: "icon", href: FAVICON }
-        document::Link { rel: "stylesheet", href: MAIN_CSS } document::Link { rel: "stylesheet", href: TAILWIND_CSS }
+        document::Link { rel: "stylesheet", href: MAIN_CSS }
+        document::Link { rel: "stylesheet", href: TAILWIND_CSS }
+        document::Title { "TaskFlow" }
         Router::<Route> {}
     }
 }
 
+/// App shell: custom titlebar + sidebar + page outlet + FAB.
 #[component]
-pub fn Hero() -> Element {
+fn AppShell() -> Element {
     rsx! {
-        div {
-            id: "hero",
-            img { src: HEADER_SVG, id: "header" }
-            div { id: "links",
-                a { href: "https://dioxuslabs.com/learn/0.7/", "📚 Learn Dioxus" }
-                a { href: "https://dioxuslabs.com/awesome", "🚀 Awesome Dioxus" }
-                a { href: "https://github.com/dioxus-community/", "📡 Community Libraries" }
-                a { href: "https://github.com/DioxusLabs/sdk", "⚙️ Dioxus Development Kit" }
-                a { href: "https://marketplace.visualstudio.com/items?itemName=DioxusLabs.dioxus", "💫 VSCode Extension" }
-                a { href: "https://discord.gg/XgGxMSkvUM", "👋 Community Discord" }
-            }
-        }
-    }
-}
-
-/// Home page
-#[component]
-fn Home() -> Element {
-    rsx! {
-        Hero {}
-        Echo {}
-    }
-}
-
-/// Blog page
-#[component]
-pub fn Blog(id: i32) -> Element {
-    rsx! {
-        div {
-            id: "blog",
-
-            // Content
-            h1 { "This is blog #{id}!" }
-            p { "In blog #{id}, we show how the Dioxus router works and how URL parameters can be passed as props to our route components." }
-
-            // Navigation links
-            Link {
-                to: Route::Blog { id: id - 1 },
-                "Previous"
-            }
-            span { " <---> " }
-            Link {
-                to: Route::Blog { id: id + 1 },
-                "Next"
-            }
-        }
-    }
-}
-
-/// Shared navbar component.
-#[component]
-fn Navbar() -> Element {
-    rsx! {
-        div {
-            id: "navbar",
-            Link {
-                to: Route::Home {},
-                "Home"
-            }
-            Link {
-                to: Route::Blog { id: 1 },
-                "Blog"
-            }
-        }
-
-        Outlet::<Route> {}
-    }
-}
-
-/// Echo component that demonstrates fullstack server functions.
-#[component]
-fn Echo() -> Element {
-    let mut response = use_signal(|| String::new());
-
-    rsx! {
-        div {
-            id: "echo",
-            h4 { "ServerFn Echo" }
-            input {
-                placeholder: "Type here to echo...",
-                oninput:  move |event| async move {
-                    let data = echo_server(event.value()).await.unwrap();
-                    response.set(data);
-                },
-            }
-
-            if !response().is_empty() {
-                p {
-                    "Server echoed: "
-                    i { "{response}" }
+        ToastProvider {
+            SidebarProvider {
+                div { class: "flex h-screen w-full flex-col overflow-hidden bg-background text-foreground",
+                    Titlebar { app_name: "TaskFlow".to_string() }
+                    div { class: "flex flex-1 overflow-hidden",
+                        AppSidebar {}
+                        main { class: "relative flex-1 overflow-y-auto",
+                            Outlet::<Route> {}
+                        }
+                    }
+                    Fab {}
                 }
             }
         }
     }
-}
-
-/// Echo the user input on the server.
-#[post("/api/echo")]
-async fn echo_server(input: String) -> Result<String, ServerFnError> {
-    Ok(input)
 }

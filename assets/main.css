@@ -1,107 +1,43 @@
-/* App-wide styling */
+/* ============================================================
+ * App-wide base styles (loaded before tailwind.css)
+ * ============================================================ */
+
+html,
 body {
-    background-color: #0f1116;
-    color: #ffffff;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    margin: 20px;
-}
-
-#hero {
+    height: 100%;
     margin: 0;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
+    padding: 0;
+    overflow: hidden;
+    background-color: #0b0d13;
+    color: #e6e9f0;
+    font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
 }
 
-#links {
-    width: 400px;
-    text-align: left;
-    font-size: x-large;
-    color: white;
-    display: flex;
-    flex-direction: column;
+/* Thin dark scrollbars to match the theme */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
 }
 
-#links a {
-    color: white;
-    text-decoration: none;
-    margin-top: 20px;
-    margin: 10px 0px;
-    border: white 1px solid;
-    border-radius: 5px;
-    padding: 10px;
+::-webkit-scrollbar-track {
+    background: transparent;
 }
 
-#links a:hover {
-    background-color: #1f1f1f;
-    cursor: pointer;
+::-webkit-scrollbar-thumb {
+    background-color: #2a3247;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: content-box;
 }
 
-#header {
-    max-width: 1200px;
+::-webkit-scrollbar-thumb:hover {
+    background-color: #3a445e;
+    background-clip: content-box;
 }
 
-/* Navbar */
-#navbar {
-    display: flex;
-    flex-direction: row;
-  }
-  
-#navbar a {
-    color: #ffffff;
-    margin-right: 20px;
-    text-decoration: none;
-    transition: color 0.2s ease;
-}
-
-#navbar a:hover {
-    cursor: pointer;
-    color: #91a4d2;
-}
-
-/* Blog page */
-#blog {
-    margin-top: 50px;
-  }
-  
-#blog a {
-    color: #ffffff;
-    margin-top: 50px;
-}
-
-/* Echo */
-#echo {
-    width: 360px;
-    margin-left: auto;
-    margin-right: auto;
-    margin-top: 50px;
-    background-color: #1e222d;
-    padding: 20px;
-    border-radius: 10px;
-}
-
-#echo>h4 {
-    margin: 0px 0px 15px 0px;
-}
-
-
-#echo>input {
-    border: none;
-    border-bottom: 1px white solid;
-    background-color: transparent;
-    color: #ffffff;
-    transition: border-bottom-color 0.2s ease;
+/* Keep focus rings consistent everywhere */
+:focus-visible {
     outline: none;
-    display: block;
-    padding: 0px 0px 5px 0px;
-    width: 100%;
-}
-
-#echo>input:focus {
-    border-bottom-color: #6d85c6;
-}
-
-#echo>p {
-    margin: 20px 0px 0px auto;
 }
