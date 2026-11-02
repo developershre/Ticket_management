@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
 mod components;
+pub mod db;
 mod icons;
 mod pages;
 mod state;
@@ -34,8 +35,14 @@ enum Route {
 const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
+const DND_JS: Asset = asset!("/assets/dnd.js");
 
 fn main() {
+    // Initialize SQLite database adhering to DATABASE.SQL schema
+    if let Err(e) = db::init_database() {
+        eprintln!("[TaskFlow DB] Warning: database init failed: {:?}", e);
+    }
+
     // Desktop: the native window frame (navbar + OS action buttons) is
     // disabled entirely — the custom `Titlebar` component provides the
     // drag region and the minimize/maximize/close buttons instead.
@@ -54,14 +61,51 @@ fn main() {
 
         dioxus::LaunchBuilder::new()
             .with_cfg(
-                Config::new().with_window(
-                    WindowBuilder::new()
-                        .with_title("TaskFlow")
-                        .with_decorations(false)
-                        .with_theme(Some(initial_theme))
-                        .with_inner_size(LogicalSize::new(1200.0, 800.0))
-                        .with_min_inner_size(LogicalSize::new(940.0, 600.0)),
-                ),
+                Config::new()
+                    .with_disable_drag_drop_handler(true)
+                    .with_custom_head(
+                        r#"<script>
+                        (function() {
+                            document.addEventListener('dragstart', function(e) {
+                                var target = e.target;
+                                var el = target && target.closest ? target.closest('[draggable="true"]') : null;
+                                if (!el) return;
+                                var id = el.getAttribute('data-drag-id') || el.id || '';
+                                if (e.dataTransfer) {
+                                    try {
+                                        e.dataTransfer.effectAllowed = 'all';
+                                        if (id) {
+                                            e.dataTransfer.setData('text/plain', id);
+                                            e.dataTransfer.setData('application/x-taskflow-id', id);
+                                        } else {
+                                            e.dataTransfer.setData('text/plain', 'drag-item');
+                                        }
+                                    } catch(err) {}
+                                }
+                            }, false);
+                            document.addEventListener('dragover', function(e) {
+                                e.preventDefault();
+                                if (e.dataTransfer) {
+                                    try { e.dataTransfer.dropEffect = 'move'; } catch(err) {}
+                                }
+                            }, false);
+                            document.addEventListener('dragenter', function(e) {
+                                e.preventDefault();
+                                if (e.dataTransfer) {
+                                    try { e.dataTransfer.dropEffect = 'move'; } catch(err) {}
+                                }
+                            }, false);
+                        })();
+                        </script>"#.to_string(),
+                    )
+                    .with_window(
+                        WindowBuilder::new()
+                            .with_title("TaskFlow")
+                            .with_decorations(false)
+                            .with_theme(Some(initial_theme))
+                            .with_inner_size(LogicalSize::new(1200.0, 800.0))
+                            .with_min_inner_size(LogicalSize::new(940.0, 600.0)),
+                    ),
             )
             .launch(App);
     }
@@ -80,6 +124,7 @@ fn App() -> Element {
         document::Link { rel: "icon", href: FAVICON }
         document::Link { rel: "stylesheet", href: MAIN_CSS }
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
+        document::Script { src: DND_JS }
         document::Title { "TaskFlow" }
         ThemeProvider {
             Router::<Route> {}
@@ -100,7 +145,7 @@ fn AppShell() -> Element {
                     Titlebar { app_name: "TaskFlow".to_string() }
                     div { class: "flex flex-1 overflow-hidden",
                         AppSidebar {}
-                        main { class: "relative flex-1 overflow-y-auto",
+                        main { class: "relative flex flex-1 flex-col overflow-hidden min-h-0 w-full",
                             Outlet::<Route> {}
                         }
                     }

@@ -129,7 +129,7 @@ pub fn Calendar(props: CalendarProps) -> Element {
                 // Previous Month Button
                 button {
                     r#type: "button",
-                    class: "size-8 rounded-lg bg-secondary/80 hover:bg-secondary text-foreground flex items-center justify-center transition-colors cursor-pointer border border-border/40 shadow-xs",
+                    class: "size-8 rounded-lg bg-secondary/80 hover:bg-secondary text-foreground flex items-center justify-center transition-colors cursor-pointer border border-border/40",
                     onclick: move |_| {
                         let m = current_month();
                         let y = current_year();
@@ -160,7 +160,7 @@ pub fn Calendar(props: CalendarProps) -> Element {
                 // Next Month Button
                 button {
                     r#type: "button",
-                    class: "size-8 rounded-lg bg-secondary/80 hover:bg-secondary text-foreground flex items-center justify-center transition-colors cursor-pointer border border-border/40 shadow-xs",
+                    class: "size-8 rounded-lg bg-secondary/80 hover:bg-secondary text-foreground flex items-center justify-center transition-colors cursor-pointer border border-border/40",
                     onclick: move |_| {
                         let m = current_month();
                         let y = current_year();
@@ -253,7 +253,7 @@ pub fn Calendar(props: CalendarProps) -> Element {
                             ),
                             None => {
                                 if is_selected {
-                                    "size-8 mx-auto flex flex-col items-center justify-center gap-1 rounded-lg bg-primary text-primary-foreground font-semibold text-xs shadow-xs transition-colors cursor-pointer".to_string()
+                                    "size-8 mx-auto flex flex-col items-center justify-center gap-1 rounded-lg bg-primary text-primary-foreground font-semibold text-xs transition-colors cursor-pointer".to_string()
                                 } else if is_today {
                                     "size-8 mx-auto flex flex-col items-center justify-center gap-1 rounded-lg border border-primary/50 text-foreground font-semibold text-xs hover:bg-muted transition-colors cursor-pointer".to_string()
                                 } else {

@@ -81,7 +81,7 @@ pub fn SelectTrigger(props: SelectTriggerProps) -> Element {
 
     let class = format!(
         "flex h-9 w-full items-center justify-between rounded-md border border-input \
-         bg-transparent px-3 py-2 text-sm shadow-xs outline-none \
+         bg-transparent px-3 py-2 text-sm outline-none \
          focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50 \
          cursor-pointer select-none transition-colors hover:bg-accent/40 {}",
         props.class
@@ -248,7 +248,7 @@ pub fn SelectContent(props: SelectContentProps) -> Element {
     let class = format!(
         "w-full min-w-[8rem] max-h-60 \
          overflow-y-auto overflow-x-hidden rounded-md border border-border \
-         bg-popover p-1 text-popover-foreground shadow-md outline-none \
+         bg-popover p-1 text-popover-foreground outline-none \
          animate-in fade-in-0 zoom-in-95 {}",
         props.class
     );

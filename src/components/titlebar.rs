@@ -68,8 +68,8 @@ pub fn Titlebar(props: TitlebarProps) -> Element {
 
             // Branding + current page
             div { class: "flex min-w-0 items-center gap-2.5 pl-1.5 pr-2",
-                // Gradient logo mark
-                div { class: "flex size-6 shrink-0 items-center justify-center rounded-lg bg-gradient-to-tr from-indigo-500 via-indigo-600 to-violet-500 text-white shadow-xs shadow-indigo-500/25",
+                // Logo mark
+                div { class: "flex size-6 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground",
                     svg {
                         class: "size-3.5",
                         view_box: "0 0 24 24",
@@ -103,7 +103,7 @@ pub fn Titlebar(props: TitlebarProps) -> Element {
                 },
                 // Sleek quick search visual (Linear / Raycast aesthetic)
                 div {
-                    class: "hidden items-center gap-2 rounded-lg border border-sidebar-border/70 bg-background/50 px-3 py-1 text-xs text-muted-foreground shadow-2xs transition-colors hover:border-primary/30 md:flex",
+                    class: "hidden items-center gap-2 rounded-lg border border-sidebar-border/70 bg-background/50 px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/30 md:flex",
                     onmousedown: move |e| e.stop_propagation(),
                     svg {
                         class: "size-3.5 text-muted-foreground/70",
@@ -117,7 +117,7 @@ pub fn Titlebar(props: TitlebarProps) -> Element {
                         path { d: "m21 21-4.3-4.3" }
                     }
                     span { "Search tasks, reminders or events..." }
-                    kbd { class: "ml-4 rounded border border-border/80 bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground shadow-2xs",
+                    kbd { class: "ml-4 rounded border border-border/80 bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground",
                         "⌘K"
                     }
                 }
@@ -208,7 +208,7 @@ fn WindowControls(maximized: Signal<bool>) -> Element {
             button {
                 r#type: "button",
                 title: "Close",
-                class: "{btn} hover:bg-destructive hover:text-white",
+                class: "{btn} hover:bg-destructive hover:text-destructive-foreground",
                 onmousedown: move |e| e.stop_propagation(),
                 onclick: move |_| dioxus::desktop::window().close(),
                 svg {

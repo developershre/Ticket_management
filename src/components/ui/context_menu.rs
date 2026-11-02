@@ -7,10 +7,10 @@ use dioxus::prelude::*;
 // ============================================================
 
 #[derive(Clone, Copy, PartialEq)]
-struct ContextMenuState {
-    open: Signal<bool>,
-    x: Signal<f64>,
-    y: Signal<f64>,
+pub struct ContextMenuState {
+    pub open: Signal<bool>,
+    pub x: Signal<f64>,
+    pub y: Signal<f64>,
 }
 
 #[derive(Props, Clone, PartialEq)]
@@ -55,6 +55,7 @@ pub fn ContextMenuTrigger(props: ContextMenuTriggerProps) -> Element {
             class: "select-none {props.class}",
             oncontextmenu: move |event| {
                 event.prevent_default();
+                event.stop_propagation();
 
                 let coordinates = event.client_coordinates();
                 state.x.set(coordinates.x);
@@ -133,11 +134,19 @@ function onScroll(e){
   if(cm&&e.target&&cm.contains(e.target))return;
   close();
 }
+function onPointerDown(e){
+  var cm=current();
+  if(!cm)return;
+  if(cm.contains(e.target))return;
+  close();
+}
 window["__ctx_kb_"+uid]=true;
 window["__ctx_key_"+uid]=onKey;
 window["__ctx_scroll_"+uid]=onScroll;
+window["__ctx_pointer_"+uid]=onPointerDown;
 document.addEventListener("keydown",onKey,true);
 document.addEventListener("scroll",onScroll,true);
+document.addEventListener("pointerdown",onPointerDown,true);
 })();
 "#;
 
@@ -146,6 +155,7 @@ const CONTENT_CLOSE_JS: &str = r#"
 var uid="__UID__";
 if(window["__ctx_key_"+uid]){document.removeEventListener("keydown",window["__ctx_key_"+uid],true);delete window["__ctx_key_"+uid];}
 if(window["__ctx_scroll_"+uid]){document.removeEventListener("scroll",window["__ctx_scroll_"+uid],true);delete window["__ctx_scroll_"+uid];}
+if(window["__ctx_pointer_"+uid]){document.removeEventListener("pointerdown",window["__ctx_pointer_"+uid],true);delete window["__ctx_pointer_"+uid];}
 delete window["__ctx_kb_"+uid];
 })();
 "#;
@@ -202,14 +212,13 @@ pub fn ContextMenuContent(props: ContextMenuContentProps) -> Element {
                 onclick: move |_| state.open.set(false),
             }
 
-            // Dismiss the popup when clicking or right-clicking outside it.
+            // Dismiss the popup when clicking outside it without blocking right click
             div {
                 "data-slot": "context-menu-dismiss",
                 class: "fixed inset-0",
                 style: "z-index: 9998;",
                 onclick: move |_| state.open.set(false),
-                oncontextmenu: move |event| {
-                    event.prevent_default();
+                oncontextmenu: move |_| {
                     state.open.set(false);
                 }
             }
@@ -219,7 +228,7 @@ pub fn ContextMenuContent(props: ContextMenuContentProps) -> Element {
                 "data-popup": uid,
                 role: "menu",
                 style: "{style}",
-                class: "min-w-36 max-h-[var(--available-height,80vh)] overflow-x-hidden overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-none animate-in fade-in-0 zoom-in-95 {props.class}",
+                class: "min-w-44 max-h-[var(--available-height,80vh)] overflow-x-hidden overflow-y-auto rounded-md border border-border/80 bg-popover/95 p-1 text-popover-foreground shadow-md backdrop-blur-sm ring-1 ring-foreground/5 outline-none animate-in fade-in-0 zoom-in-95 duration-100 {props.class}",
                 onclick: move |event| event.stop_propagation(),
                 oncontextmenu: move |event| event.prevent_default(),
                 {props.children}
@@ -268,7 +277,7 @@ pub fn ContextMenuLabel(props: ContextMenuLabelProps) -> Element {
     rsx! {
         div {
             "data-slot": "context-menu-label",
-            class: "px-1.5 py-1 text-xs font-medium text-muted-foreground {inset_class} {props.class}",
+            class: "px-2 py-1.5 text-xs font-semibold text-foreground {inset_class} {props.class}",
             {props.children}
         }
     }
@@ -299,14 +308,14 @@ pub fn ContextMenuItem(props: ContextMenuItemProps) -> Element {
 
     let inset_class = if props.inset { "pl-7" } else { "" };
     let variant_class = if props.destructive {
-        "hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive"
+        "text-destructive hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive"
     } else {
         "hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
     };
     let disabled_class = if props.disabled {
         "pointer-events-none opacity-50"
     } else {
-        "cursor-default"
+        "cursor-pointer"
     };
 
     rsx! {
@@ -317,7 +326,7 @@ pub fn ContextMenuItem(props: ContextMenuItemProps) -> Element {
             role: "menuitem",
             tabindex: if props.disabled { "-1" } else { "0" },
             "aria-disabled": "{props.disabled}",
-            class: "relative flex items-center gap-1.5 rounded-md px-1.5 py-1 text-sm outline-none select-none {inset_class} {variant_class} {props.class} {disabled_class}",
+            class: "relative flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs outline-none select-none transition-colors duration-100 {inset_class} {variant_class} {props.class} {disabled_class}",
             onclick: move |_| {
                 if !props.disabled {
                     props.on_select.call(());
@@ -345,7 +354,7 @@ pub fn ContextMenuSeparator(props: ContextMenuSeparatorProps) -> Element {
         div {
             "data-slot": "context-menu-separator",
             role: "separator",
-            class: "-mx-1 my-1 h-px bg-border {props.class}",
+            class: "-mx-1 my-1 h-px bg-border/60 {props.class}",
         }
     }
 }
@@ -366,7 +375,7 @@ pub fn ContextMenuShortcut(props: ContextMenuShortcutProps) -> Element {
     rsx! {
         span {
             "data-slot": "context-menu-shortcut",
-            class: "ml-auto text-xs tracking-widest text-muted-foreground {props.class}",
+            class: "ml-auto text-[10px] tracking-widest text-muted-foreground {props.class}",
             {props.children}
         }
     }
@@ -395,7 +404,7 @@ pub fn ContextMenuCheckboxItem(props: ContextMenuCheckboxItemProps) -> Element {
     let disabled_class = if props.disabled {
         "pointer-events-none opacity-50"
     } else {
-        "cursor-default"
+        "cursor-pointer"
     };
 
     rsx! {
@@ -405,7 +414,7 @@ pub fn ContextMenuCheckboxItem(props: ContextMenuCheckboxItemProps) -> Element {
             "aria-checked": "{props.checked}",
             "aria-disabled": "{props.disabled}",
             tabindex: "0",
-            class: "relative flex items-center gap-1.5 rounded-md py-1 pr-8 pl-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground {inset_class} {disabled_class} {props.class}",
+            class: "relative flex items-center gap-2 rounded-sm py-1.5 pr-8 pl-2 text-xs outline-none select-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground transition-colors duration-100 {inset_class} {disabled_class} {props.class}",
             onclick: move |_| {
                 if !props.disabled {
                     props.on_checked_change.call(!props.checked);
@@ -415,8 +424,7 @@ pub fn ContextMenuCheckboxItem(props: ContextMenuCheckboxItemProps) -> Element {
                 class: "pointer-events-none absolute right-2 flex h-4 w-4 items-center justify-center",
                 if props.checked {
                     svg {
-                        width: "16",
-                        height: "16",
+                        class: "size-3.5",
                         view_box: "0 0 24 24",
                         fill: "none",
                         stroke: "currentColor",
@@ -475,7 +483,7 @@ pub fn ContextMenuRadioItem(props: ContextMenuRadioItemProps) -> Element {
     let disabled_class = if props.disabled {
         "pointer-events-none opacity-50"
     } else {
-        "cursor-default"
+        "cursor-pointer"
     };
 
     rsx! {
@@ -485,7 +493,7 @@ pub fn ContextMenuRadioItem(props: ContextMenuRadioItemProps) -> Element {
             "aria-checked": "{selected}",
             "aria-disabled": "{props.disabled}",
             tabindex: "0",
-            class: "relative flex items-center gap-1.5 rounded-md py-1 pr-8 pl-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground {disabled_class} {props.class}",
+            class: "relative flex items-center gap-2 rounded-sm py-1.5 pr-8 pl-2 text-xs outline-none select-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground transition-colors duration-100 {disabled_class} {props.class}",
             onclick: move |_| {
                 if !props.disabled {
                     group_value.set(props.value.clone());
@@ -534,6 +542,7 @@ pub fn ContextMenuSub(props: ContextMenuSubProps) -> Element {
     rsx! {
         div {
             "data-slot": "context-menu-sub",
+            onmouseenter: move |_| open.set(true),
             onmouseleave: move |_| open.set(false),
             {props.children}
         }
@@ -584,20 +593,22 @@ pub fn ContextMenuSubTrigger(props: ContextMenuSubTriggerProps) -> Element {
             role: "menuitem",
             tabindex: "0",
             "aria-expanded": if (sub.open)() { "true" } else { "false" },
-            class: "flex w-full cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground {inset_class} {props.class}",
-            onclick: move |_| {
+            class: "flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-xs outline-none select-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground transition-colors duration-100 {inset_class} {props.class}",
+            onmouseenter: move |_| sub.open.set(true),
+            onclick: move |e: MouseEvent| {
+                e.stop_propagation();
                 let now = (sub.open)();
                 sub.open.set(!now);
             },
             {props.children}
             svg {
-                class: "ml-auto",
-                width: "16",
-                height: "16",
+                class: "ml-auto size-3.5 opacity-60",
                 view_box: "0 0 24 24",
                 fill: "none",
                 stroke: "currentColor",
                 stroke_width: "2",
+                stroke_linecap: "round",
+                stroke_linejoin: "round",
                 path { d: "m9 18 6-6-6-6" }
             }
         }
@@ -635,7 +646,7 @@ pub fn ContextMenuSubContent(props: ContextMenuSubContentProps) -> Element {
             "data-popup": uid,
             role: "menu",
             style: "position: fixed; left: 0px; top: 0px; visibility: hidden; z-index: 10001;",
-            class: "min-w-36 max-h-72 overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-none animate-in fade-in-0 zoom-in-95 {props.class}",
+            class: "min-w-40 max-h-72 overflow-y-auto rounded-md border border-border/80 bg-popover/95 p-1 text-popover-foreground shadow-md backdrop-blur-sm ring-1 ring-foreground/5 outline-none animate-in fade-in-0 zoom-in-95 duration-100 {props.class}",
             onclick: move |event| event.stop_propagation(),
             oncontextmenu: move |event| event.prevent_default(),
             {props.children}

@@ -21,22 +21,29 @@ pub fn Badge(props: BadgeProps) -> Element {
             "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80"
         }
         "destructive" => {
-            "border-transparent bg-destructive text-white shadow-xs hover:bg-destructive/80"
+            "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/90"
+        }
+        "warning" => {
+            "border-transparent bg-warning text-warning-foreground hover:bg-warning/90"
+        }
+        "success" => {
+            "border-transparent bg-success text-success-foreground hover:bg-success/90"
+        }
+        "info" => {
+            "border-transparent bg-info text-info-foreground hover:bg-info/90"
         }
         "outline" => "border-border text-foreground",
-        _ => "border-transparent bg-primary text-primary-foreground shadow-xs hover:bg-primary/80",
+        _ => "border-transparent bg-primary text-primary-foreground hover:bg-primary/90",
     };
 
     let size_class = match props.size.as_str() {
-        "sm" => "text-xs",
-        "lg" => "text-lg",
-        "xl" => "text-xl",
-        "2xl" => "text-2xl",
-        _ => "text-sm",
+        "lg" => "text-sm px-3 py-1",
+        "xl" => "text-base px-3.5 py-1.5",
+        _ => "text-xs px-2.5 py-0.5",
     };
 
     let class = format!(
-        "inline-flex items-center gap-1 rounded-md border px-2.5 py-0.5 font-semibold \
+        "inline-flex items-center gap-1 rounded-md border font-medium \
          transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 \
          select-none {variant_class} {size_class} {}",
         props.class

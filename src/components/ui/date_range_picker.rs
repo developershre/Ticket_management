@@ -131,7 +131,7 @@ pub fn DateRangePicker(props: DateRangePickerProps) -> Element {
                     onclick: move |_| open.set(false),
                 }
 
-                div { class: "absolute right-0 top-full z-50 mt-2 w-max rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-lg",
+                div { class: "absolute right-0 top-full z-50 mt-2 w-max rounded-lg border border-border bg-popover p-3 text-popover-foreground",
                     div { class: "grid grid-cols-1 gap-4 sm:grid-cols-2",
                         Calendar {
                             default_year: Some(left_y),

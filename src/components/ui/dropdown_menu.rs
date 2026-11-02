@@ -214,30 +214,24 @@ pub fn DropdownMenuContent(props: DropdownMenuContentProps) -> Element {
 
     let classes = format!(
         "
-        min-w-32
-
+        min-w-36
         overflow-x-hidden
         overflow-y-auto
-
-        rounded-lg
+        rounded-md
         border
-        border-border
-
-        bg-popover
+        border-border/80
+        bg-popover/95
         p-1
-
         text-popover-foreground
-
         shadow-md
+        backdrop-blur-sm
         ring-1
-        ring-foreground/10
-
+        ring-foreground/5
         outline-none
-
         animate-in
         fade-in-0
         zoom-in-95
-
+        duration-100
         {}
         ",
         props.class
@@ -375,7 +369,6 @@ pub fn DropdownMenuItem(props: DropdownMenuItemProps) -> Element {
         text-destructive
         focus:bg-destructive/10
         focus:text-destructive
-        dark:focus:bg-destructive/20
         "
     } else {
         "
@@ -917,8 +910,6 @@ pub fn DropdownMenuSubContent(props: DropdownMenuSubContentProps) -> Element {
         p-1
 
         text-popover-foreground
-
-        shadow-lg
 
         ring-1
         ring-foreground/10

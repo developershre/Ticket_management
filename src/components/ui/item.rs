@@ -37,7 +37,7 @@ pub fn Item(props: ItemProps) -> Element {
 
     let class = format!(
         "group/item relative flex items-center justify-between gap-4 rounded-xl border \
-         border-border p-3.5 text-card-foreground shadow-xs transition-colors outline-none \
+         border-border p-3.5 text-card-foreground transition-colors outline-none \
          focus-visible:ring-2 focus-visible:ring-ring select-none {} {} {}",
         active_class, disabled_class, props.class
     );

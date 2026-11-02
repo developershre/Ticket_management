@@ -6,6 +6,7 @@
 
 use dioxus::prelude::*;
 
+use crate::components::ui::button::Button;
 use crate::components::ui::dialog::{
     Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 };
@@ -43,7 +44,7 @@ impl QuickKind {
     fn placeholder(&self) -> &'static str {
         match self {
             QuickKind::Note => "Note title, e.g. \"Ideas for the v2 launch\"",
-            QuickKind::Ticket => "Ticket title, e.g. \"Fix login redirect loop\"",
+            QuickKind::Ticket => "IT ticket subject, e.g. \"VPN gateway disconnects every 30m\"",
             QuickKind::Reminder => "Reminder title, e.g. \"Call the dentist\"",
         }
     }
@@ -136,13 +137,13 @@ pub fn Fab() -> Element {
                     div {
                         key: "quick-action-{action_idx}",
                         class: "flex items-center gap-2.5",
-                        span { class: "rounded-xl border border-border/80 bg-popover/95 px-3 py-1 text-xs font-semibold text-popover-foreground shadow-lg backdrop-blur-md",
+                        span { class: "rounded-xl border border-border/80 bg-popover/95 px-3 py-1 text-xs font-semibold text-popover-foreground backdrop-blur-md",
                             "{kind_item.label()}"
                         }
                         button {
                             r#type: "button",
                             title: "New {kind_item.label()}",
-                            class: "flex size-11 items-center justify-center rounded-full border border-border/70 bg-popover text-foreground shadow-lg transition-all duration-150 hover:scale-105 hover:border-primary/50 hover:bg-accent cursor-pointer",
+                            class: "flex size-11 items-center justify-center rounded-full border border-border/70 bg-popover text-foreground transition-all duration-150 hover:scale-105 hover:border-primary/50 hover:bg-accent cursor-pointer",
                             onclick: move |_| open_kind(*kind_item),
                             {kind_item.icon()}
                         }
@@ -158,7 +159,7 @@ pub fn Fab() -> Element {
             r#type: "button",
             title: "Quick add",
             "aria-label": "Quick add",
-            class: "fixed bottom-6 right-6 z-40 flex size-13 items-center justify-center rounded-full bg-gradient-to-tr from-indigo-600 via-indigo-500 to-violet-500 text-white shadow-xl shadow-indigo-500/30 transition-all duration-300 hover:scale-105 hover:shadow-indigo-500/40 active:scale-95 cursor-pointer",
+            class: "fixed bottom-6 right-6 z-40 flex size-13 items-center justify-center rounded-full bg-primary text-primary-foreground transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer",
             onclick: move |_| {
                 let next = !*menu_open.read();
                 menu_open.set(next);
@@ -201,7 +202,7 @@ pub fn Fab() -> Element {
                         textarea {
                             key: "details-{generation()}",
                             rows: "4",
-                            class: "flex w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]",
+                            class: "flex w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50",
                             placeholder: "Optional details...".to_string(),
                             oninput: move |e: FormEvent| details.set(e.value()),
                         }
@@ -209,15 +210,13 @@ pub fn Fab() -> Element {
                 }
 
                 DialogFooter {
-                    button {
-                        r#type: "button",
-                        class: "inline-flex h-9 cursor-pointer items-center justify-center rounded-md border border-border px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted",
+                    Button {
+                        variant: "outline",
                         onclick: move |_| dialog_open.set(false),
                         "Cancel"
                     }
-                    button {
-                        r#type: "button",
-                        class: "inline-flex h-9 cursor-pointer items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow-xs transition-colors hover:bg-primary/90",
+                    Button {
+                        variant: "default",
                         onclick: move |_| {
                             let title = title_text.read().trim().to_string();
                             if title.is_empty() {
@@ -225,11 +224,35 @@ pub fn Fab() -> Element {
                                 return;
                             }
                             let detail = details.read().trim().to_string();
-                            let kind_label = kind().label().to_lowercase();
-                            if detail.is_empty() {
-                                toast.success("Created", format!("The {kind_label} \"{title}\" was created."));
-                            } else {
-                                toast.success("Created", format!("The {kind_label} \"{title}\" was created with details."));
+                            let current_kind = kind();
+
+                            match current_kind {
+                                QuickKind::Ticket => {
+                                    match crate::db::create_ticket(&title, "General", "Medium", "EMP-1001 (Admin)", "IT", "Pending", &detail) {
+                                        Ok(new_id) => {
+                                            toast.success("Ticket Saved to DB", format!("IT-{new_id}: \"{title}\" persisted to management.db"));
+                                        }
+                                        Err(e) => {
+                                            toast.error("Database Error", format!("Failed to save ticket: {:?}", e));
+                                        }
+                                    }
+                                }
+                                QuickKind::Note | QuickKind::Reminder => {
+                                    let content = if detail.is_empty() {
+                                        title.clone()
+                                    } else {
+                                        format!("{title} — {detail}")
+                                    };
+                                    match crate::db::create_note("EMP-1001", &content) {
+                                        Ok(new_id) => {
+                                            let label = current_kind.label();
+                                            toast.success("Saved to DB", format!("{label} #{new_id} persisted to management.db"));
+                                        }
+                                        Err(e) => {
+                                            toast.error("Database Error", format!("Failed to save: {:?}", e));
+                                        }
+                                    }
+                                }
                             }
                             dialog_open.set(false);
                         },

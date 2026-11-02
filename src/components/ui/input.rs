@@ -50,7 +50,6 @@ pub fn Input(props: InputProps) -> Element {
         px-3
         py-1
         text-base
-        shadow-xs
         outline-none
         transition-[color,box-shadow]
         selection:bg-primary
@@ -77,7 +76,6 @@ pub fn Input(props: InputProps) -> Element {
         aria-invalid:ring-destructive/20
 
         md:text-sm
-        dark:aria-invalid:ring-destructive/40
     "#;
 
     let classes = format!("{} {}", base_class, props.class);

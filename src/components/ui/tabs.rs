@@ -112,8 +112,10 @@ pub fn TabsList(props: TabsListProps) -> Element {
                 w-fit
                 items-center
                 justify-center
-                rounded-lg
-                p-[3px]
+                rounded-md
+                p-0.5
+                border
+                border-border/60
                 text-muted-foreground
                 {orientation_class}
                 {variant_class}
@@ -175,15 +177,16 @@ pub fn TabsTrigger(props: TabsTriggerProps) -> Element {
                 items-center
                 justify-center
                 gap-1.5
-                rounded-md
+                rounded-sm
                 border
                 border-transparent
-                px-1.5
-                py-0.5
-                text-sm
+                px-3
+                py-1
+                text-xs
                 font-medium
                 whitespace-nowrap
                 transition-all
+                cursor-pointer
 
                 hover:text-foreground
 

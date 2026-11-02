@@ -142,10 +142,26 @@ pub struct DataTableProps<T: Clone + PartialEq + 'static> {
     #[props(default)]
     pub filter: Vec<DataTableFilter>,
 
+    /// Optional placeholder/label for the first filter (default "Filter").
+    #[props(default)]
+    pub filter_label: Option<String>,
+
     /// Returns the value a row is grouped by for the faceted filter.
     /// Only used when `filter` is non-empty.
     #[props(default)]
     pub filter_value: Option<fn(&T) -> String>,
+
+    /// Optional second faceted filter dropdown options.
+    #[props(default)]
+    pub filter2: Vec<DataTableFilter>,
+
+    /// Optional placeholder/label for the second filter (default "Priority").
+    #[props(default)]
+    pub filter2_label: Option<String>,
+
+    /// Returns the value a row is grouped by for the second filter.
+    #[props(default)]
+    pub filter2_value: Option<fn(&T) -> String>,
 
     /// Rows per page (the starting value of the "Rows per page" selector).
     #[props(default = 10)]
@@ -158,6 +174,10 @@ pub struct DataTableProps<T: Clone + PartialEq + 'static> {
     /// Called with the row when it is clicked (e.g. to open a detail drawer).
     #[props(default)]
     pub on_row_click: Option<EventHandler<T>>,
+
+    /// Called with `(row, (x, y))` when a row is right-clicked.
+    #[props(default)]
+    pub on_row_context_menu: Option<EventHandler<(T, (f64, f64))>>,
 
     /// Called with the selected row ids whenever selection changes.
     #[props(default)]
@@ -172,16 +192,20 @@ pub struct DataTableProps<T: Clone + PartialEq + 'static> {
     pub class: String,
 }
 
-// Skip the fn-pointer fields (row_id, search_text, filter_value) — their
+// Skip the fn-pointer fields (row_id, search_text, filter_value, filter2_value) — their
 // addresses aren't unique, so comparing them for change detection is meaningless.
 impl<T: Clone + PartialEq + 'static> PartialEq for DataTableProps<T> {
     fn eq(&self, other: &Self) -> bool {
         self.data == other.data
             && self.columns == other.columns
             && self.filter == other.filter
+            && self.filter_label == other.filter_label
+            && self.filter2 == other.filter2
+            && self.filter2_label == other.filter2_label
             && self.page_size == other.page_size
             && self.initial_sort == other.initial_sort
             && self.on_row_click == other.on_row_click
+            && self.on_row_context_menu == other.on_row_context_menu
             && self.on_selection_change == other.on_selection_change
             && self.on_sort_change == other.on_sort_change
             && self.class == other.class
@@ -246,20 +270,30 @@ fn SelectionCheckbox(
 
 #[component]
 fn SortIcon(active: bool, asc: bool) -> Element {
-    let opacity = if active {
-        "opacity-100"
-    } else {
-        "opacity-0 group-hover:opacity-50"
-    };
+    if !active {
+        return rsx! {
+            svg {
+                class: "size-3 shrink-0 text-muted-foreground/40 transition-colors group-hover:text-foreground",
+                view_box: "0 0 24 24",
+                fill: "none",
+                stroke: "currentColor",
+                stroke_width: "2",
+                stroke_linecap: "round",
+                stroke_linejoin: "round",
+                path { d: "m7 15 5 5 5-5" }
+                path { d: "m7 9 5-5 5 5" }
+            }
+        };
+    }
     let dir_path = if asc { "m18 15-6-6-6 6" } else { "m6 9 6 6 6-6" };
 
     rsx! {
         svg {
-            class: "size-3.5 shrink-0 transition-opacity {opacity}",
+            class: "size-3 shrink-0 text-foreground transition-transform",
             view_box: "0 0 24 24",
             fill: "none",
             stroke: "currentColor",
-            stroke_width: "2",
+            stroke_width: "2.5",
             stroke_linecap: "round",
             stroke_linejoin: "round",
             path { d: "{dir_path}" }
@@ -304,7 +338,8 @@ fn toggle_sort(
 #[component]
 pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> Element {
     let mut query = use_signal(String::new);
-    let filter = use_signal(String::new);
+    let mut filter = use_signal(String::new);
+    let mut filter2 = use_signal(String::new);
     let initial_sort = props.initial_sort.clone();
     let sort = use_signal(move || initial_sort);
     let mut page = use_signal(|| 0usize);
@@ -318,6 +353,7 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
     let row_id = props.row_id;
     let search_text = props.search_text;
     let show_filter = !props.filter.is_empty() && props.filter_value.is_some();
+    let show_filter2 = !props.filter2.is_empty() && props.filter2_value.is_some();
     let show_column_toggle = columns.len() > 1;
 
     // ---- Column visibility ----
@@ -331,6 +367,9 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
     // ---- Filter + search ----
     let q = query.read().to_lowercase();
     let filter_val = filter.read().clone();
+    let filter2_val = filter2.read().clone();
+    let is_filtered = !q.is_empty() || !filter_val.is_empty() || !filter2_val.is_empty();
+
     let mut rows: Vec<T> = props
         .data
         .iter()
@@ -341,7 +380,12 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
                     .filter_value
                     .map(|fv| fv(t) == filter_val)
                     .unwrap_or(true);
-            matches_search && matches_filter
+            let matches_filter2 = filter2_val.is_empty()
+                || props
+                    .filter2_value
+                    .map(|fv| fv(t) == filter2_val)
+                    .unwrap_or(true);
+            matches_search && matches_filter && matches_filter2
         })
         .cloned()
         .collect();
@@ -397,8 +441,11 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
     let showing_from = if total == 0 { 0 } else { start + 1 };
     let showing_to = end;
     let filter_options = props.filter.clone();
+    let filter2_options = props.filter2.clone();
+    let filter_placeholder = props.filter_label.clone().unwrap_or_else(|| "Status".to_string());
+    let filter2_placeholder = props.filter2_label.clone().unwrap_or_else(|| "Priority".to_string());
 
-    // Page-size choices (always include the configured default so it has an option).
+    // Page-size choices
     let mut page_sizes = vec![5usize, 10, 20, 30, 50];
     if !page_sizes.contains(&props.page_size) {
         page_sizes.push(props.page_size);
@@ -406,91 +453,165 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
     }
 
     rsx! {
-        div { class: "rounded-xl border border-border/50 bg-card shadow-xs {props.class}",
+        div { class: "flex flex-col flex-1 w-full min-h-0 rounded-md border border-border/80 bg-card shadow-xs {props.class}",
 
             // ================= Toolbar =================
-            div { class: "flex flex-wrap items-center gap-2 border-b border-border/50 p-3",
+            div { class: "flex shrink-0 flex-wrap items-center justify-between gap-2.5 border-b border-border/60 p-2.5 bg-card",
 
-                // Search
-                div { class: "relative w-full min-w-[160px] max-w-xs flex-1",
-                    SearchIcon { class: "pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" }
-                    Input {
-                        placeholder: "Search...".to_string(),
-                        value: query.read().clone(),
-                        class: "pl-8".to_string(),
-                        oninput: move |e: FormEvent| {
-                            query.set(e.value());
-                            *page.write() = 0;
-                        },
-                    }
-                }
-
-                // Faceted filter
-                if show_filter {
-                    div { class: "w-[150px] shrink-0",
-                        Select {
-                            value: Some(filter),
-                            SelectTrigger { class: "h-9".to_string(),
-                                SelectValue { placeholder: "All".to_string() }
+                div { class: "flex flex-wrap items-center gap-2 flex-1 min-w-0",
+                    // Search
+                    div { class: "relative w-full min-w-[180px] max-w-xs flex-1",
+                        SearchIcon { class: "pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" }
+                        Input {
+                            placeholder: "Search tickets, requester, ID...".to_string(),
+                            value: query.read().clone(),
+                            class: "h-8 pl-8 pr-7 text-xs rounded-md bg-background border-border/80".to_string(),
+                            oninput: move |e: FormEvent| {
+                                query.set(e.value());
+                                *page.write() = 0;
+                            },
+                        }
+                        if !query.read().is_empty() {
+                            button {
+                                r#type: "button",
+                                title: "Clear search",
+                                class: "absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer p-0.5",
+                                onclick: move |_| {
+                                    query.set(String::new());
+                                    *page.write() = 0;
+                                },
+                                svg { class: "size-3", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
+                                    path { d: "M18 6L6 18M6 6l12 12" }
+                                }
                             }
-                            SelectContent {
-                                SelectItem { value: "".to_string(), text: "All".to_string(), "All" }
-                                for opt in filter_options {
-                                    SelectItem {
-                                        key: "{opt.value}",
-                                        value: opt.value.clone(),
-                                        text: opt.label.clone(),
-                                        "{opt.label}"
+                        }
+                    }
+
+                    // Faceted filter 1
+                    if show_filter {
+                        div { class: "w-[130px] shrink-0",
+                            Select {
+                                value: Some(filter),
+                                SelectTrigger { class: "h-8 text-xs rounded-md bg-background border-border/80".to_string(),
+                                    SelectValue { placeholder: "{filter_placeholder}".to_string() }
+                                }
+                                SelectContent {
+                                    SelectItem { value: "".to_string(), text: format!("All {}", filter_placeholder), "All" }
+                                    for opt in filter_options {
+                                        SelectItem {
+                                            key: "{opt.value}",
+                                            value: opt.value.clone(),
+                                            text: opt.label.clone(),
+                                            "{opt.label}"
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+
+                    // Faceted filter 2
+                    if show_filter2 {
+                        div { class: "w-[130px] shrink-0",
+                            Select {
+                                value: Some(filter2),
+                                SelectTrigger { class: "h-8 text-xs rounded-md bg-background border-border/80".to_string(),
+                                    SelectValue { placeholder: "{filter2_placeholder}".to_string() }
+                                }
+                                SelectContent {
+                                    SelectItem { value: "".to_string(), text: format!("All {}", filter2_placeholder), "All" }
+                                    for opt in filter2_options {
+                                        SelectItem {
+                                            key: "{opt.value}",
+                                            value: opt.value.clone(),
+                                            text: opt.label.clone(),
+                                            "{opt.label}"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Reset Filters button
+                    if is_filtered {
+                        button {
+                            r#type: "button",
+                            class: "flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted border border-dashed border-border/80 transition-colors cursor-pointer",
+                            onclick: move |_| {
+                                query.set(String::new());
+                                filter.set(String::new());
+                                filter2.set(String::new());
+                                *page.write() = 0;
+                            },
+                            svg { class: "size-3", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
+                                path { d: "M18 6L6 18M6 6l12 12" }
+                            }
+                            "Reset"
+                        }
+                    }
                 }
 
-                // Column visibility toggle
-                if show_column_toggle {
-                    DropdownMenu {
-                        DropdownMenuTrigger { class: "ml-auto h-8 gap-1.5 rounded-md border border-border px-2.5 text-foreground".to_string(),
-                            svg {
-                                class: "size-3.5",
-                                view_box: "0 0 24 24",
-                                fill: "none",
-                                stroke: "currentColor",
-                                stroke_width: "2",
-                                stroke_linecap: "round",
-                                stroke_linejoin: "round",
-                                path { d: "M21 4H14" }
-                                path { d: "M10 4H3" }
-                                path { d: "M21 12H12" }
-                                path { d: "M8 12H3" }
-                                path { d: "M21 20H16" }
-                                path { d: "M12 20H3" }
-                                path { d: "M14 2V6" }
-                                path { d: "M8 10V14" }
-                                path { d: "M16 18V22" }
+                div { class: "flex items-center gap-2",
+                    // Selection bulk-actions
+                    if selected_count > 0 {
+                        div { class: "flex items-center gap-1.5 rounded-md bg-muted/60 px-2 py-1",
+                            span { class: "text-xs font-medium text-foreground",
+                                "{selected_count} selected"
                             }
-                            "Columns"
+                            button {
+                                r#type: "button",
+                                class: "h-6 cursor-pointer rounded px-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-background transition-colors",
+                                onclick: move |_| selected.write().clear(),
+                                "Clear"
+                            }
                         }
-                        DropdownMenuContent { align: "end".to_string(), class: "w-40".to_string(),
-                            for col in &columns {
-                                {
-                                    let cid = col.id.clone();
-                                    let cheader = col.header.clone();
-                                    let is_hidden = hidden_ids.contains(&cid);
-                                    rsx! {
-                                        DropdownMenuCheckboxItem {
-                                            key: "{cid}",
-                                            checked: !is_hidden,
-                                            onchange: move |visible: bool| {
-                                                let mut h = hidden.write();
-                                                if visible {
-                                                    h.retain(|x| x != &cid);
-                                                } else if !h.contains(&cid) {
-                                                    h.push(cid.clone());
-                                                }
-                                            },
-                                            "{cheader}"
+                    }
+
+                    // Column visibility toggle
+                    if show_column_toggle {
+                        DropdownMenu {
+                            DropdownMenuTrigger { class: "h-8 gap-1.5 rounded-md border border-border/80 bg-background px-2.5 text-xs text-foreground hover:bg-muted transition-colors".to_string(),
+                                svg {
+                                    class: "size-3.5 text-muted-foreground",
+                                    view_box: "0 0 24 24",
+                                    fill: "none",
+                                    stroke: "currentColor",
+                                    stroke_width: "2",
+                                    stroke_linecap: "round",
+                                    stroke_linejoin: "round",
+                                    path { d: "M21 4H14" }
+                                    path { d: "M10 4H3" }
+                                    path { d: "M21 12H12" }
+                                    path { d: "M8 12H3" }
+                                    path { d: "M21 20H16" }
+                                    path { d: "M12 20H3" }
+                                    path { d: "M14 2V6" }
+                                    path { d: "M8 10V14" }
+                                    path { d: "M16 18V22" }
+                                }
+                                "Columns"
+                            }
+                            DropdownMenuContent { align: "end".to_string(), class: "w-44".to_string(),
+                                for col in &columns {
+                                    {
+                                        let cid = col.id.clone();
+                                        let cheader = col.header.clone();
+                                        let is_hidden = hidden_ids.contains(&cid);
+                                        rsx! {
+                                            DropdownMenuCheckboxItem {
+                                                key: "{cid}",
+                                                checked: !is_hidden,
+                                                onchange: move |visible: bool| {
+                                                    let mut h = hidden.write();
+                                                    if visible {
+                                                        h.retain(|x| x != &cid);
+                                                    } else if !h.contains(&cid) {
+                                                        h.push(cid.clone());
+                                                    }
+                                                },
+                                                "{cheader}"
+                                            }
                                         }
                                     }
                                 }
@@ -498,30 +619,15 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
                         }
                     }
                 }
-
-                // Selection bulk-actions
-                if selected_count > 0 {
-                    div { class: if show_column_toggle { "flex items-center gap-2" } else { "ml-auto flex items-center gap-2" },
-                        span { class: "text-xs text-muted-foreground",
-                            "{selected_count} selected"
-                        }
-                        button {
-                            r#type: "button",
-                            class: "h-8 cursor-pointer rounded-md border border-border px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted",
-                            onclick: move |_| selected.write().clear(),
-                            "Clear"
-                        }
-                    }
-                }
             }
 
-            // ================= Table =================
-            div { class: "overflow-x-auto",
+            // ================= Table (Middle flex scroll area) =================
+            div { class: "flex-1 overflow-auto min-h-0 w-full",
                 table { class: "w-full caption-bottom border-collapse text-left text-sm",
-                    thead { class: "border-b border-border/60 bg-muted/40",
+                    thead { class: "sticky top-0 z-10 border-b border-border/70 bg-muted/80 backdrop-blur-xs",
                         tr {
                             // Select-all header
-                            th { class: "w-10 px-4 py-2.5 align-middle",
+                            th { class: "w-10 px-3.5 py-2.5 align-middle",
                                 SelectionCheckbox {
                                     checked: all_page_selected,
                                     indeterminate: some_page_selected,
@@ -557,15 +663,16 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
                                     } else {
                                         "none"
                                     };
+                                    let header_color = if is_sorted { "text-foreground font-semibold" } else { "text-muted-foreground" };
                                     rsx! {
                                         th {
                                             key: "{key_id}",
                                             "aria-sort": aria_sort,
                                             tabindex: if sortable { "0" } else { "-1" },
                                             class: if sortable {
-                                                "cursor-pointer select-none px-4 py-2.5 align-middle text-[11px] font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                                                "cursor-pointer select-none px-3.5 py-2.5 align-middle text-[11px] uppercase tracking-wider transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring {header_color}"
                                             } else {
-                                                "px-4 py-2.5 align-middle text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
+                                                "px-3.5 py-2.5 align-middle text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
                                             },
                                             onclick: move |_| {
                                                 toggle_sort(sort, page, &sort_id, sortable);
@@ -588,12 +695,24 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
                         }
                     }
 
-                    tbody { class: "divide-y divide-border/50",
+                    tbody { class: "divide-y divide-border/60 bg-card",
                         if total == 0 {
                             tr {
-                                td { class: "px-4 py-10 text-center text-xs text-muted-foreground",
+                                td { class: "px-4 py-16 text-center text-xs text-muted-foreground",
                                     colspan: "{col_count}",
-                                    "No results."
+                                    div { class: "flex flex-col items-center justify-center gap-2",
+                                        svg {
+                                            class: "size-8 text-muted-foreground/40",
+                                            view_box: "0 0 24 24",
+                                            fill: "none",
+                                            stroke: "currentColor",
+                                            stroke_width: "1.5",
+                                            circle { cx: "11", cy: "11", r: "8" }
+                                            path { d: "m21 21-4.3-4.3" }
+                                        }
+                                        span { class: "font-medium text-foreground", "No tickets found" }
+                                        span { class: "text-muted-foreground", "Try adjusting your search or active filters." }
+                                    }
                                 }
                             }
                         } else {
@@ -604,18 +723,29 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
                                     let has_click = props.on_row_click.is_some();
                                     let cursor = if has_click { "cursor-pointer" } else { "" };
                                     let click_task = task.clone();
+                                    let click_task_ctx = task.clone();
                                     let toggle_id = rid.clone();
                                     let row_on_click = props.on_row_click;
+                                    let row_on_context = props.on_row_context_menu;
                                     rsx! {
                                         tr {
                                             key: "{rid}",
-                                            class: "group border-b border-border/50 transition-colors last:border-b-0 hover:bg-muted/40 {cursor}",
+                                            "data-state": if is_selected { "selected" } else { "" },
+                                            class: "group border-b border-border/50 transition-colors duration-100 last:border-b-0 hover:bg-muted/40 data-[state=selected]:bg-muted/60 {cursor}",
                                             onclick: move |_| {
                                                 if let Some(h) = &row_on_click {
                                                     h.call(click_task.clone());
                                                 }
                                             },
-                                            td { class: "px-4 py-3 align-middle",
+                                            oncontextmenu: move |e: MouseEvent| {
+                                                if let Some(h) = &row_on_context {
+                                                    e.prevent_default();
+                                                    e.stop_propagation();
+                                                    let coords = e.client_coordinates();
+                                                    h.call((click_task_ctx.clone(), (coords.x, coords.y)));
+                                                }
+                                            },
+                                            td { class: "px-3.5 py-2.5 align-middle",
                                                 SelectionCheckbox {
                                                     checked: is_selected,
                                                     indeterminate: false,
@@ -632,7 +762,7 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
                                             for col in &visible_columns {
                                                 td {
                                                     key: "{col.id}",
-                                                    class: "px-4 py-3 align-middle [&:has([role=checkbox])]:pr-0",
+                                                    class: "px-3.5 py-2.5 align-middle text-xs [&:has([role=checkbox])]:pr-0",
                                                     {(col.cell)(&task)}
                                                 }
                                             }
@@ -645,10 +775,21 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
                 }
             }
 
-            // ================= Pagination =================
-            div { class: "flex flex-wrap items-center justify-between gap-3 border-t border-border/50 px-4 py-3",
+            // ================= Pagination (Pinned Bottom Bar) =================
+            div { class: "flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border/60 px-4 py-2.5 bg-card",
 
-                // Left: rows-per-page + summary
+                // Left: summary / selection
+                div { class: "flex items-center gap-3 text-xs text-muted-foreground",
+                    span {
+                        if selected_count > 0 {
+                            "{selected_count} of {total} row(s) selected."
+                        } else {
+                            "Showing {showing_from}–{showing_to} of {total} entries"
+                        }
+                    }
+                }
+
+                // Right: rows-per-page + navigation
                 div { class: "flex items-center gap-4",
                     div { class: "flex items-center gap-2",
                         span { class: "text-xs text-muted-foreground",
@@ -657,7 +798,7 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
                         div { class: "w-16",
                             Select {
                                 value: Some(per_page_str),
-                                SelectTrigger { class: "h-8".to_string(),
+                                SelectTrigger { class: "h-8 text-xs rounded-md bg-background border-border/80".to_string(),
                                     SelectValue {}
                                 }
                                 SelectContent {
@@ -678,62 +819,56 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
                             }
                         }
                     }
-                    span { class: "text-xs text-muted-foreground",
-                        "Showing {showing_from}–{showing_to} of {total}"
-                    }
-                }
 
-                // Right: page navigation
-                div { class: "flex items-center gap-1.5",
-                    PaginationButton {
-                        disabled: current_page == 0,
-                        title: "First page",
-                        onclick: move |_| *page.write() = 0,
-                        // double-chevron-left
-                        svg {
-                            class: "size-4",
-                            view_box: "0 0 24 24",
-                            fill: "none",
-                            stroke: "currentColor",
-                            stroke_width: "2",
-                            stroke_linecap: "round",
-                            stroke_linejoin: "round",
-                            path { d: "m11 17-5-5 5-5" }
-                            path { d: "m18 17-5-5 5-5" }
+                    div { class: "flex items-center gap-1",
+                        PaginationButton {
+                            disabled: current_page == 0,
+                            title: "First page",
+                            onclick: move |_| *page.write() = 0,
+                            svg {
+                                class: "size-3.5",
+                                view_box: "0 0 24 24",
+                                fill: "none",
+                                stroke: "currentColor",
+                                stroke_width: "2",
+                                stroke_linecap: "round",
+                                stroke_linejoin: "round",
+                                path { d: "m11 17-5-5 5-5" }
+                                path { d: "m18 17-5-5 5-5" }
+                            }
                         }
-                    }
-                    PaginationButton {
-                        disabled: current_page == 0,
-                        title: "Previous page",
-                        onclick: move |_| *page.write() = current_page.saturating_sub(1),
-                        ChevronLeftIcon { class: "size-4" }
-                    }
+                        PaginationButton {
+                            disabled: current_page == 0,
+                            title: "Previous page",
+                            onclick: move |_| *page.write() = current_page.saturating_sub(1),
+                            ChevronLeftIcon { class: "size-3.5" }
+                        }
 
-                    span { class: "px-2 text-xs font-medium text-foreground tabular-nums",
-                        "Page {current_page + 1} of {total_pages}"
-                    }
+                        span { class: "px-2 text-xs font-medium text-foreground tabular-nums",
+                            "Page {current_page + 1} of {total_pages}"
+                        }
 
-                    PaginationButton {
-                        disabled: current_page + 1 >= total_pages,
-                        title: "Next page",
-                        onclick: move |_| *page.write() = current_page + 1,
-                        ChevronRightIcon { class: "size-4" }
-                    }
-                    PaginationButton {
-                        disabled: current_page + 1 >= total_pages,
-                        title: "Last page",
-                        onclick: move |_| *page.write() = total_pages - 1,
-                        // double-chevron-right
-                        svg {
-                            class: "size-4",
-                            view_box: "0 0 24 24",
-                            fill: "none",
-                            stroke: "currentColor",
-                            stroke_width: "2",
-                            stroke_linecap: "round",
-                            stroke_linejoin: "round",
-                            path { d: "m6 17 5-5-5-5" }
-                            path { d: "m13 17 5-5-5-5" }
+                        PaginationButton {
+                            disabled: current_page + 1 >= total_pages,
+                            title: "Next page",
+                            onclick: move |_| *page.write() = current_page + 1,
+                            ChevronRightIcon { class: "size-3.5" }
+                        }
+                        PaginationButton {
+                            disabled: current_page + 1 >= total_pages,
+                            title: "Last page",
+                            onclick: move |_| *page.write() = total_pages - 1,
+                            svg {
+                                class: "size-3.5",
+                                view_box: "0 0 24 24",
+                                fill: "none",
+                                stroke: "currentColor",
+                                stroke_width: "2",
+                                stroke_linecap: "round",
+                                stroke_linejoin: "round",
+                                path { d: "m6 17 5-5-5-5" }
+                                path { d: "m13 17 5-5-5-5" }
+                            }
                         }
                     }
                 }
@@ -764,7 +899,7 @@ fn PaginationButton(
             r#type: "button",
             title: title,
             disabled: disabled,
-            class: "inline-flex size-8 items-center justify-center rounded-md border border-border text-foreground transition-colors {state}",
+            class: "inline-flex size-8 items-center justify-center rounded-md border border-border/80 bg-background text-foreground transition-colors {state}",
             onclick: move |_| {
                 if !disabled {
                     onclick.call(());

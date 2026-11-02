@@ -374,9 +374,9 @@ pub fn ThemeToggle(props: ThemeToggleProps) -> Element {
                         theme.toggle();
                     },
                     if is_dark {
-                        SunIcon { class: "size-4 text-amber-400 transition-transform duration-300 group-hover:rotate-45" }
+                        SunIcon { class: "size-4 text-warning transition-transform duration-300 group-hover:rotate-45" }
                     } else {
-                        MoonIcon { class: "size-4 text-slate-700 dark:text-slate-200 transition-transform duration-300 group-hover:-rotate-12" }
+                        MoonIcon { class: "size-4 text-foreground transition-transform duration-300 group-hover:-rotate-12" }
                     }
                     if props.show_label {
                         span { class: "ml-2 text-xs font-medium", "{mode.label()}" }
@@ -405,7 +405,7 @@ pub fn ThemeSegmented(props: ThemeSegmentedProps) -> Element {
     let item_btn = |mode: ThemeMode, label: &'static str, icon: Element| {
         let is_active = active_mode == mode;
         let active_cls = if is_active {
-            "bg-background text-foreground shadow-xs font-semibold"
+            "bg-background text-foreground font-semibold"
         } else {
             "text-muted-foreground hover:text-foreground hover:bg-background/50 font-normal"
         };

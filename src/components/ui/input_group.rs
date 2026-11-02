@@ -15,7 +15,6 @@ pub fn InputGroup(children: Element) -> Element {
                 border
                 border-input
                 bg-transparent
-                shadow-xs
                 transition-[color,box-shadow]
 
                 focus-within:border-ring
@@ -27,9 +26,6 @@ pub fn InputGroup(children: Element) -> Element {
 
                 has-[[data-slot=input-group-control][aria-invalid=true]]:
                     ring-destructive/20
-
-                dark:has-[[data-slot=input-group-control][aria-invalid=true]]:
-                    ring-destructive/40
             ",
 
             {children}
@@ -134,7 +130,6 @@ pub fn InputGroupButton(props: InputGroupButtonProps) -> Element {
             border
             border-input
             bg-background
-            shadow-xs
             hover:bg-accent
             hover:text-accent-foreground
         "

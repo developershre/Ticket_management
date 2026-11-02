@@ -105,9 +105,10 @@ pub fn DialogContent(props: DialogContentProps) -> Element {
         return rsx! {};
     }
 
+    let max_w_fallback = if props.class.contains("max-w-") { "" } else { "max-w-lg" };
     let class = format!(
-        "fixed left-1/2 top-1/2 z-20 grid w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 \
-         gap-4 border bg-background p-4 sm:p-6 shadow-lg rounded-xl duration-200 \
+        "fixed left-1/2 top-1/2 z-50 grid w-[calc(100%-2rem)] {max_w_fallback} -translate-x-1/2 -translate-y-1/2 \
+         gap-4 border border-border/80 bg-card p-5 sm:p-6 rounded-md shadow-2xl duration-150 \
          animate-in fade-in-0 zoom-in-95 outline-none {}",
         props.class
     );
@@ -115,7 +116,7 @@ pub fn DialogContent(props: DialogContentProps) -> Element {
     rsx! {
         // Backdrop overlay
         div {
-            class: "fixed inset-0 z-20 bg-black/60 backdrop-blur-xs animate-in fade-in-0",
+            class: "fixed inset-0 z-50 bg-black/75 backdrop-blur-sm animate-in fade-in-0",
             onmousedown: move |e| {
                 e.stop_propagation();
                 ctx.open.set(false);
@@ -188,7 +189,7 @@ pub struct DialogHeaderProps {
 #[component]
 pub fn DialogHeader(props: DialogHeaderProps) -> Element {
     let class = format!(
-        "flex flex-col space-y-1.5 text-center sm:text-left {}",
+        "flex flex-col gap-1.5 text-center sm:text-left {}",
         props.class
     );
 
@@ -216,7 +217,7 @@ pub struct DialogFooterProps {
 #[component]
 pub fn DialogFooter(props: DialogFooterProps) -> Element {
     let class = format!(
-        "flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2 gap-2 sm:gap-0 {}",
+        "flex flex-col-reverse sm:flex-row sm:justify-end sm:gap-2 gap-2 {}",
         props.class
     );
 

@@ -138,7 +138,7 @@ pub fn TooltipContent(props: TooltipContentProps) -> Element {
 
     let class = format!(
         "overflow-hidden rounded-md bg-primary px-3 py-1.5 text-xs \
-         text-primary-foreground shadow-md animate-in fade-in-0 zoom-in-95 pointer-events-none \
+         text-primary-foreground border border-border/40 animate-in fade-in-0 zoom-in-95 pointer-events-none \
          whitespace-nowrap select-none {}",
         props.class
     );

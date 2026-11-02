@@ -119,7 +119,7 @@ pub fn Sidebar(props: SidebarProps) -> Element {
     };
 
     let mobile_class = if is_open {
-        "max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-10 max-md:bg-sidebar max-md:border-r max-md:border-sidebar-border max-md:shadow-2xl"
+        "max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-10 max-md:bg-sidebar max-md:border-r max-md:border-sidebar-border"
     } else {
         "max-md:hidden"
     };

@@ -81,14 +81,14 @@ pub fn ToastProvider(children: Element) -> Element {
                     let (border_class, icon_class) = match item.variant {
                         ToastVariant::Default => ("border-border/60", "bg-muted text-foreground"),
                         ToastVariant::Success => (
-                            "border-emerald-500/40",
-                            "bg-emerald-500/10 text-emerald-500",
+                            "border-success/40",
+                            "bg-success/10 text-success",
                         ),
                         ToastVariant::Error => (
                             "border-destructive/40",
                             "bg-destructive/10 text-destructive",
                         ),
-                        ToastVariant::Info => ("border-blue-500/40", "bg-blue-500/10 text-blue-500"),
+                        ToastVariant::Info => ("border-info/40", "bg-info/10 text-info"),
                     };
                     let title = item.title.clone();
                     let description = item.description.clone();
@@ -96,7 +96,7 @@ pub fn ToastProvider(children: Element) -> Element {
                         div {
                             key: "{id}",
                             role: "status",
-                            class: "toast-item pointer-events-auto flex w-full items-start gap-3 rounded-lg border {border_class} bg-card p-3.5 shadow-lg",
+                            class: "toast-item pointer-events-auto flex w-full items-start gap-3 rounded-lg border {border_class} bg-card p-3.5",
                             onanimationend: move |_| toast.dismiss(id),
                             div { class: "flex size-7 shrink-0 items-center justify-center rounded-md {icon_class}",
                                 match item.variant {

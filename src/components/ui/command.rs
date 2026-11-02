@@ -66,16 +66,16 @@ pub fn CommandDialog(mut props: CommandDialogProps) -> Element {
     };
 
     let class = format!(
-        "fixed left-1/2 {top_class}z-20 w-[calc(100%-2rem)] max-w-xl \
+        "fixed left-1/2 {top_class}z-50 w-[calc(100%-2rem)] max-w-xl \
          -translate-x-1/2 overflow-hidden rounded-xl \
-         border bg-popover p-0 shadow-2xl {}",
+         border bg-popover p-0 {}",
         props.class
     );
 
     rsx! {
         // Backdrop - clicking or pressing outside closes the command dialog
         div {
-            class: "fixed inset-0 z-20 bg-black/10 backdrop-blur-[1px]",
+            class: "fixed inset-0 z-50 bg-black/50 backdrop-blur-sm",
 
             onmousedown: move |e| {
                 e.stop_propagation();
