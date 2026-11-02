@@ -25,7 +25,7 @@ impl EventColor {
             EventColor::Green => "bg-success",
             EventColor::Amber => "bg-warning",
             EventColor::Red => "bg-destructive",
-            EventColor::Purple => "bg-primary",
+            EventColor::Purple => "bg-purple-500",
             EventColor::Slate => "bg-muted-foreground",
         }
     }
@@ -54,9 +54,9 @@ impl EventColor {
                 "border-destructive/35",
             ),
             EventColor::Purple => (
-                "bg-primary/12 hover:bg-primary/22",
-                "text-primary",
-                "border-primary/35",
+                "bg-purple-500/15 hover:bg-purple-500/25",
+                "text-purple-400",
+                "border-purple-500/35",
             ),
             EventColor::Slate => (
                 "bg-muted hover:bg-muted/80",
@@ -73,7 +73,7 @@ impl EventColor {
             EventColor::Green => "border-l-success",
             EventColor::Amber => "border-l-warning",
             EventColor::Red => "border-l-destructive",
-            EventColor::Purple => "border-l-primary",
+            EventColor::Purple => "border-l-purple-500",
             EventColor::Slate => "border-l-muted-foreground",
         }
     }
@@ -85,7 +85,7 @@ impl EventColor {
             EventColor::Green => "border-success/30 bg-success/15 text-success",
             EventColor::Amber => "border-warning/30 bg-warning/20 text-warning-foreground",
             EventColor::Red => "border-destructive/30 bg-destructive/15 text-destructive",
-            EventColor::Purple => "border-primary/30 bg-primary/15 text-primary",
+            EventColor::Purple => "border-purple-500/30 bg-purple-500/15 text-purple-400",
             EventColor::Slate => "border-border bg-muted text-muted-foreground",
         }
     }

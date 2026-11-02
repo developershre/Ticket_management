@@ -1,0 +1,748 @@
+//! Background synchronization: Google Sheets API (source of truth)
+//! ↔ SQLite cache + persistent operation queue.
+//!
+//! Design:
+//! * **Single worker thread**, independent of the Dioxus UI lifecycle —
+//!   one cycle at a time, never overlapping.
+//! * Wakes **immediately** after local changes ([`kick`]), otherwise runs
+//!   every [`CYCLE_SECS`] seconds (120 s). Between cycles the thread
+//!   sleeps on a condvar — no CPU usage.
+//! * **Push phase**: executes queued operations oldest-first, coalescing
+//!   duplicate ops per ticket into a single API request.
+//! * **Pull phase**: fetches `tickets.list`, validates rows, diffs them
+//!   against SQLite (insert / apply / delete) and records conflicts when
+//!   the server changed while local operations are still pending.
+//! * Retryable failures use exponential backoff with jitter and honor
+//!   `Retry-After`; non-retryable failures are retained as `failed` (never
+//!   discarded) and re-checked slowly.
+//! * The UI subscribes with [`subscribe_status`] and is woken only when
+//!   status actually changes (no polling).
+//!
+//! Platform note: this is best-effort background execution. The OS may
+//! suspend the process (suspend-to-RAM, etc.) — sync resumes on the next
+//! wake-up; no guaranteed two-minute cadence is claimed.
+
+use futures_channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::{Condvar, Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use crate::api::{ApiConfig, ApiClient, ApiError, ServerTicket};
+use crate::db::{self, SyncOp};
+
+/// Periodic sync interval.
+pub const CYCLE_SECS: u64 = 120;
+/// Minimum gap between two pull phases (local edits trigger extra cycles;
+/// pulls are rate-limited so rapid edits don't spam `tickets.list`).
+const MIN_PULL_GAP_SECS: i64 = 20;
+/// Maximum operations executed per cycle.
+const OPS_PER_CYCLE: i64 = 50;
+/// `tickets.list` page size (API max is 200).
+const PAGE_LIMIT: u64 = 200;
+/// Safety bound on pagination.
+const MAX_PAGES: u64 = 50;
+
+/// Backoff: base * 2^retry (full jitter in the upper half), capped.
+const BACKOFF_BASE_SECS: u64 = 5;
+const BACKOFF_CAP_SECS: u64 = 900;
+/// Non-retryable failures are re-checked every 10 minutes (retained, never
+/// discarded — this lets a fixed API key or employee code self-heal).
+const NON_RETRYABLE_DELAY_SECS: u64 = 600;
+
+// ============================================================
+// Status shared with the UI
+// ============================================================
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SyncState {
+    /// API not configured (missing URL/key).
+    Disabled,
+    /// No problems; may still have queued changes waiting for backoff.
+    Idle,
+    /// A cycle is running right now.
+    Syncing,
+    /// The last cycle (or an operation) failed.
+    Error,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SyncStatus {
+    pub state: SyncState,
+    pub detail: String,
+    /// Operations not yet confirmed by the API.
+    pub pending_ops: i64,
+    /// Unresolved local/server conflicts.
+    pub conflicts: i64,
+    pub last_success_at: Option<String>,
+    /// Bumped whenever a pull changed local ticket data — the UI uses this
+    /// to bump `AppDbRevision` and reload from SQLite.
+    pub revision: u64,
+}
+
+impl Default for SyncStatus {
+    fn default() -> Self {
+        SyncStatus {
+            state: SyncState::Disabled,
+            detail: "Starting sync service…".to_string(),
+            pending_ops: 0,
+            conflicts: 0,
+            last_success_at: None,
+            revision: 0,
+        }
+    }
+}
+
+static STATUS: Mutex<Option<SyncStatus>> = Mutex::new(None);
+static SUBSCRIBERS: Mutex<Vec<UnboundedSender<SyncStatus>>> = Mutex::new(Vec::new());
+
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    // A panic elsewhere must not permanently disable sync.
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn with_status<R>(f: impl FnOnce(&mut SyncStatus) -> R) -> R {
+    let result = {
+        let mut guard = lock(&STATUS);
+        let status = guard.get_or_insert_with(SyncStatus::default);
+        f(status)
+    };
+    notify_subscribers();
+    result
+}
+
+fn notify_subscribers() {
+    let snapshot = snapshot();
+    let mut subs = lock(&SUBSCRIBERS);
+    subs.retain(|tx| tx.unbounded_send(snapshot.clone()).is_ok());
+}
+
+/// Current status snapshot (cheap clone, safe from any thread).
+pub fn snapshot() -> SyncStatus {
+    lock(&STATUS).clone().unwrap_or_default()
+}
+
+/// Subscribe to status changes. The receiver immediately yields the
+/// current snapshot and then one message per change — the UI task simply
+/// awaits it (no timers, no polling).
+pub fn subscribe_status() -> UnboundedReceiver<SyncStatus> {
+    let (tx, rx) = unbounded();
+    let _ = tx.unbounded_send(snapshot());
+    lock(&SUBSCRIBERS).push(tx);
+    rx
+}
+
+// ============================================================
+// Worker thread
+// ============================================================
+
+static WAKE: Mutex<bool> = Mutex::new(false);
+static WAKE_CV: Condvar = Condvar::new();
+static STARTED: OnceLock<()> = OnceLock::new();
+static CLIENT: OnceLock<ApiClient> = OnceLock::new();
+
+/// Wake the worker for an immediate sync cycle (called after every local
+/// ticket mutation). Safe from any thread; coalesces — multiple kicks
+/// before the worker wakes result in a single extra cycle.
+pub fn kick() {
+    let mut wake = lock(&WAKE);
+    *wake = true;
+    WAKE_CV.notify_one();
+}
+
+/// Start the single background worker (idempotent). Call once at startup,
+/// before the UI launches — sync must not depend on any screen.
+pub fn start_worker() {
+    if STARTED.set(()).is_err() {
+        return;
+    }
+    match std::thread::Builder::new()
+        .name("tms-sync".to_string())
+        .spawn(worker_loop)
+    {
+        Ok(_) => {}
+        Err(e) => {
+            with_status(|s| {
+                s.state = SyncState::Error;
+                s.detail = format!("Failed to start sync thread: {e}");
+            });
+        }
+    }
+}
+
+fn worker_loop() {
+    let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+        Ok(rt) => rt,
+        Err(e) => {
+            with_status(|s| {
+                s.state = SyncState::Error;
+                s.detail = format!("Failed to start sync runtime: {e}");
+            });
+            return;
+        }
+    };
+
+    // Immediate startup cycle: loads queued ops from previous runs and
+    // pulls server changes as soon as the app opens.
+    rt.block_on(run_cycle());
+
+    let mut deadline = Instant::now() + Duration::from_secs(CYCLE_SECS);
+    loop {
+        {
+            let mut wake = lock(&WAKE);
+            while !*wake {
+                let now = Instant::now();
+                if now >= deadline {
+                    break;
+                }
+                let (guard, _) = WAKE_CV
+                    .wait_timeout(wake, deadline - now)
+                    .unwrap_or_else(|e| e.into_inner());
+                wake = guard;
+            }
+            *wake = false;
+        }
+        deadline = Instant::now() + Duration::from_secs(CYCLE_SECS);
+        rt.block_on(run_cycle());
+    }
+}
+
+/// Runs one synchronous cycle (used by `--sync-once` and the test
+/// harness; the normal path is the worker thread).
+pub fn run_cycle_blocking() {
+    let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() else {
+        return;
+    };
+    rt.block_on(run_cycle());
+}
+
+fn ensure_client() -> Result<&'static ApiClient, String> {
+    if let Some(client) = CLIENT.get() {
+        return Ok(client);
+    }
+    // Configuration problems are retried next cycle (e.g. the collection
+    // file appearing later); successes are cached forever.
+    let cfg = ApiConfig::load()?;
+    let client = ApiClient::new(cfg)?;
+    Ok(CLIENT.get_or_init(|| client))
+}
+
+fn now_epoch() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+// ============================================================
+// One sync cycle
+// ============================================================
+
+pub async fn run_cycle() {
+    let client = match ensure_client() {
+        Ok(c) => c,
+        Err(reason) => {
+            with_status(|s| {
+                s.state = SyncState::Disabled;
+                s.detail = reason;
+                s.pending_ops = db::pending_op_count();
+                s.conflicts = db::unresolved_conflict_count();
+            });
+            return;
+        }
+    };
+
+    with_status(|s| {
+        s.state = SyncState::Syncing;
+        s.detail = "Syncing with Google Sheets…".to_string();
+    });
+
+    let mut cycle_error: Option<String> = None;
+
+    // ---- Push: confirm local changes with the API ----
+    let now = now_epoch();
+    let due = db::due_ops(now, OPS_PER_CYCLE).unwrap_or_default();
+    for op in merge_due_ops(due) {
+        let _ = db::mark_op_in_flight(op.op_id);
+        match execute_op(client, &op).await {
+            Ok(ExecOutcome::Synced) => {
+                let _ = db::mark_op_synced(op.op_id);
+            }
+            Ok(ExecOutcome::Superseded) => {
+                let _ = db::mark_op_superseded(op.op_id);
+            }
+            Err(e) => {
+                let next = next_attempt_at(&op, &e);
+                let _ = db::mark_op_error(op.op_id, &e.short(), e.is_retryable(), next);
+                cycle_error.get_or_insert_with(|| e.short());
+            }
+        }
+    }
+
+    // ---- Pull: refresh SQLite from the API (source of truth) ----
+    let mut pull_error: Option<String> = None;
+    let last_pull: i64 = db::sync_meta_get("last_pull_at")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    if now.saturating_sub(last_pull) >= MIN_PULL_GAP_SECS {
+        match pull(client).await {
+            Ok(changed) => {
+                let _ = db::sync_meta_set("last_pull_at", &now.to_string());
+                if changed > 0 {
+                    with_status(|s| s.revision = s.revision.wrapping_add(1));
+                }
+                with_status(|s| s.last_success_at = Some(crate::state::format_utc(now)));
+            }
+            Err(e) => pull_error = Some(e.short()),
+        }
+    }
+
+    // ---- Employee directory: pulled far less often (the sheet's 324
+    //      rows change rarely) — every 30 minutes, and always on the
+    //      first cycle after launch so the Employees page is populated.
+    const EMPLOYEE_PULL_GAP_SECS: i64 = 1800;
+    let last_emp_pull: i64 = db::sync_meta_get("last_employee_pull_at")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    if now.saturating_sub(last_emp_pull) >= EMPLOYEE_PULL_GAP_SECS {
+        match pull_employees(client).await {
+            Ok(count) => {
+                let _ = db::sync_meta_set("last_employee_pull_at", &now.to_string());
+                if count > 0 {
+                    // Bump the revision so the Employees page reloads.
+                    with_status(|s| s.revision = s.revision.wrapping_add(1));
+                }
+            }
+            // Directory failure never fails the cycle — tickets synced.
+            Err(e) => eprintln!("[sync] employee pull failed: {}", e.short()),
+        }
+    }
+
+    // ---- Final status ----
+    let pending = db::pending_op_count();
+    let conflicts = db::unresolved_conflict_count();
+    let op_error = db::latest_active_error();
+    with_status(|s| {
+        s.pending_ops = pending;
+        s.conflicts = conflicts;
+        if let Some(err) = pull_error.or(cycle_error).or(op_error) {
+            s.state = SyncState::Error;
+            s.detail = if pending > 0 {
+                format!("Sync issue · {pending} pending · {err}")
+            } else {
+                format!("Sync issue · {err}")
+            };
+        } else if pending > 0 {
+            s.state = SyncState::Idle;
+            s.detail = format!("{pending} change(s) waiting to sync");
+        } else {
+            s.state = SyncState::Idle;
+            s.detail = format!(
+                "Up to date · {}",
+                s.last_success_at
+                    .clone()
+                    .unwrap_or_else(|| crate::state::format_utc(now))
+            );
+        }
+    });
+}
+
+// ============================================================
+// Push phase
+// ============================================================
+
+enum ExecOutcome {
+    /// Server confirmed (or the operation is n/a server-side).
+    Synced,
+    /// Operation is no longer meaningful (row gone / folded elsewhere).
+    Superseded,
+}
+
+/// Collapses multiple due operations for the same ticket into one so a
+/// cycle never sends duplicate or conflicting requests for a single row.
+fn merge_due_ops(ops: Vec<SyncOp>) -> Vec<SyncOp> {
+    let mut merged: Vec<SyncOp> = Vec::new();
+    for op in ops {
+        let Some(pos) = merged.iter().position(|m| m.local_ticket_id == op.local_ticket_id) else {
+            merged.push(op);
+            continue;
+        };
+        let existing = &mut merged[pos];
+        match (existing.op_type.as_str(), op.op_type.as_str()) {
+            // A queued delete wins over anything else for the same row.
+            (_, "DELETE") => {
+                let _ = db::mark_op_superseded(existing.op_id);
+                *existing = op;
+            }
+            ("DELETE", _) => {
+                let _ = db::mark_op_superseded(op.op_id);
+            }
+            // CREATE absorbs UPDATE field patches; UPDATEs merge into one.
+            ("CREATE", "UPDATE") | ("UPDATE", "UPDATE") | ("CREATE", "CREATE") => {
+                let _ = db::merge_op_payload(existing.op_id, &op.payload);
+                let _ = db::mark_op_superseded(op.op_id);
+            }
+            // Defensive: a CREATE after an UPDATE for one row can't happen
+            // through the app — keep the first op.
+            ("UPDATE", "CREATE") => {
+                let _ = db::mark_op_superseded(op.op_id);
+            }
+            // Any other combination: keep the existing op, retain the new
+            // one as superseded rather than dropping data silently.
+            _ => {
+                let _ = db::mark_op_superseded(op.op_id);
+            }
+        }
+    }
+    merged
+}
+
+/// True when the previous failure might have reached the server anyway
+/// (timeout / transport / malformed response) — a CREATE is then verified
+/// by subject+description before being retried, preventing duplicates.
+fn ack_maybe_lost(last_error: &str) -> bool {
+    last_error.starts_with("TIMEOUT")
+        || last_error.starts_with("NETWORK")
+        || last_error.starts_with("DECODE")
+        || last_error.starts_with("HTTP 5")
+        // The create reached the server but recording the mapping failed
+        // locally — verify before retrying, or we would duplicate it.
+        || last_error.starts_with("DB")
+}
+
+async fn execute_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutcome, ApiError> {
+    match op.op_type.as_str() {
+        "CREATE" => {
+            if op.retry_count > 0
+                && ack_maybe_lost(op.last_error.as_deref().unwrap_or_default())
+            {
+                if let Some(remote) = find_matching_ticket(client, &op.payload).await? {
+                    db::set_ticket_mapping(op.local_ticket_id, &remote.ticket_id, &remote.last_updated_on)?;
+                    return Ok(ExecOutcome::Synced);
+                }
+            }
+            let remote = client.tickets_create(&with_employee_code(client, &op.payload)).await?;
+            db::set_ticket_mapping(op.local_ticket_id, &remote.ticket_id, &remote.last_updated_on)?;
+            Ok(ExecOutcome::Synced)
+        }
+
+        "UPDATE" => {
+            let server_id = op
+                .server_ticket_id
+                .clone()
+                .or_else(|| db::server_ticket_id(op.local_ticket_id));
+
+            let Some(server_id) = server_id else {
+                // The ticket never reached the server — push the current
+                // row as a create instead (edits to pre-sync tickets).
+                let Some(row) = db::ticket_create_payload(op.local_ticket_id) else {
+                    return Ok(ExecOutcome::Superseded); // row is gone
+                };
+                let remote = client.tickets_create(&with_employee_code(client, &row)).await?;
+                db::set_ticket_mapping(op.local_ticket_id, &remote.ticket_id, &remote.last_updated_on)?;
+                return Ok(ExecOutcome::Synced);
+            };
+
+            match client.tickets_update(&server_id, &op.payload).await {
+                Ok(remote) => {
+                    db::set_server_last_updated(op.local_ticket_id, &remote.last_updated_on)?;
+                    Ok(ExecOutcome::Synced)
+                }
+                Err(e) if e.is_not_found() => {
+                    // The server lost the row while we had local changes:
+                    // record the divergence, keep the op (retained as
+                    // failed) — never silently recreate or drop it.
+                    db::record_conflict(
+                        op.local_ticket_id,
+                        Some(&server_id),
+                        "update_target_missing_on_server",
+                        db::ticket_create_payload(op.local_ticket_id).as_ref(),
+                        None,
+                        &crate::state::format_utc(now_epoch()),
+                    )?;
+                    Err(e)
+                }
+                Err(e) => Err(e),
+            }
+        }
+
+        "DELETE" => {
+            let server_id = op
+                .server_ticket_id
+                .clone()
+                .or_else(|| db::server_ticket_id(op.local_ticket_id));
+            let Some(server_id) = server_id else {
+                return Ok(ExecOutcome::Synced); // never reached the server
+            };
+            match client.tickets_delete(&server_id).await {
+                Ok(()) => Ok(ExecOutcome::Synced),
+                // Already gone — deleting twice is a success.
+                Err(e) if e.is_not_found() => Ok(ExecOutcome::Synced),
+                Err(e) => Err(e),
+            }
+        }
+
+        other => {
+            // Unknown op type — shouldn't exist; retain it visibly.
+            Err(ApiError::Api {
+                code: "UNKNOWN_OP".to_string(),
+                message: format!("unsupported operation type {other}"),
+                retryable: false,
+                retry_after: None,
+            })
+        }
+    }
+}
+
+/// Applies the configured employee override (the sheet requires
+/// `employee_code` to reference an existing employee row).
+fn with_employee_code(client: &ApiClient, payload: &Value) -> Value {
+    let Some(code) = client.config().employee_code.as_deref() else {
+        return payload.clone();
+    };
+    let mut out = payload.clone();
+    if let Some(obj) = out.as_object_mut() {
+        obj.insert("employee_code".to_string(), json!(code));
+    }
+    out
+}
+
+/// Duplicate-CREATE guard: looks for an unclaimed server row with the
+/// same subject + description (only used before retrying a CREATE whose
+/// acknowledgment may have been lost).
+async fn find_matching_ticket(
+    client: &ApiClient,
+    payload: &Value,
+) -> Result<Option<ServerTicket>, ApiError> {
+    let subject = payload.get("subject").and_then(|v| v.as_str()).unwrap_or("");
+    let desc = payload
+        .get("problem_description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if subject.is_empty() {
+        return Ok(None);
+    }
+    let mut offset = 0u64;
+    for _ in 0..MAX_PAGES {
+        let page = client.tickets_list(offset, PAGE_LIMIT).await?;
+        let count = page.items.len() as u64;
+        for t in page.items {
+            if t.subject == subject && t.problem_description == desc {
+                return Ok(Some(t));
+            }
+        }
+        if !page.has_more || count == 0 {
+            break;
+        }
+        offset += count;
+    }
+    Ok(None)
+}
+
+/// Exponential backoff with jitter for retryable failures; `Retry-After`
+/// wins when present; non-retryable failures use a fixed slow re-check.
+fn next_attempt_at(op: &SyncOp, err: &ApiError) -> i64 {
+    let now = now_epoch();
+    if let Some(ra) = err.retry_after() {
+        return now + ra as i64;
+    }
+    if !err.is_retryable() {
+        return now + NON_RETRYABLE_DELAY_SECS as i64;
+    }
+    let shift = op.retry_count.clamp(0, 8) as u32;
+    let exp = BACKOFF_BASE_SECS
+        .saturating_mul(1u64 << shift)
+        .min(BACKOFF_CAP_SECS);
+    // Full jitter over the upper half: [exp/2, exp].
+    let half = exp / 2;
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| u64::from(d.subsec_nanos()))
+        .unwrap_or(0);
+    let jitter = half + (nanos % (half + 1));
+    now + jitter as i64
+}
+
+// ============================================================
+// Pull phase
+// ============================================================
+
+/// Fetches every server ticket and reconciles it with SQLite:
+/// * new server row → insert locally,
+/// * changed server row (and no pending local ops) → apply,
+/// * server row gone (and no pending local ops) → delete locally,
+/// * divergence while local ops are pending → record a conflict and
+///   preserve **both** sides (local row untouched, server copy stored in
+///   `sync_conflicts`).
+///
+/// Returns how many local rows changed (drives the UI refresh).
+async fn pull(client: &ApiClient) -> Result<usize, ApiError> {
+    // Collect pages keyed by server id (dedupes across page boundaries).
+    let mut server: HashMap<String, ServerTicket> = HashMap::new();
+    let mut invalid = 0usize;
+    let mut offset = 0u64;
+    for _ in 0..MAX_PAGES {
+        let page = client.tickets_list(offset, PAGE_LIMIT).await?;
+        invalid += page.invalid_items;
+        let count = page.items.len() as u64;
+        for t in page.items {
+            server.insert(t.ticket_id.clone(), t);
+        }
+        if !page.has_more || count == 0 {
+            break;
+        }
+        offset += count;
+    }
+    if invalid > 0 {
+        eprintln!("[sync] skipped {invalid} invalid ticket row(s) from the API");
+    }
+
+    let pending_creates = db::pending_create_subjects();
+    let mapped = db::mapped_tickets();
+    let local_by_server: HashMap<&str, i64> =
+        mapped.iter().map(|m| (m.server_id.as_str(), m.local_id)).collect();
+    let mut changed = 0usize;
+    let now_str = crate::state::format_utc(now_epoch());
+
+    // ---- server rows → local ----
+    for (server_id, t) in &server {
+        // Never re-insert a row that has a queued DELETE.
+        if db::server_id_has_active_delete(server_id) {
+            continue;
+        }
+        // Don't duplicate a local CREATE that hasn't been confirmed yet.
+        if !local_by_server.contains_key(server_id.as_str())
+            && pending_creates.iter().any(|s| s == &t.subject)
+        {
+            continue;
+        }
+
+        match local_by_server.get(server_id.as_str()) {
+            Some(&local_id) => {
+                let last = mapped
+                    .iter()
+                    .find(|m| m.local_id == local_id)
+                    .map(|m| m.server_last_updated.clone())
+                    .unwrap_or_default();
+                if last == t.last_updated_on && !db::has_unresolved_conflict(local_id) {
+                    continue; // unchanged since last sync
+                }
+                if db::ticket_has_pending_ops(local_id) {
+                    // Conflict: local changes are still queued — preserve
+                    // the local row and store the server copy.
+                    let local = db::ticket_create_payload(local_id);
+                    db::record_conflict(
+                        local_id,
+                        Some(server_id),
+                        "server_changed_while_local_pending",
+                        local.as_ref(),
+                        Some(&serde_json::to_value(t).unwrap_or(Value::Null)),
+                        &now_str,
+                    )?;
+                } else {
+                    // No local changes in flight: the server (source of
+                    // truth) wins and any recorded divergence settles.
+                    db::apply_server_ticket(local_id, t)?;
+                    db::resolve_conflicts_for_ticket(local_id)?;
+                    changed += 1;
+                }
+            }
+            None => {
+                db::insert_server_ticket(t)?;
+                changed += 1;
+            }
+        }
+    }
+
+    // ---- local rows whose server counterpart is gone ----
+    for m in &mapped {
+        if server.contains_key(&m.server_id) {
+            continue;
+        }
+        if db::ticket_has_pending_ops(m.local_id) {
+            // Server deleted while we still have local changes — record
+            // the divergence, keep the local row and the queued ops.
+            let local = db::ticket_create_payload(m.local_id);
+            db::record_conflict(
+                m.local_id,
+                Some(&m.server_id),
+                "server_deleted_while_local_pending",
+                local.as_ref(),
+                None,
+                &now_str,
+            )?;
+        } else {
+            db::delete_ticket(m.local_id)?;
+            changed += 1;
+        }
+    }
+
+    Ok(changed)
+}
+
+/// Refreshes the local employee cache from `employees.list`.
+///
+/// The whole directory is replaced in one transaction (the sheet is the
+/// source of truth), and the returned count lets the caller decide
+/// whether the UI needs to reload.
+async fn pull_employees(client: &ApiClient) -> Result<usize, ApiError> {
+    let employees = client.employees_list().await?;
+    let count = employees.len();
+    if count == 0 {
+        // An empty directory is suspicious (a filter glitch, a transient
+        // sheet problem) — never wipe a populated cache with nothing.
+        eprintln!("[sync] employees.list returned 0 rows — keeping existing cache");
+        return Ok(0);
+    }
+    db::replace_employees(&employees).map_err(ApiError::from)?;
+    Ok(count)
+}
+
+/// Forces the next cycle to refresh the employee directory immediately
+/// (used by the Employees page's "Refresh" action).
+pub fn invalidate_employee_cache() {
+    let _ = db::sync_meta_set("last_employee_pull_at", "0");
+}
+
+// ============================================================
+// Enqueue helpers (called by the UI right after a local write)
+// ============================================================
+
+fn now_str() -> String {
+    crate::state::format_utc(now_epoch())
+}
+
+/// Queue a CREATE for a freshly inserted local row (payload is read from
+/// SQLite so every create path shares one field mapping).
+pub fn enqueue_create(local_ticket_id: i64) {
+    let Some(payload) = db::ticket_create_payload(local_ticket_id) else {
+        eprintln!("[sync] enqueue_create: row {local_ticket_id} not readable");
+        return;
+    };
+    if let Err(e) = db::enqueue_create(local_ticket_id, &payload, &now_str()) {
+        eprintln!("[sync] enqueue_create failed: {e}");
+        return;
+    }
+    kick();
+}
+
+/// Queue a partial UPDATE (`fields` uses API field names).
+pub fn enqueue_update(local_ticket_id: i64, fields: Value) {
+    let server_id = db::server_ticket_id(local_ticket_id);
+    if let Err(e) = db::enqueue_update(local_ticket_id, server_id, &fields, &now_str()) {
+        eprintln!("[sync] enqueue_update failed: {e}");
+        return;
+    }
+    kick();
+}
+
+/// Queue a DELETE. Must be called **before** the local row is removed
+/// (the server mapping is read from the row).
+pub fn enqueue_delete(local_ticket_id: i64) {
+    let server_id = db::server_ticket_id(local_ticket_id);
+    match db::enqueue_delete(local_ticket_id, server_id.as_deref(), &now_str()) {
+        Ok(_) => {}
+        Err(e) => eprintln!("[sync] enqueue_delete failed: {e}"),
+    }
+    kick();
+}

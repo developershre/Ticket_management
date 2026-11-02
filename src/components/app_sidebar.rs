@@ -18,6 +18,29 @@ use crate::Route;
 
 #[component]
 pub fn AppSidebar() -> Element {
+    let db_sync = try_use_context::<Signal<crate::state::AppDbRevision>>();
+    // Read every badge count in one pass; touching `db_sync` registers
+    // this component for reloads when the sync worker bumps the revision.
+    let (notes_count, tickets_count, employees_count, reminders_count) = {
+        if let Some(sync) = db_sync {
+            let _ = sync();
+        }
+        (
+            crate::db::get_all_notes().len(),
+            crate::db::get_all_tickets().len(),
+            crate::db::employee_count(),
+            crate::db::get_all_reminders().len(),
+        )
+    };
+
+    let count_badge = |n: usize| {
+        if n > 0 {
+            Some(n.to_string())
+        } else {
+            None
+        }
+    };
+
     rsx! {
         Sidebar {
             collapsible: SidebarCollapsible::Icon,
@@ -57,7 +80,7 @@ pub fn AppSidebar() -> Element {
                             NavItem {
                                 route: Route::Tickets {},
                                 label: "IT Tickets",
-                                badge: Some("12".to_string()),
+                                badge: count_badge(tickets_count),
                                 icon: rsx! {
                                     svg {
                                         class: "size-4",
@@ -75,9 +98,25 @@ pub fn AppSidebar() -> Element {
                                 },
                             }
                             NavItem {
+                                route: Route::NotesPage {},
+                                label: "Notes",
+                                badge: if notes_count > 0 { Some(notes_count.to_string()) } else { None },
+                                icon: rsx! {
+                                    crate::icons::StickyNoteIcon { class: "size-4" }
+                                },
+                            }
+                            NavItem {
+                                route: Route::Employees {},
+                                label: "Employees",
+                                badge: count_badge(employees_count),
+                                icon: rsx! {
+                                    crate::icons::UsersIcon { class: "size-4" }
+                                },
+                            }
+                            NavItem {
                                 route: Route::Reminders {},
                                 label: "Reminders",
-                                badge: Some("3".to_string()),
+                                badge: count_badge(reminders_count),
                                 icon: rsx! {
                                     svg {
                                         class: "size-4",

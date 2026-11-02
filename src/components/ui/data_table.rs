@@ -159,6 +159,11 @@ pub struct DataTableProps<T: Clone + PartialEq + 'static> {
     #[props(default)]
     pub filter2_label: Option<String>,
 
+    /// Placeholder text for the toolbar search box.
+    /// Defaults to the tickets wording for backwards compatibility.
+    #[props(default)]
+    pub search_placeholder: Option<String>,
+
     /// Returns the value a row is grouped by for the second filter.
     #[props(default)]
     pub filter2_value: Option<fn(&T) -> String>,
@@ -202,6 +207,7 @@ impl<T: Clone + PartialEq + 'static> PartialEq for DataTableProps<T> {
             && self.filter_label == other.filter_label
             && self.filter2 == other.filter2
             && self.filter2_label == other.filter2_label
+            && self.search_placeholder == other.search_placeholder
             && self.page_size == other.page_size
             && self.initial_sort == other.initial_sort
             && self.on_row_click == other.on_row_click
@@ -444,6 +450,10 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
     let filter2_options = props.filter2.clone();
     let filter_placeholder = props.filter_label.clone().unwrap_or_else(|| "Status".to_string());
     let filter2_placeholder = props.filter2_label.clone().unwrap_or_else(|| "Priority".to_string());
+    let search_placeholder = props
+        .search_placeholder
+        .clone()
+        .unwrap_or_else(|| "Search tickets, requester, ID...".to_string());
 
     // Page-size choices
     let mut page_sizes = vec![5usize, 10, 20, 30, 50];
@@ -463,7 +473,7 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
                     div { class: "relative w-full min-w-[180px] max-w-xs flex-1",
                         SearchIcon { class: "pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" }
                         Input {
-                            placeholder: "Search tickets, requester, ID...".to_string(),
+                            placeholder: search_placeholder,
                             value: query.read().clone(),
                             class: "h-8 pl-8 pr-7 text-xs rounded-md bg-background border-border/80".to_string(),
                             oninput: move |e: FormEvent| {

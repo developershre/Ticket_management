@@ -1,0 +1,432 @@
+{
+  "info": {
+    "_postman_id": "a8f70d42-2e6b-4bb2-bdb2-7a4d7d5a0101",
+    "name": "Ticket Management System API v1 - Complete (Reminder Email Fixed)",
+    "description": "Complete TMS API. Set base_url and api_key collection variables. Reminder create sends immediately for past/current send_at; future reminders use the five-minute worker. reminders.sendNow sends the secure ticket form link.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://script.google.com/macros/s/AKfycbzx_5xVNedTPoIiT6WJ68zxKKaaaH-YahglFcL81LnD206RqnhonLqqBkYgyMSbBhDaoA/exec",
+      "type": "string"
+    },
+    {
+      "key": "api_key",
+      "value": "902038705cda4e6cacd685e401f000da38edaa46cd644e29934b1e8f01e73f957469e7d33a384a01b2b2a7d361e6f106",
+      "type": "secret"
+    },
+    {
+      "key": "reminder_id",
+      "value": "RMD-REPLACE-WITH-REAL-ID",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"health.check\",\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}",
+            "description": "No API key required. Confirms API and active spreadsheet availability."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Tickets",
+      "item": [
+        {
+          "name": "Create Ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"tickets.create\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {\n    \"employee_code\": \"EMP001\",\n    \"email_address\": \"employee@example.com\",\n    \"category\": \"IT Support\",\n    \"subject\": \"Laptop is not connecting to Wi-Fi\",\n    \"problem_description\": \"The laptop connects but shows no internet access.\",\n    \"priority\": \"High\",\n    \"assigned_to\": \"IT Helpdesk\",\n    \"customer\": \"Head Office\",\n    \"status\": \"Open\",\n    \"stage\": \"New\",\n    \"kanban_state\": \"To Do\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}",
+            "description": "Requires an existing employee. Ticket ID and timestamps are generated."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"tickets.get\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {\n    \"ticket_id\": \"TKT-2026-000001\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "List Tickets",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"tickets.list\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {\n    \"status\": \"Open\",\n    \"priority\": \"High\",\n    \"query\": \"network\",\n    \"offset\": 0,\n    \"limit\": 50\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}",
+            "description": "Optional filters: employee_code, status, priority, assigned_to, category. limit max is 200."
+          },
+          "response": []
+        },
+        {
+          "name": "Update Ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"tickets.update\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {\n    \"ticket_id\": \"TKT-2026-000001\",\n    \"status\": \"In Progress\",\n    \"assigned_to\": \"EMP010\",\n    \"priority\": \"Medium\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}",
+            "description": "Send ticket_id and only the fields to update."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"tickets.delete\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {\n    \"ticket_id\": \"TKT-2026-000001\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}",
+            "description": "Hard delete: permanently removes the ticket row."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Employees",
+      "item": [
+        {
+          "name": "Create Employee",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"employees.create\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {\n    \"employee_code\": \"EMP001\",\n    \"employee_name\": \"Aarav Sharma\",\n    \"department\": \"IT\",\n    \"email\": \"employee@example.com\",\n    \"division\": \"Corporate\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}",
+            "description": "employee_code and employee_name are required; employee_code must be unique."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Employee",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"employees.get\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {\n    \"employee_code\": \"EMP001\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "List Employees",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"employees.list\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {\n    \"department\": \"IT\",\n    \"division\": \"Corporate\",\n    \"query\": \"Aarav\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}",
+            "description": "Optional exact filters: department and division. query searches all employee fields. No pagination."
+          },
+          "response": []
+        },
+        {
+          "name": "Update Employee",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"employees.update\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {\n    \"employee_code\": \"EMP001\",\n    \"department\": \"Information Technology\",\n    \"email\": \"aarav@example.com\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}",
+            "description": "Send employee_code and only the fields to update."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Employee",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"employees.delete\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {\n    \"employee_code\": \"EMP001\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}",
+            "description": "Deletion is blocked if a ticket references this employee."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Reminders",
+      "description": "Reminder API. Create schedules a reminder; it does not send immediately. Scheduled delivery requires the Apps Script time-driven trigger for sendDueReminderEmails. Use Send Reminder Now only to test mail delivery; the current API implementation sends a plain diagnostic email without the secure form URL.",
+      "item": [
+        {
+          "name": "Create Reminder",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"reminders.create\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {\n    \"employee_code\": \"EMP001\",\n    \"service_category\": \"IT Support\",\n    \"reminder_message\": \"Please raise a ticket if your laptop/network issue is still unresolved.\",\n    \"send_at\": \"2026-11-01T10:00:00+05:30\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}",
+            "description": "Creates reminder. If send_at is in the past or present, the API attempts immediate secure-form email delivery and returns data.delivery. Future reminders are sent by the five-minute trigger. A saved reminder remains in the sheet if immediate delivery fails."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Reminder",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"reminders.get\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {\n    \"reminder_id\": \"RMD-20261031-00001\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}",
+            "description": "Fetch one reminder by reminder_id."
+          },
+          "response": []
+        },
+        {
+          "name": "List Reminders",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"reminders.list\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {\n    \"status\": \"Pending\",\n    \"employee_code\": \"EMP001\",\n    \"offset\": 0,\n    \"limit\": 50\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}",
+            "description": "Optional filters: employee_code, status, service_category, query. Pagination is supported."
+          },
+          "response": []
+        },
+        {
+          "name": "Update Reminder",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"reminders.update\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {\n    \"reminder_id\": \"RMD-20261031-00001\",\n    \"reminder_message\": \"Updated reminder message.\",\n    \"send_at\": \"2026-11-02T10:00:00+05:30\",\n    \"status\": \"Pending\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}",
+            "description": "Update employee_code, service_category, reminder_message, send_at, and/or status. Status can be Pending or Cancelled. Completed reminders are system-managed."
+          },
+          "response": []
+        },
+        {
+          "name": "Send Reminder Now (Secure Form Email)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"reminders.sendNow\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {\n    \"reminder_id\": \"{{reminder_id}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}",
+            "description": "Sends the selected pending reminder immediately using the same secure Create Support Ticket form link as the scheduled worker. Respects once-per-day duplicate prevention; optionally add data.force=true to deliberately resend."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

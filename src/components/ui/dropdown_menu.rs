@@ -215,8 +215,7 @@ pub fn DropdownMenuContent(props: DropdownMenuContentProps) -> Element {
     let classes = format!(
         "
         min-w-36
-        overflow-x-hidden
-        overflow-y-auto
+        overflow-visible
         rounded-md
         border
         border-border/80

@@ -145,14 +145,15 @@ pub fn DialogContent(props: DialogContentProps) -> Element {
                 }
             },
 
-            {props.children}
-
             if props.show_close_button {
                 button {
                     r#type: "button",
-                    class: "absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background \
-                            transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 \
-                            focus:ring-ring focus:ring-offset-2 cursor-pointer",
+                    title: "Close dialog (Esc)",
+                    "aria-label": "Close dialog",
+                    class: "absolute right-3.5 top-3.5 z-50 flex size-8 items-center justify-center rounded-full \
+                            text-muted-foreground/80 hover:text-foreground hover:bg-muted/80 \
+                            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring \
+                            transition-all duration-150 cursor-pointer shadow-xs",
                     onclick: move |e| {
                         e.stop_propagation();
                         ctx.open.set(false);
@@ -170,6 +171,8 @@ pub fn DialogContent(props: DialogContentProps) -> Element {
                     span { class: "sr-only", "Close" }
                 }
             }
+
+            {props.children}
         }
     }
 }
@@ -189,7 +192,7 @@ pub struct DialogHeaderProps {
 #[component]
 pub fn DialogHeader(props: DialogHeaderProps) -> Element {
     let class = format!(
-        "flex flex-col gap-1.5 text-center sm:text-left {}",
+        "flex flex-col gap-1.5 text-center sm:text-left pr-9 sm:pr-11 {}",
         props.class
     );
 

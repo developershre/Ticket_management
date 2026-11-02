@@ -1,11 +1,20 @@
 //! SQLite database management layer for TaskFlow IT Management.
 //! Reads and writes directly to `management.db` adhering to `DATABASE.SQL`.
 
-use rusqlite::{params, Connection, Result};
+use rusqlite::{params, Connection, OptionalExtension, Result};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 /// Get the path to `management.db`
 pub fn db_path() -> PathBuf {
+    // Test/CI isolation: point the whole app (UI + sync worker + test
+    // harness) at a different database file. Checked first so
+    // `--sync-test` scenarios never touch real user data.
+    if let Some(p) = std::env::var_os("TMS_DB_PATH") {
+        if !p.is_empty() {
+            return PathBuf::from(p);
+        }
+    }
     let local = Path::new("management.db");
     if local.exists() {
         return local.to_path_buf();
@@ -28,9 +37,12 @@ pub fn db_path() -> PathBuf {
 }
 
 /// Open a connection with WAL mode enabled for smooth concurrency.
+/// A busy timeout is set because the background sync worker and the UI
+/// thread both write to the database.
 pub fn get_connection() -> Result<Connection> {
     let path = db_path();
     let conn = Connection::open(&path)?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
     conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
     Ok(conn)
 }
@@ -40,14 +52,16 @@ pub fn get_connection() -> Result<Connection> {
 // ============================================================
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct DbUser {
+pub struct DbEmployee {
     pub emp_id: i64,
-    pub emp_code: i64,
+    /// Sheet employee code (numeric string, e.g. `"10081"`); may be empty
+    /// when the sheet row has no code, and is not unique.
+    pub emp_code: String,
     pub emp_name: String,
+    /// Often empty — 293 of 324 sheet rows have no email.
     pub emp_email: String,
     pub department: String,
-    pub active: bool,
-    pub is_deleted: bool,
+    pub division: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -84,11 +98,58 @@ pub struct DbNote {
     pub content: String,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct DbReminder {
+    pub reminder_id: i64,
+    pub employee_code: String,
+    pub employee_name: String,
+    pub email_address: String,
+    pub service_category: String,
+    pub reminder_message: String,
+    pub send_at: String,
+    pub status: String,
+    pub email_sent_at: String,
+    pub ticket_id: String,
+    pub created_at: String,
+    pub last_updated_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NewReminderInput {
+    pub employee_code: String,
+    pub employee_name: String,
+    pub email_address: String,
+    pub service_category: String,
+    pub reminder_message: String,
+    pub send_at: String,
+    pub status: String,
+    pub email_sent_at: String,
+    pub ticket_id: String,
+}
+
+impl Default for NewReminderInput {
+    fn default() -> Self {
+        Self {
+            employee_code: "EMP-1001".to_string(),
+            employee_name: "Gamer Rock".to_string(),
+            email_address: "admin@taskflow.internal".to_string(),
+            service_category: "Engineering".to_string(),
+            reminder_message: String::new(),
+            send_at: "Today · 2:00 PM".to_string(),
+            status: "Pending".to_string(),
+            email_sent_at: "Not sent".to_string(),
+            ticket_id: String::new(),
+        }
+    }
+}
+
 // ============================================================
 // Database Initialization & Seeding
 // ============================================================
 
-/// Ensures tables from `DATABASE.SQL` exist and seeds initial data if tables are empty.
+/// Ensures tables from `DATABASE.SQL` exist. No demo data is seeded:
+/// tickets come from the Google Sheet (`tickets.list`) and employees from
+/// `employees.list` via the background sync worker.
 pub fn init_database() -> Result<()> {
     let conn = get_connection()?;
 
@@ -97,11 +158,12 @@ pub fn init_database() -> Result<()> {
         r#"
         CREATE TABLE IF NOT EXISTS USERS(
             emp_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            emp_code INTEGER NOT NULL,
+            emp_code TEXT,
             emp_name TEXT NOT NULL,
-            emp_email TEXT UNIQUE NOT NULL,
+            emp_email TEXT,
             department TEXT,
-            active BOOLEAN,
+            division TEXT,
+            active BOOLEAN DEFAULT 1,
             is_deleted BOOLEAN DEFAULT 0
         );
 
@@ -146,198 +208,81 @@ pub fn init_database() -> Result<()> {
             emp_code TEXT,
             content TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS reminders (
+            reminder_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            employee_code TEXT,
+            employee_name TEXT,
+            email_address TEXT,
+            service_category TEXT,
+            reminder_message TEXT NOT NULL,
+            send_at TEXT,
+            status TEXT DEFAULT 'Pending',
+            email_sent_at TEXT,
+            ticket_id TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
         "#,
     )?;
 
-    // 2. Seed initial users if empty
-    let user_count: i64 = conn.query_row("SELECT count(*) FROM USERS", [], |r| r.get(0))?;
-    if user_count == 0 {
-        let initial_users = [
-            (4019, "David Chen", "david.chen@corp.internal", "Engineering", true),
-            (5082, "Sarah Miller", "sarah.miller@corp.internal", "Hardware", true),
-            (1024, "Robert Taylor", "robert.taylor@corp.internal", "Finance", true),
-            (3011, "Elena Rostova", "elena.rostova@corp.internal", "DevOps", true),
-            (1001, "Gamer Rock", "admin@taskflow.internal", "IT Operations", true),
-            (1190, "James Smith", "james.smith@corp.internal", "General Ops", true),
-        ];
+    // 1b. Google Sheets ↔ SQLite sync layer. The mapping columns are added
+    //     once (SQLite ALTER TABLE has no IF NOT EXISTS, so they are checked
+    //     first); the queue/meta/conflict tables are idempotent.
+    ensure_ticket_sync_columns(&conn)?;
+    // 1c. Employee cache schema (nullable/duplicate emails + division —
+    //     the shape the sheet's employees.list actually returns).
+    ensure_user_schema(&conn)?;
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS sync_queue (
+            op_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            local_ticket_id INTEGER NOT NULL,
+            server_ticket_id TEXT,
+            op_type TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'pending',
+            last_error TEXT,
+            next_attempt_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_sync_queue_due
+            ON sync_queue(status, next_attempt_at);
 
-        for (code, name, email, dept, active) in initial_users {
-            conn.execute(
-                "INSERT INTO USERS (emp_code, emp_name, emp_email, department, active, is_deleted) VALUES (?1, ?2, ?3, ?4, ?5, 0)",
-                params![code, name, email, dept, active],
-            )?;
-        }
-    }
+        CREATE TABLE IF NOT EXISTS sync_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        );
 
-    // 3. Seed initial IT tickets if empty
-    let ticket_count: i64 = conn.query_row("SELECT count(*) FROM tickets", [], |r| r.get(0))?;
-    if ticket_count == 0 {
-        let seed_tickets = [
-            (
-                "EMP-4019 (David Chen)",
-                "david.chen@corp.internal",
-                "Network",
-                "VPN connection timeout on Cisco AnyConnect",
-                "User reports tunnel disconnection every 15 minutes while accessing internal database clusters.",
-                "High",
-                "GR",
-                "InProgress",
-                "Today · 09:15 AM",
-            ),
-            (
-                "EMP-5082 (Sarah Miller)",
-                "sarah.miller@corp.internal",
-                "Hardware",
-                "MacBook Pro M3 workstation setup & provisioning",
-                "New engineer onboarding workstation setup with standard dev toolchain and MDM enroll.",
-                "Medium",
-                "AL",
-                "Pending",
-                "Today · 10:30 AM",
-            ),
-            (
-                "EMP-1024 (Robert Taylor)",
-                "robert.taylor@corp.internal",
-                "Access",
-                "Active Directory account lock after password expiry",
-                "Password expired yesterday; password reset self-service triggered max retry lockout.",
-                "High",
-                "JD",
-                "Pending",
-                "Today · 11:00 AM",
-            ),
-            (
-                "EMP-3011 (Elena Rostova)",
-                "elena.rostova@corp.internal",
-                "Security",
-                "SSL certificate expiring on internal staging gateway",
-                "Wildcard certificate *.staging.corp.internal expires in 3 days; renewal needed via Certbot.",
-                "High",
-                "SL",
-                "InProgress",
-                "Yesterday · 02:20 PM",
-            ),
-            (
-                "EMP-2201 (Mark Vance)",
-                "mark.vance@corp.internal",
-                "Hardware",
-                "Replacement battery requested for Dell Latitude",
-                "Battery health at 42%; swelling reported on lower trackpad housing.",
-                "Low",
-                "GR",
-                "Onhold",
-                "2 days ago",
-            ),
-            (
-                "EMP-4109 (Lisa Wong)",
-                "lisa.wong@corp.internal",
-                "Access",
-                "Awaiting manager approval for Production AWS IAM role",
-                "Role requires secondary approval from engineering VP before granting assume-role credentials.",
-                "Medium",
-                "JD",
-                "Onhold",
-                "3 days ago",
-            ),
-            (
-                "EMP-1190 (James Smith)",
-                "james.smith@corp.internal",
-                "Hardware",
-                "Floor 3 Kyocera network printer offline",
-                "Paper jam cleared, network interface reset, self-test page printing normally.",
-                "Medium",
-                "AL",
-                "Completed",
-                "Oct 28 · 04:40 PM",
-            ),
-            (
-                "EMP-3402 (Alex Kumar)",
-                "alex.kumar@corp.internal",
-                "Software",
-                "Docker Engine fails to start on Ubuntu 24.04 dev VM",
-                "systemd service reports iptables backend mismatch with nftables; updated daemon config.",
-                "Medium",
-                "SL",
-                "InProgress",
-                "Oct 29 · 11:15 AM",
-            ),
-            (
-                "EMP-8021 (Finance Team)",
-                "finance-desk@corp.internal",
-                "Network",
-                "Wi-Fi access point degraded in Conference Room C",
-                "Signal dropouts observed during large video calls; AP scheduled for firmware reboot.",
-                "High",
-                "GR",
-                "Pending",
-                "Today · 08:45 AM",
-            ),
-            (
-                "EMP-9012 (DevOps Team)",
-                "devops@corp.internal",
-                "Infrastructure",
-                "Upgrade PostgreSQL replica memory allocation",
-                "Replica instance resized to 64GB RAM; replication lag resolved to <5ms.",
-                "High",
-                "SL",
-                "Completed",
-                "Oct 27 · 06:00 PM",
-            ),
-            (
-                "EMP-1000 (SecOps)",
-                "secops@corp.internal",
-                "Security",
-                "Security patch deployment for Windows 11 fleet",
-                "Mandatory KB security rollups deployed across all 180 corporate endpoints.",
-                "Medium",
-                "JD",
-                "Completed",
-                "Oct 26 · 02:00 PM",
-            ),
-            (
-                "EMP-6120 (Emily Davis)",
-                "emily.davis@corp.internal",
-                "Hardware",
-                "External monitor flicker over DisplayPort adapter",
-                "Awaiting warranty replacement cable shipment from vendor.",
-                "Low",
-                "AL",
-                "Onhold",
-                "Yesterday · 04:00 PM",
-            ),
-        ];
+        CREATE TABLE IF NOT EXISTS sync_conflicts (
+            conflict_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            local_ticket_id INTEGER NOT NULL,
+            server_ticket_id TEXT,
+            op_kind TEXT NOT NULL,
+            local_payload TEXT,
+            server_payload TEXT,
+            detected_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'unresolved',
+            resolved_at DATETIME
+        );
+        CREATE INDEX IF NOT EXISTS idx_sync_conflicts
+            ON sync_conflicts(status, local_ticket_id);
+        "#,
+    )?;
 
-        for (emp, email, cat, subj, desc, prio, assignee, state, created) in seed_tickets {
-            conn.execute(
-                r#"
-                INSERT INTO tickets (
-                    employee_code, email_address, category, subject, problem_description,
-                    priority, assigned_to, kanban_state, status, created_on, last_updated_on
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'Open', ?9, CURRENT_TIMESTAMP)
-                "#,
-                params![emp, email, cat, subj, desc, prio, assignee, state, created],
-            )?;
-        }
-    }
+    // Crash recovery: operations interrupted mid-flight (application
+    // restart during synchronization) go back to pending — an op is never
+    // marked synced without server confirmation.
+    conn.execute(
+        "UPDATE sync_queue SET status = 'pending', last_error = 'interrupted by restart', \
+         next_attempt_at = NULL WHERE status = 'in_flight'",
+        [],
+    )?;
 
-    // 4. Seed initial notes if empty
-    let note_count: i64 = conn.query_row("SELECT count(*) FROM NOTES", [], |r| r.get(0))?;
-    if note_count == 0 {
-        let seed_notes = [
-            ("EMP-1001", "Review pull request #482 — Cisco VPN tunnel fixes"),
-            ("EMP-1001", "Team standup notes & updates for sprint 24"),
-            ("EMP-1001", "Renew corporate domain + SSL certificates"),
-            ("EMP-1001", "Send weekly IT incident progress summary to leadership"),
-            ("EMP-1001", "Sprint backlog grooming & capacity planning"),
-            ("EMP-1001", "Clean up unused Docker images and staging volumes"),
-        ];
-        for (code, content) in seed_notes {
-            conn.execute(
-                "INSERT INTO NOTES (emp_code, content) VALUES (?1, ?2)",
-                params![code, content],
-            )?;
-        }
-    }
+    // NOTE: no demo data is seeded. Tickets and employees arrive from the
+    // Google Sheet through the background sync worker (see src/sync.rs);
+    // notes and reminders start empty and are filled by the user.
 
     Ok(())
 }
@@ -435,6 +380,100 @@ pub fn update_ticket_status(ticket_id: i64, new_kanban_state: &str) -> Result<()
     Ok(())
 }
 
+/// Input parameters for creating a new ticket with all fields matching DATABASE.SQL.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NewTicketInput {
+    pub employee_code: String,
+    pub email_address: String,
+    pub category: String,
+    pub subject: String,
+    pub problem_description: String,
+    pub attachment_name: String,
+    pub attachment_url: String,
+    pub priority: String,
+    pub assigned_to: String,
+    pub customer: String,
+    pub time_spent: f64,
+    pub activities: String,
+    pub my_activity: String,
+    pub deadline: String,
+    pub sla_status: String,
+    pub sla_deadline: String,
+    pub rating_avg_text: String,
+    pub kanban_state: String,
+    pub stage: String,
+    pub status: String,
+}
+
+impl Default for NewTicketInput {
+    fn default() -> Self {
+        Self {
+            employee_code: "EMP-1001 (CurrentUser)".to_string(),
+            email_address: "admin@taskflow.internal".to_string(),
+            category: "General".to_string(),
+            subject: String::new(),
+            problem_description: String::new(),
+            attachment_name: String::new(),
+            attachment_url: String::new(),
+            priority: "Medium".to_string(),
+            assigned_to: "GR".to_string(),
+            customer: "Internal".to_string(),
+            time_spent: 0.0,
+            activities: "Ticket created".to_string(),
+            my_activity: "Initial review".to_string(),
+            deadline: String::new(),
+            sla_status: "Within SLA".to_string(),
+            sla_deadline: String::new(),
+            rating_avg_text: "Unrated".to_string(),
+            kanban_state: "Pending".to_string(),
+            stage: "Triage".to_string(),
+            status: "Open".to_string(),
+        }
+    }
+}
+
+/// Inserts a new ticket with all 20 non-generated fields into `tickets` table
+/// and returns the generated `ticket_id`.
+pub fn create_ticket_full(input: &NewTicketInput) -> Result<i64> {
+    let conn = get_connection()?;
+    conn.execute(
+        r#"
+        INSERT INTO tickets (
+            employee_code, email_address, category, subject, problem_description,
+            attachment_name, attachment_url, priority, assigned_to, customer,
+            time_spent, activities, my_activity, deadline, sla_status, sla_deadline,
+            rating_avg_text, kanban_state, stage, status, created_on, last_updated_on
+        ) VALUES (
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+            ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        )
+        "#,
+        params![
+            input.employee_code,
+            input.email_address,
+            input.category,
+            input.subject,
+            input.problem_description,
+            input.attachment_name,
+            input.attachment_url,
+            input.priority,
+            input.assigned_to,
+            input.customer,
+            input.time_spent,
+            input.activities,
+            input.my_activity,
+            input.deadline,
+            input.sla_status,
+            input.sla_deadline,
+            input.rating_avg_text,
+            input.kanban_state,
+            input.stage,
+            input.status,
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
 /// Inserts a new ticket into `tickets` table and returns the generated `ticket_id`.
 pub fn create_ticket(
     subject: &str,
@@ -445,25 +484,19 @@ pub fn create_ticket(
     kanban_state: &str,
     description: &str,
 ) -> Result<i64> {
-    let conn = get_connection()?;
-    conn.execute(
-        r#"
-        INSERT INTO tickets (
-            employee_code, category, subject, problem_description,
-            priority, assigned_to, kanban_state, status, created_on, last_updated_on
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'Open', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        "#,
-        params![
-            employee_code,
-            category,
-            subject,
-            description,
-            priority,
-            assigned_to,
-            kanban_state
-        ],
-    )?;
-    Ok(conn.last_insert_rowid())
+    let input = NewTicketInput {
+        employee_code: employee_code.to_string(),
+        category: category.to_string(),
+        subject: subject.to_string(),
+        problem_description: description.to_string(),
+        priority: priority.to_string(),
+        assigned_to: assigned_to.to_string(),
+        kanban_state: kanban_state.to_string(),
+        stage: kanban_state.to_string(),
+        status: "Open".to_string(),
+        ..Default::default()
+    };
+    create_ticket_full(&input)
 }
 
 /// Deletes a ticket by `ticket_id`.
@@ -641,12 +674,29 @@ pub fn update_note(id: i64, content: &str) -> Result<()> {
     Ok(())
 }
 
+/// Updates note employee code.
+pub fn update_note_emp_code(id: i64, emp_code: &str) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE NOTES SET emp_code = ?1 WHERE id = ?2",
+        params![emp_code, id],
+    )?;
+    Ok(())
+}
+
 // ============================================================
 // Users Queries & Operations
 // ============================================================
 
-/// Fetches all active users from `USERS` table.
-pub fn get_all_users() -> Vec<DbUser> {
+// ============================================================
+// Employee cache (Google Sheets `employees.list` → USERS)
+// ============================================================
+
+/// Reads the cached employee directory, newest sheet row last.
+///
+/// Empty string is returned for missing email/division so the UI can
+/// render a placeholder instead of "null".
+pub fn get_all_employees() -> Vec<DbEmployee> {
     let conn = match get_connection() {
         Ok(c) => c,
         Err(_) => return Vec::new(),
@@ -655,13 +705,15 @@ pub fn get_all_users() -> Vec<DbUser> {
     let mut stmt = match conn.prepare(
         r#"
         SELECT
-            emp_id, emp_code, emp_name, emp_email,
-            COALESCE(department, 'Operations'),
-            COALESCE(active, 1),
-            COALESCE(is_deleted, 0)
+            emp_id,
+            COALESCE(emp_code, ''),
+            emp_name,
+            COALESCE(emp_email, ''),
+            COALESCE(department, ''),
+            COALESCE(division, '')
         FROM USERS
         WHERE is_deleted = 0
-        ORDER BY emp_id ASC
+        ORDER BY emp_name COLLATE NOCASE ASC
         "#,
     ) {
         Ok(s) => s,
@@ -669,14 +721,13 @@ pub fn get_all_users() -> Vec<DbUser> {
     };
 
     let rows = stmt.query_map([], |row| {
-        Ok(DbUser {
+        Ok(DbEmployee {
             emp_id: row.get(0)?,
             emp_code: row.get(1)?,
             emp_name: row.get(2)?,
             emp_email: row.get(3)?,
             department: row.get(4)?,
-            active: row.get(5)?,
-            is_deleted: row.get(6)?,
+            division: row.get(5)?,
         })
     });
 
@@ -685,3 +736,1021 @@ pub fn get_all_users() -> Vec<DbUser> {
         Err(_) => Vec::new(),
     }
 }
+
+/// Number of cached employees (sidebar badge).
+pub fn employee_count() -> usize {
+    let conn = match get_connection() {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+    conn.query_row(
+        "SELECT COUNT(*) FROM USERS WHERE is_deleted = 0",
+        [],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n as usize)
+    .unwrap_or(0)
+}
+
+/// Replaces the whole employee cache with one `employees.list` result.
+///
+/// A full replace (in a single transaction) mirrors the sheet exactly —
+/// employees removed upstream disappear locally too, and the non-unique
+/// sheet codes never collide because rows are keyed by `emp_id`.
+pub fn replace_employees(employees: &[crate::api::Employee]) -> Result<()> {
+    let mut conn = get_connection()?;
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM USERS", [])?;
+    {
+        let mut stmt = tx.prepare(
+            "INSERT INTO USERS (emp_code, emp_name, emp_email, department, division, active, is_deleted) \
+             VALUES (?1, ?2, ?3, ?4, ?5, 1, 0)",
+        )?;
+        for e in employees {
+            let email = if e.email.trim().is_empty() {
+                None
+            } else {
+                Some(e.email.trim())
+            };
+            stmt.execute(params![
+                e.employee_code.trim(),
+                e.employee_name.trim(),
+                email,
+                e.department.trim(),
+                e.division.trim(),
+            ])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Distinct departments in the cache (filter dropdown), sorted.
+pub fn employee_departments() -> Vec<String> {
+    let conn = match get_connection() {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let mut stmt = match conn.prepare(
+        "SELECT DISTINCT department FROM USERS \
+         WHERE is_deleted = 0 AND department != '' \
+         ORDER BY department COLLATE NOCASE ASC",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let rows = match stmt.query_map([], |r| r.get::<_, String>(0)) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    // Bound to a local so the borrow of `stmt`/`conn` ends here rather
+    // than extending into the function's tail expression.
+    let out: Vec<String> = rows.filter_map(Result::ok).collect();
+    out
+}
+
+/// Distinct divisions in the cache (filter dropdown), sorted.
+pub fn employee_divisions() -> Vec<String> {
+    let conn = match get_connection() {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let mut stmt = match conn.prepare(
+        "SELECT DISTINCT division FROM USERS \
+         WHERE is_deleted = 0 AND division != '' \
+         ORDER BY division COLLATE NOCASE ASC",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let rows = match stmt.query_map([], |r| r.get::<_, String>(0)) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    // Bound to a local so the borrow of `stmt`/`conn` ends here rather
+    // than extending into the function's tail expression.
+    let out: Vec<String> = rows.filter_map(Result::ok).collect();
+    out
+}
+
+// ============================================================
+// Reminders Queries & Operations
+// ============================================================
+
+/// Fetches all reminders from `reminders` table ordered by reminder_id.
+pub fn get_all_reminders() -> Vec<DbReminder> {
+    let conn = match get_connection() {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut stmt = match conn.prepare(
+        r#"
+        SELECT
+            reminder_id,
+            COALESCE(employee_code, 'EMP-1001'),
+            COALESCE(employee_name, 'Gamer Rock'),
+            COALESCE(email_address, 'admin@taskflow.internal'),
+            COALESCE(service_category, 'General'),
+            reminder_message,
+            COALESCE(send_at, 'Today · 2:00 PM'),
+            COALESCE(status, 'Pending'),
+            COALESCE(email_sent_at, 'Not sent yet'),
+            COALESCE(ticket_id, ''),
+            COALESCE(created_at, CURRENT_TIMESTAMP),
+            COALESCE(last_updated_at, CURRENT_TIMESTAMP)
+        FROM reminders
+        ORDER BY reminder_id ASC
+        "#,
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+
+    let rows = stmt.query_map([], |row| {
+        Ok(DbReminder {
+            reminder_id: row.get(0)?,
+            employee_code: row.get(1)?,
+            employee_name: row.get(2)?,
+            email_address: row.get(3)?,
+            service_category: row.get(4)?,
+            reminder_message: row.get(5)?,
+            send_at: row.get(6)?,
+            status: row.get(7)?,
+            email_sent_at: row.get(8)?,
+            ticket_id: row.get(9)?,
+            created_at: row.get(10)?,
+            last_updated_at: row.get(11)?,
+        })
+    });
+
+    match rows {
+        Ok(iter) => iter.filter_map(Result::ok).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Creates a new reminder with all 12 fields and returns the autogenerated `reminder_id`.
+pub fn create_reminder_full(input: &NewReminderInput) -> Result<i64> {
+    let conn = get_connection()?;
+    conn.execute(
+        r#"
+        INSERT INTO reminders (
+            employee_code, employee_name, email_address, service_category,
+            reminder_message, send_at, status, email_sent_at, ticket_id,
+            created_at, last_updated_at
+        ) VALUES (
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        )
+        "#,
+        params![
+            input.employee_code,
+            input.employee_name,
+            input.email_address,
+            input.service_category,
+            input.reminder_message,
+            input.send_at,
+            input.status,
+            input.email_sent_at,
+            input.ticket_id,
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Updates status of a reminder (e.g. "Pending", "Completed").
+pub fn update_reminder_status(reminder_id: i64, status: &str) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE reminders SET status = ?1, last_updated_at = CURRENT_TIMESTAMP WHERE reminder_id = ?2",
+        params![status, reminder_id],
+    )?;
+    Ok(())
+}
+
+/// Updates category of a reminder.
+pub fn update_reminder_category(reminder_id: i64, service_category: &str) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE reminders SET service_category = ?1, last_updated_at = CURRENT_TIMESTAMP WHERE reminder_id = ?2",
+        params![service_category, reminder_id],
+    )?;
+    Ok(())
+}
+
+/// Updates timing / send_at of a reminder.
+pub fn update_reminder_send_at(reminder_id: i64, send_at: &str) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE reminders SET send_at = ?1, last_updated_at = CURRENT_TIMESTAMP WHERE reminder_id = ?2",
+        params![send_at, reminder_id],
+    )?;
+    Ok(())
+}
+
+/// Updates all fields of a reminder.
+pub fn update_reminder_full(reminder_id: i64, input: &NewReminderInput) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        r#"
+        UPDATE reminders SET
+            employee_code = ?1,
+            employee_name = ?2,
+            email_address = ?3,
+            service_category = ?4,
+            reminder_message = ?5,
+            send_at = ?6,
+            status = ?7,
+            email_sent_at = ?8,
+            ticket_id = ?9,
+            last_updated_at = CURRENT_TIMESTAMP
+        WHERE reminder_id = ?10
+        "#,
+        params![
+            input.employee_code,
+            input.employee_name,
+            input.email_address,
+            input.service_category,
+            input.reminder_message,
+            input.send_at,
+            input.status,
+            input.email_sent_at,
+            input.ticket_id,
+            reminder_id,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Deletes a reminder by reminder_id.
+pub fn delete_reminder_db(reminder_id: i64) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute("DELETE FROM reminders WHERE reminder_id = ?1", params![reminder_id])?;
+    Ok(())
+}
+
+// ============================================================
+// Sync layer: Google Sheets ↔ SQLite
+//
+// * `tickets.server_ticket_id` / `tickets.server_last_updated` map the
+//   local INTEGER autoincrement id to the server's `TKT-…` id and store
+//   the server row version used for conflict detection.
+// * `sync_queue` is the persistent operation queue (ops survive restarts).
+// * `sync_meta` holds sync timestamps (e.g. last pull).
+// * `sync_conflicts` records unresolved local/server divergences.
+// ============================================================
+
+/// Adds the ticket↔server mapping columns once (ALTER TABLE has no
+/// IF NOT EXISTS, so existing columns are checked first).
+fn ensure_ticket_sync_columns(conn: &Connection) -> Result<()> {
+    let has_column = |name: &str| -> bool {
+        let Ok(mut stmt) = conn.prepare("PRAGMA table_info(tickets)") else {
+            return false;
+        };
+        let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(1)) else {
+            return false;
+        };
+        // Bind to a local so the borrow of `stmt` ends inside the closure.
+        let found = rows.filter_map(Result::ok).any(|c| c == name);
+        found
+    };
+
+    if !has_column("server_ticket_id") {
+        conn.execute("ALTER TABLE tickets ADD COLUMN server_ticket_id TEXT", [])?;
+    }
+    if !has_column("server_last_updated") {
+        conn.execute("ALTER TABLE tickets ADD COLUMN server_last_updated TEXT", [])?;
+    }
+    Ok(())
+}
+
+/// Migrates `USERS` to the employee-cache schema once.
+///
+/// The original table declared `emp_email TEXT UNIQUE NOT NULL` and
+/// `emp_code INTEGER NOT NULL`, but `employees.list` returns 324 rows of
+/// which 293 have no email, 4 emails are shared by several people and one
+/// row has no code — so the old constraints reject the real data. The old
+/// table is rebuilt (copying any existing rows) and `division` is added.
+fn ensure_user_schema(conn: &Connection) -> Result<()> {
+    let has_column = |name: &str| -> bool {
+        let Ok(mut stmt) = conn.prepare("PRAGMA table_info(USERS)") else {
+            return false;
+        };
+        let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(1)) else {
+            return false;
+        };
+        let found = rows.filter_map(Result::ok).any(|c| c == name);
+        found
+    };
+
+    if has_column("division") {
+        return Ok(()); // already migrated
+    }
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS USERS_new(
+            emp_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            emp_code TEXT,
+            emp_name TEXT NOT NULL,
+            emp_email TEXT,
+            department TEXT,
+            division TEXT,
+            active BOOLEAN DEFAULT 1,
+            is_deleted BOOLEAN DEFAULT 0
+        );
+        INSERT INTO USERS_new (emp_id, emp_code, emp_name, emp_email, department, active, is_deleted)
+            SELECT emp_id,
+                   CASE WHEN typeof(emp_code) = 'integer' THEN CAST(emp_code AS TEXT)
+                        ELSE emp_code END,
+                   emp_name,
+                   CASE WHEN emp_email = '' THEN NULL ELSE emp_email END,
+                   department,
+                   COALESCE(active, 1),
+                   COALESCE(is_deleted, 0)
+            FROM USERS;
+        DROP TABLE USERS;
+        ALTER TABLE USERS_new RENAME TO USERS;
+        "#,
+    )?;
+    Ok(())
+}
+
+/// One queued local mutation awaiting confirmation from the API.
+#[derive(Clone, Debug)]
+pub struct SyncOp {
+    pub op_id: i64,
+    pub local_ticket_id: i64,
+    pub server_ticket_id: Option<String>,
+    /// `CREATE` | `UPDATE` | `DELETE`
+    pub op_type: String,
+    pub payload: Value,
+    pub created_at: String,
+    pub retry_count: i64,
+    /// `pending` | `in_flight` | `synced` | `failed` | `superseded`
+    pub status: String,
+    pub last_error: Option<String>,
+    /// Epoch seconds before which the op must not be retried (backoff).
+    pub next_attempt_at: Option<i64>,
+}
+
+const OP_COLUMNS: &str = "op_id, local_ticket_id, server_ticket_id, op_type, payload, \
+                          created_at, retry_count, status, last_error, next_attempt_at";
+
+fn row_to_op(row: &rusqlite::Row<'_>) -> rusqlite::Result<SyncOp> {
+    let payload_str: String = row.get(4)?;
+    Ok(SyncOp {
+        op_id: row.get(0)?,
+        local_ticket_id: row.get(1)?,
+        server_ticket_id: row.get(2)?,
+        op_type: row.get(3)?,
+        payload: serde_json::from_str(&payload_str).unwrap_or(Value::Null),
+        created_at: row.get(5)?,
+        retry_count: row.get(6)?,
+        status: row.get(7)?,
+        last_error: row.get(8)?,
+        next_attempt_at: row.get(9)?,
+    })
+}
+
+/// Shallow field merge — later values win per field (API updates are
+/// partial field sets, so this is exactly the right granularity).
+pub fn merge_json(base: &Value, patch: &Value) -> Value {
+    let mut out = base.as_object().cloned().unwrap_or_default();
+    if let Some(p) = patch.as_object() {
+        for (k, v) in p {
+            out.insert(k.clone(), v.clone());
+        }
+    }
+    Value::Object(out)
+}
+
+fn active_ops(conn: &Connection, local_ticket_id: i64) -> Result<Vec<SyncOp>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {OP_COLUMNS} FROM sync_queue \
+         WHERE local_ticket_id = ?1 AND status IN ('pending','failed','in_flight') \
+         ORDER BY op_id"
+    ))?;
+    let rows = stmt.query_map(params![local_ticket_id], row_to_op)?;
+    Ok(rows.collect::<Result<Vec<_>>>()?)
+}
+
+/// All non-terminal operations for a ticket (used for coalescing and tests).
+pub fn active_ops_for_ticket(local_ticket_id: i64) -> Result<Vec<SyncOp>> {
+    let conn = get_connection()?;
+    active_ops(&conn, local_ticket_id)
+}
+
+fn insert_op(
+    conn: &Connection,
+    local_ticket_id: i64,
+    server_ticket_id: Option<&str>,
+    op_type: &str,
+    payload: &Value,
+    created_at: &str,
+) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO sync_queue \
+         (local_ticket_id, server_ticket_id, op_type, payload, created_at, status) \
+         VALUES (?1, ?2, ?3, ?4, ?5, 'pending')",
+        params![local_ticket_id, server_ticket_id, op_type, payload.to_string(), created_at],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Queue a local UPDATE. Coalesces with any active operation for the same
+/// ticket so the API never receives duplicate or conflicting requests for
+/// one row (edits that arrive while an op is in flight are queued behind it).
+pub fn enqueue_update(
+    local_ticket_id: i64,
+    server_ticket_id: Option<String>,
+    fields: &Value,
+    created_at: &str,
+) -> Result<i64> {
+    let conn = get_connection()?;
+
+    // Fold into an existing pending/failed UPDATE.
+    if let Some(op) = active_ops(&conn, local_ticket_id)?
+        .into_iter()
+        .find(|o| o.op_type == "UPDATE" && o.status != "in_flight")
+    {
+        let merged = merge_json(&op.payload, fields);
+        conn.execute(
+            "UPDATE sync_queue SET payload = ?1, status = 'pending', \
+             next_attempt_at = NULL, last_error = NULL WHERE op_id = ?2",
+            params![merged.to_string(), op.op_id],
+        )?;
+        return Ok(op.op_id);
+    }
+
+    // The ticket never reached the server: fold the edit into the CREATE.
+    if let Some(op) = active_ops(&conn, local_ticket_id)?
+        .into_iter()
+        .find(|o| o.op_type == "CREATE" && o.status != "in_flight")
+    {
+        let merged = merge_json(&op.payload, fields);
+        conn.execute(
+            "UPDATE sync_queue SET payload = ?1 WHERE op_id = ?2",
+            params![merged.to_string(), op.op_id],
+        )?;
+        return Ok(op.op_id);
+    }
+
+    // Otherwise queue behind any in-flight op.
+    insert_op(&conn, local_ticket_id, server_ticket_id.as_deref(), "UPDATE", fields, created_at)
+}
+
+/// Queue a local CREATE built from the current SQLite row.
+pub fn enqueue_create(local_ticket_id: i64, payload: &Value, created_at: &str) -> Result<i64> {
+    let conn = get_connection()?;
+    let active = active_ops(&conn, local_ticket_id)?;
+
+    // Re-creating a row supersedes a queued delete for it.
+    for op in active.iter().filter(|o| o.op_type == "DELETE") {
+        conn.execute(
+            "UPDATE sync_queue SET status = 'superseded' WHERE op_id = ?1",
+            params![op.op_id],
+        )?;
+    }
+
+    if let Some(op) = active.into_iter().find(|o| o.op_type == "CREATE") {
+        if op.status == "in_flight" {
+            return Ok(op.op_id); // already being pushed
+        }
+        let merged = merge_json(&op.payload, payload);
+        conn.execute(
+            "UPDATE sync_queue SET payload = ?1, status = 'pending', \
+             next_attempt_at = NULL, last_error = NULL WHERE op_id = ?2",
+            params![merged.to_string(), op.op_id],
+        )?;
+        return Ok(op.op_id);
+    }
+
+    insert_op(&conn, local_ticket_id, None, "CREATE", payload, created_at)
+}
+
+/// Queue a local DELETE. Supersedes every other active op for the row
+/// (their changes die with the ticket) and only reaches the API when the
+/// row was previously synced — an unmapped row never existed server-side.
+/// Returns the queued op id, or `None` when there is nothing to delete
+/// remotely.
+pub fn enqueue_delete(
+    local_ticket_id: i64,
+    server_ticket_id: Option<&str>,
+    created_at: &str,
+) -> Result<Option<i64>> {
+    let conn = get_connection()?;
+    let active = active_ops(&conn, local_ticket_id)?;
+
+    for op in &active {
+        conn.execute(
+            "UPDATE sync_queue SET status = 'superseded', next_attempt_at = NULL WHERE op_id = ?1",
+            params![op.op_id],
+        )?;
+    }
+
+    let Some(server_id) = server_ticket_id else {
+        // Never reached the server (no pending CREATE to clean up either —
+        // it was superseded above): nothing to do remotely.
+        return Ok(None);
+    };
+
+    Ok(Some(insert_op(
+        &conn,
+        local_ticket_id,
+        Some(server_id),
+        "DELETE",
+        &Value::Null,
+        created_at,
+    )?))
+}
+
+/// Operations whose backoff has expired (or which never had one).
+pub fn due_ops(now_epoch: i64, limit: i64) -> Result<Vec<SyncOp>> {
+    let conn = get_connection()?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {OP_COLUMNS} FROM sync_queue \
+         WHERE status IN ('pending','failed') \
+           AND (next_attempt_at IS NULL OR next_attempt_at <= ?1) \
+         ORDER BY op_id ASC LIMIT ?2"
+    ))?;
+    let rows = stmt.query_map(params![now_epoch, limit], row_to_op)?;
+    Ok(rows.collect::<Result<Vec<_>>>()?)
+}
+
+pub fn mark_op_in_flight(op_id: i64) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE sync_queue SET status = 'in_flight' WHERE op_id = ?1",
+        params![op_id],
+    )?;
+    Ok(())
+}
+
+/// Server confirmed the operation: flip to `synced` (retained as recent
+/// history; the newest 50 synced rows are kept).
+pub fn mark_op_synced(op_id: i64) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE sync_queue SET status = 'synced', last_error = NULL, next_attempt_at = NULL \
+         WHERE op_id = ?1",
+        params![op_id],
+    )?;
+    conn.execute(
+        "DELETE FROM sync_queue WHERE status = 'synced' AND op_id NOT IN \
+         (SELECT op_id FROM sync_queue WHERE status = 'synced' ORDER BY op_id DESC LIMIT 50)",
+        [],
+    )?;
+    Ok(())
+}
+
+/// Attempt failed. Retryable failures go back to `pending` with a backoff
+/// deadline; non-retryable ones become `failed` (retained — never
+/// discarded — and re-checked slowly).
+pub fn mark_op_error(
+    op_id: i64,
+    error: &str,
+    retryable: bool,
+    next_attempt_at: i64,
+) -> Result<()> {
+    let conn = get_connection()?;
+    let status = if retryable { "pending" } else { "failed" };
+    conn.execute(
+        "UPDATE sync_queue SET retry_count = retry_count + 1, status = ?1, \
+         last_error = ?2, next_attempt_at = ?3 WHERE op_id = ?4",
+        params![status, error, next_attempt_at, op_id],
+    )?;
+    Ok(())
+}
+
+pub fn mark_op_superseded(op_id: i64) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE sync_queue SET status = 'superseded', next_attempt_at = NULL WHERE op_id = ?1",
+        params![op_id],
+    )?;
+    Ok(())
+}
+
+/// Merge additional fields into an op's payload (used when collapsing
+/// duplicate ops for the same ticket before execution).
+pub fn merge_op_payload(op_id: i64, patch: &Value) -> Result<()> {
+    let conn = get_connection()?;
+    let current: Option<String> = conn
+        .query_row(
+            "SELECT payload FROM sync_queue WHERE op_id = ?1",
+            params![op_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let base: Value = current
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(Value::Object(Default::default()));
+    let merged = merge_json(&base, patch);
+    conn.execute(
+        "UPDATE sync_queue SET payload = ?1 WHERE op_id = ?2",
+        params![merged.to_string(), op_id],
+    )?;
+    Ok(())
+}
+
+/// Operations that still need to reach the API.
+pub fn pending_op_count() -> i64 {
+    let conn = match get_connection() {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+    conn.query_row(
+        "SELECT COUNT(*) FROM sync_queue WHERE status IN ('pending','in_flight','failed')",
+        [],
+        |r| r.get(0),
+    )
+    .unwrap_or(0)
+}
+
+pub fn ticket_has_pending_ops(local_ticket_id: i64) -> bool {
+    let Ok(conn) = get_connection() else {
+        return false;
+    };
+    conn.query_row(
+        "SELECT COUNT(*) FROM sync_queue \
+         WHERE local_ticket_id = ?1 AND status IN ('pending','in_flight','failed')",
+        params![local_ticket_id],
+        |r| r.get::<_, i64>(0),
+    )
+    .unwrap_or(0)
+        > 0
+}
+
+/// Subjects of CREATE ops that have not been confirmed yet — used by the
+/// pull phase to avoid inserting a duplicate local row for a ticket the
+/// queue is about to adopt.
+pub fn pending_create_subjects() -> Vec<String> {
+    let Ok(conn) = get_connection() else {
+        return Vec::new();
+    };
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT payload FROM sync_queue \
+         WHERE op_type = 'CREATE' AND status IN ('pending','in_flight','failed')",
+    ) else {
+        return Vec::new();
+    };
+    let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) else {
+        return Vec::new();
+    };
+    rows.filter_map(Result::ok)
+        .filter_map(|s| serde_json::from_str::<Value>(&s).ok())
+        .filter_map(|v| v.get("subject").and_then(|s| s.as_str()).map(str::to_string))
+        .collect()
+}
+
+/// True when a server ticket has a queued DELETE — the pull phase must
+/// not re-insert it locally while the delete is pending.
+pub fn server_id_has_active_delete(server_ticket_id: &str) -> bool {
+    let Ok(conn) = get_connection() else {
+        return false;
+    };
+    conn.query_row(
+        "SELECT COUNT(*) FROM sync_queue \
+         WHERE server_ticket_id = ?1 AND op_type = 'DELETE' \
+           AND status IN ('pending','in_flight','failed')",
+        params![server_ticket_id],
+        |r| r.get::<_, i64>(0),
+    )
+    .unwrap_or(0)
+        > 0
+}
+
+/// Most recent error among active ops (surfaces in the sync status pill
+/// while an op waits out its backoff).
+pub fn latest_active_error() -> Option<String> {
+    let conn = get_connection().ok()?;
+    conn.query_row(
+        "SELECT last_error FROM sync_queue \
+         WHERE status IN ('pending','failed') AND last_error IS NOT NULL \
+         ORDER BY op_id DESC LIMIT 1",
+        [],
+        |r| r.get(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+}
+
+// ---- sync metadata ----
+
+pub fn sync_meta_get(key: &str) -> Option<String> {
+    let conn = get_connection().ok()?;
+    conn.query_row(
+        "SELECT value FROM sync_meta WHERE key = ?1",
+        params![key],
+        |r| r.get(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+}
+
+pub fn sync_meta_set(key: &str, value: &str) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "INSERT INTO sync_meta (key, value) VALUES (?1, ?2) \
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )?;
+    Ok(())
+}
+
+// ---- ticket ↔ server mapping ----
+
+/// Server id of a local ticket (`None` when it never reached the API).
+pub fn server_ticket_id(local_ticket_id: i64) -> Option<String> {
+    let conn = get_connection().ok()?;
+    conn.query_row(
+        "SELECT server_ticket_id FROM tickets WHERE ticket_id = ?1",
+        params![local_ticket_id],
+        |r| r.get::<_, Option<String>>(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+    .flatten()
+}
+
+/// Records the mapping after a confirmed CREATE/UPDATE and stores the
+/// server row version (`last_updated_on`) used for conflict detection.
+pub fn set_ticket_mapping(
+    local_ticket_id: i64,
+    server_ticket_id: &str,
+    server_last_updated: &str,
+) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE tickets SET server_ticket_id = ?1, server_last_updated = ?2 \
+         WHERE ticket_id = ?3",
+        params![server_ticket_id, server_last_updated, local_ticket_id],
+    )?;
+    Ok(())
+}
+
+pub fn set_server_last_updated(local_ticket_id: i64, server_last_updated: &str) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE tickets SET server_last_updated = ?1 WHERE ticket_id = ?2",
+        params![server_last_updated, local_ticket_id],
+    )?;
+    Ok(())
+}
+
+pub struct MappedTicket {
+    pub local_id: i64,
+    pub server_id: String,
+    pub server_last_updated: String,
+}
+
+/// Every local ticket that has a server counterpart.
+pub fn mapped_tickets() -> Vec<MappedTicket> {
+    let Ok(conn) = get_connection() else {
+        return Vec::new();
+    };
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT ticket_id, server_ticket_id, COALESCE(server_last_updated, '') \
+         FROM tickets WHERE server_ticket_id IS NOT NULL AND server_ticket_id != ''",
+    ) else {
+        return Vec::new();
+    };
+    let Ok(rows) = stmt.query_map([], |r| {
+        Ok(MappedTicket {
+            local_id: r.get(0)?,
+            server_id: r.get(1)?,
+            server_last_updated: r.get(2)?,
+        })
+    }) else {
+        return Vec::new();
+    };
+    rows.filter_map(Result::ok).collect()
+}
+
+// ---- server row ⇄ local row ----
+
+/// Builds the API field set (`tickets.create` / `tickets.update` names)
+/// from a local row. `activities` maps to the server's `activities_text`.
+pub fn ticket_create_payload(local_ticket_id: i64) -> Option<Value> {
+    let conn = get_connection().ok()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT employee_code, email_address, category, subject, problem_description, \
+                    attachment_name, attachment_url, priority, assigned_to, customer, \
+                    time_spent, activities, my_activity, deadline, sla_status, sla_deadline, \
+                    rating_avg_text, kanban_state, stage, status \
+             FROM tickets WHERE ticket_id = ?1",
+        )
+        .ok()?;
+
+    let value = stmt
+        .query_row(params![local_ticket_id], |r| {
+            let time_spent: f64 = r.get(10)?;
+            Ok(json!({
+                "employee_code": r.get::<_, String>(0)?,
+                "email_address": r.get::<_, String>(1)?,
+                "category": r.get::<_, String>(2)?,
+                "subject": r.get::<_, String>(3)?,
+                "problem_description": r.get::<_, String>(4)?,
+                "attachment_name": r.get::<_, String>(5)?,
+                "attachment_url": r.get::<_, String>(6)?,
+                "priority": r.get::<_, String>(7)?,
+                "assigned_to": r.get::<_, String>(8)?,
+                "customer": r.get::<_, String>(9)?,
+                "time_spent": serde_json::Number::from_f64(time_spent)
+                    .map(Value::Number)
+                    .unwrap_or(Value::from(0.0)),
+                "activities_text": r.get::<_, String>(11)?,
+                "my_activity": r.get::<_, String>(12)?,
+                "deadline": r.get::<_, String>(13)?,
+                "sla_status": r.get::<_, String>(14)?,
+                "sla_deadline": r.get::<_, String>(15)?,
+                "rating_avg_text": r.get::<_, String>(16)?,
+                "kanban_state": r.get::<_, String>(17)?,
+                "stage": r.get::<_, String>(18)?,
+                "status": r.get::<_, String>(19)?,
+            }))
+        })
+        .optional()
+        .ok()
+        .flatten()?;
+
+    Some(value)
+}
+
+/// Inserts a server ticket row into the local cache and returns the new
+/// local id.
+pub fn insert_server_ticket(t: &crate::api::ServerTicket) -> Result<i64> {
+    let conn = get_connection()?;
+    conn.execute(
+        r#"
+        INSERT INTO tickets (
+            employee_code, email_address, category, subject, problem_description,
+            attachment_name, attachment_url, priority, assigned_to, customer,
+            time_spent, activities, my_activity, deadline, sla_status, sla_deadline,
+            rating_avg_text, kanban_state, stage, status, created_on, last_updated_on,
+            server_ticket_id, server_last_updated
+        ) VALUES (
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+            ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
+        )
+        "#,
+        params![
+            t.employee_code,
+            t.email_address,
+            t.category,
+            t.subject,
+            t.problem_description,
+            t.attachment_name,
+            t.attachment_url,
+            t.priority,
+            t.assigned_to,
+            t.customer,
+            t.time_spent,
+            t.activities,
+            t.my_activity,
+            t.deadline,
+            t.sla_status,
+            t.sla_deadline,
+            t.rating_avg_text,
+            t.kanban_state,
+            t.stage,
+            t.status,
+            t.created_on,
+            t.last_updated_on,
+            t.ticket_id,
+            t.last_updated_on,
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Overwrites a mapped local row with the server version (only called
+/// when the local row has no pending operations).
+pub fn apply_server_ticket(local_ticket_id: i64, t: &crate::api::ServerTicket) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        r#"
+        UPDATE tickets SET
+            employee_code = ?1, email_address = ?2, category = ?3, subject = ?4,
+            problem_description = ?5, attachment_name = ?6, attachment_url = ?7,
+            priority = ?8, assigned_to = ?9, customer = ?10, time_spent = ?11,
+            activities = ?12, my_activity = ?13, deadline = ?14, sla_status = ?15,
+            sla_deadline = ?16, rating_avg_text = ?17, kanban_state = ?18,
+            stage = ?19, status = ?20, created_on = ?21, last_updated_on = ?22,
+            server_ticket_id = ?23, server_last_updated = ?24
+        WHERE ticket_id = ?25
+        "#,
+        params![
+            t.employee_code,
+            t.email_address,
+            t.category,
+            t.subject,
+            t.problem_description,
+            t.attachment_name,
+            t.attachment_url,
+            t.priority,
+            t.assigned_to,
+            t.customer,
+            t.time_spent,
+            t.activities,
+            t.my_activity,
+            t.deadline,
+            t.sla_status,
+            t.sla_deadline,
+            t.rating_avg_text,
+            t.kanban_state,
+            t.stage,
+            t.status,
+            t.created_on,
+            t.last_updated_on,
+            t.ticket_id,
+            t.last_updated_on,
+            local_ticket_id,
+        ],
+    )?;
+    Ok(())
+}
+
+// ---- conflicts ----
+
+/// Records an unresolved local/server divergence. At most one unresolved
+/// conflict per local ticket is kept (re-detections are no-ops).
+#[allow(clippy::too_many_arguments)]
+pub fn record_conflict(
+    local_ticket_id: i64,
+    server_ticket_id: Option<&str>,
+    op_kind: &str,
+    local_payload: Option<&Value>,
+    server_payload: Option<&Value>,
+    detected_at: &str,
+) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "INSERT INTO sync_conflicts \
+         (local_ticket_id, server_ticket_id, op_kind, local_payload, server_payload, detected_at, status) \
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'unresolved' \
+         WHERE NOT EXISTS ( \
+             SELECT 1 FROM sync_conflicts \
+             WHERE local_ticket_id = ?1 AND status = 'unresolved')",
+        params![
+            local_ticket_id,
+            server_ticket_id,
+            op_kind,
+            local_payload.map(|v| v.to_string()),
+            server_payload.map(|v| v.to_string()),
+            detected_at,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn unresolved_conflict_count() -> i64 {
+    let conn = match get_connection() {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+    conn.query_row(
+        "SELECT COUNT(*) FROM sync_conflicts WHERE status = 'unresolved'",
+        [],
+        |r| r.get(0),
+    )
+    .unwrap_or(0)
+}
+
+/// True while a local/server divergence is still recorded for this
+/// ticket. The pull phase uses this to force a reconciliation pass even
+/// when `server_last_updated` matches (a successful local push refreshes
+/// that timestamp, which would otherwise mask the remote half of the
+/// conflict).
+pub fn has_unresolved_conflict(local_ticket_id: i64) -> bool {
+    let Ok(conn) = get_connection() else {
+        return false;
+    };
+    conn.query_row(
+        "SELECT COUNT(*) FROM sync_conflicts \
+         WHERE local_ticket_id = ?1 AND status = 'unresolved'",
+        params![local_ticket_id],
+        |r| r.get::<_, i64>(0),
+    )
+    .unwrap_or(0)
+        > 0
+}
+
+/// Called after the server version of a ticket was applied locally with
+/// no pending operations — both sides' changes are now on the server, so
+/// the recorded divergence is settled.
+pub fn resolve_conflicts_for_ticket(local_ticket_id: i64) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE sync_conflicts SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP \
+         WHERE local_ticket_id = ?1 AND status = 'unresolved'",
+        params![local_ticket_id],
+    )?;
+    Ok(())
+}
+

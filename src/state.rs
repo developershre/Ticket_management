@@ -18,6 +18,20 @@ pub fn get_real_current_date() -> (u32, u32, u32) {
     civil_from_days((secs / 86_400) as i64)
 }
 
+/// Formats a Unix timestamp (seconds) as `YYYY-MM-DD HH:MM:SS` in UTC.
+///
+/// Used by the sync layer for queue `created_at`, conflict `detected_at`
+/// and "last successful sync" display values.
+pub fn format_utc(epoch_secs: i64) -> String {
+    let days = epoch_secs.div_euclid(86_400);
+    let secs = epoch_secs.rem_euclid(86_400);
+    let (y, m, d) = civil_from_days(days);
+    let h = secs / 3600;
+    let mi = (secs % 3600) / 60;
+    let s = secs % 60;
+    format!("{y:04}-{m:02}-{d:02} {h:02}:{mi:02}:{s:02}")
+}
+
 /// Converts a count of days since 1970-01-01 into a civil (year, month, day).
 fn civil_from_days(z: i64) -> (u32, u32, u32) {
     let z = z + 719_468;
@@ -33,3 +47,9 @@ fn civil_from_days(z: i64) -> (u32, u32, u32) {
 
     (y as u32, m as u32, d as u32)
 }
+
+/// Global reactive revision counter to signal when SQLite database tables
+/// (like NOTES or tickets) have been modified by FAB or dialogs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct AppDbRevision(pub u64);
+

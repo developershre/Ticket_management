@@ -374,7 +374,7 @@ pub fn ThemeToggle(props: ThemeToggleProps) -> Element {
                         theme.toggle();
                     },
                     if is_dark {
-                        SunIcon { class: "size-4 text-warning transition-transform duration-300 group-hover:rotate-45" }
+                        SunIcon { class: "size-4 text-foreground transition-transform duration-300 group-hover:rotate-45" }
                     } else {
                         MoonIcon { class: "size-4 text-foreground transition-transform duration-300 group-hover:-rotate-12" }
                     }

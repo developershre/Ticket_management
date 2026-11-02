@@ -74,7 +74,7 @@ pub fn ToastProvider(children: Element) -> Element {
 
     rsx! {
         {children}
-        div { class: "pointer-events-none fixed bottom-4 right-4 z-[60] flex w-80 flex-col items-end gap-2",
+        div { class: "pointer-events-none fixed top-14 right-6 z-[70] flex w-84 max-w-[calc(100vw-3rem)] flex-col items-end gap-2.5",
             for item in toasts.read().iter() {
                 {
                     let id = item.id;

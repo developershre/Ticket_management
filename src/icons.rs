@@ -194,6 +194,42 @@ pub fn ClockIcon(props: IconProps) -> Element {
 }
 
 #[component]
+pub fn BellIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "M10.268 21a2 2 0 0 0 3.464 0" }
+            path { d: "M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326" }
+        }
+    }
+}
+
+#[component]
+pub fn TicketIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z" }
+            path { d: "M13 5v2" }
+            path { d: "M13 11v2" }
+            path { d: "M13 17v2" }
+        }
+    }
+}
+
+#[component]
 pub fn MapPinIcon(props: IconProps) -> Element {
     rsx! {
         svg {
@@ -529,3 +565,75 @@ pub fn ChevronsUpDownIcon(props: IconProps) -> Element {
         }
     }
 }
+
+#[component]
+pub fn StickyNoteIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8Z" }
+            path { d: "M15 3v5a1 1 0 0 0 1 1h5" }
+        }
+    }
+}
+
+#[component]
+pub fn FileTextIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" }
+            path { d: "M14 2v4a2 2 0 0 0 2 2h4" }
+            path { d: "M10 9H8" }
+            path { d: "M16 13H8" }
+            path { d: "M16 17H8" }
+        }
+    }
+}
+
+#[component]
+pub fn PaperclipIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" }
+        }
+    }
+}
+
+#[component]
+pub fn UploadCloudIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" }
+            path { d: "m12 12-4 4h3v4h2v-4h3z" }
+        }
+    }
+}
+
+

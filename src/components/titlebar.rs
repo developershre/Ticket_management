@@ -6,6 +6,7 @@
 //! replacement: a branded, draggable titlebar with its own window controls.
 
 use dioxus::prelude::*;
+use futures_util::StreamExt;
 
 use crate::components::ui::sidebar::SidebarTrigger;
 use crate::components::ui::theme::ThemeToggle;
@@ -50,6 +51,8 @@ pub fn Titlebar(props: TitlebarProps) -> Element {
     let route = use_route::<Route>();
     let page_title = match route {
         Route::Tickets {} => "Tickets",
+        Route::NotesPage {} => "Notes",
+        Route::Employees {} => "Employees",
         Route::Reminders {} => "Reminders",
         Route::CalendarPage {} => "Calendar",
     };
@@ -128,8 +131,96 @@ pub fn Titlebar(props: TitlebarProps) -> Element {
                 ThemeToggle { class: "size-7 border-none bg-transparent hover:bg-sidebar-accent text-sidebar-foreground" }
             }
 
+            // Background sync status (Google Sheets ↔ SQLite)
+            SyncPill {}
+
             // Fully custom window controls (no-ops on web)
             WindowControls { maximized }
+        }
+    }
+}
+
+// ============================================================
+// Sync status pill
+// ============================================================
+
+/// Compact Google Sheets sync indicator. Subscribes to the sync worker's
+/// status channel — the worker pushes an update only when something
+/// actually changed (no timers, no polling). When a pull cycle changed
+/// local ticket data, `AppDbRevision` is bumped so pages reload from
+/// SQLite.
+#[component]
+fn SyncPill() -> Element {
+    let mut status = use_signal(crate::sync::snapshot);
+    let db_sync = try_use_context::<Signal<crate::state::AppDbRevision>>();
+
+    use_effect(move || {
+        let mut rx = crate::sync::subscribe_status();
+        spawn(async move {
+            let mut last_revision = crate::sync::snapshot().revision;
+            while let Some(next) = rx.next().await {
+                if next.revision != last_revision {
+                    last_revision = next.revision;
+                    if let Some(mut sync) = db_sync {
+                        sync.with_mut(|r| r.0 += 1);
+                    }
+                }
+                status.set(next);
+            }
+        });
+    });
+
+    let snap = status.read();
+    let (label, dot_class, tooltip) = match snap.state {
+        crate::sync::SyncState::Disabled => (
+            "Sync off".to_string(),
+            "bg-zinc-400",
+            format!("{} · sync resumes once the API is configured", snap.detail),
+        ),
+        crate::sync::SyncState::Syncing => (
+            "Syncing…".to_string(),
+            "bg-sky-400 animate-pulse",
+            snap.detail.clone(),
+        ),
+        crate::sync::SyncState::Error => (
+            "Sync error".to_string(),
+            "bg-red-500",
+            format!(
+                "{} · {} pending · {} unresolved conflict(s)",
+                snap.detail, snap.pending_ops, snap.conflicts
+            ),
+        ),
+        crate::sync::SyncState::Idle => {
+            if snap.pending_ops > 0 {
+                (
+                    format!("{} pending", snap.pending_ops),
+                    "bg-amber-400",
+                    snap.detail.clone(),
+                )
+            } else {
+                (
+                    "Synced".to_string(),
+                    "bg-emerald-500",
+                    format!(
+                        "{}{}",
+                        snap.detail,
+                        if snap.conflicts > 0 {
+                            format!(" · {} unresolved conflict(s)", snap.conflicts)
+                        } else {
+                            String::new()
+                        }
+                    ),
+                )
+            }
+        }
+    };
+
+    rsx! {
+        div {
+            class: "hidden items-center gap-1.5 rounded-md border border-sidebar-border/80 bg-sidebar-accent/40 px-2 py-0.5 text-[11px] font-medium text-sidebar-foreground/70 sm:inline-flex",
+            title: "{tooltip}",
+            span { class: "size-1.5 shrink-0 rounded-full {dot_class}" }
+            span { "{label}" }
         }
     }
 }

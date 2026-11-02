@@ -228,7 +228,7 @@ pub fn ContextMenuContent(props: ContextMenuContentProps) -> Element {
                 "data-popup": uid,
                 role: "menu",
                 style: "{style}",
-                class: "min-w-44 max-h-[var(--available-height,80vh)] overflow-x-hidden overflow-y-auto rounded-md border border-border/80 bg-popover/95 p-1 text-popover-foreground shadow-md backdrop-blur-sm ring-1 ring-foreground/5 outline-none animate-in fade-in-0 zoom-in-95 duration-100 {props.class}",
+                class: "min-w-44 max-h-[var(--available-height,80vh)] overflow-visible rounded-md border border-border/80 bg-popover/95 p-1 text-popover-foreground shadow-md backdrop-blur-sm ring-1 ring-foreground/5 outline-none animate-in fade-in-0 zoom-in-95 duration-100 {props.class}",
                 onclick: move |event| event.stop_propagation(),
                 oncontextmenu: move |event| event.prevent_default(),
                 {props.children}
@@ -542,6 +542,7 @@ pub fn ContextMenuSub(props: ContextMenuSubProps) -> Element {
     rsx! {
         div {
             "data-slot": "context-menu-sub",
+            class: "relative",
             onmouseenter: move |_| open.set(true),
             onmouseleave: move |_| open.set(false),
             {props.children}
@@ -550,25 +551,23 @@ pub fn ContextMenuSub(props: ContextMenuSubProps) -> Element {
 }
 
 /// Place the sub panel flush against its trigger (flipping to the other side
-/// near the viewport edge) and reveal it.
+/// near the viewport edge) and adjust vertical alignment if needed.
 const SUB_OPEN_JS: &str = r#"
 (function(){
 var uid="__UID__";
 var m=document.querySelector('[data-popup="'+uid+'"]');
 if(!m)return;
-var wrap=m.closest('[data-slot="context-menu-sub"]');
-var t=wrap?wrap.querySelector('[data-slot="context-menu-sub-trigger"]'):null;
-if(!t){m.style.visibility="visible";return;}
-var tr=t.getBoundingClientRect();
-var w=m.offsetWidth, h=m.offsetHeight, pad=8;
-var x=tr.right, y=tr.top;
-var vw=window.innerWidth, vh=window.innerHeight;
-if(x+w>vw-pad)x=Math.max(pad, tr.left-w);
-if(y+h>vh-pad)y=Math.max(pad, vh-h-pad);
-if(y<pad)y=pad;
-m.style.left=x+"px";
-m.style.top=y+"px";
-m.style.visibility="visible";
+var r=m.getBoundingClientRect();
+if(r.right > window.innerWidth - 8){
+    m.style.left="auto";
+    m.style.right="100%";
+    m.style.marginRight="4px";
+    m.style.marginLeft="0px";
+}
+if(r.bottom > window.innerHeight - 8){
+    var diff = r.bottom - (window.innerHeight - 8);
+    m.style.top = (-diff) + "px";
+}
 })();
 "#;
 
@@ -645,8 +644,7 @@ pub fn ContextMenuSubContent(props: ContextMenuSubContentProps) -> Element {
             "data-slot": "context-menu-sub-content",
             "data-popup": uid,
             role: "menu",
-            style: "position: fixed; left: 0px; top: 0px; visibility: hidden; z-index: 10001;",
-            class: "min-w-40 max-h-72 overflow-y-auto rounded-md border border-border/80 bg-popover/95 p-1 text-popover-foreground shadow-md backdrop-blur-sm ring-1 ring-foreground/5 outline-none animate-in fade-in-0 zoom-in-95 duration-100 {props.class}",
+            class: "absolute left-full top-0 ml-1 z-50 min-w-40 max-h-72 overflow-y-auto rounded-md border border-border/80 bg-popover/95 p-1 text-popover-foreground shadow-xl backdrop-blur-md ring-1 ring-foreground/5 outline-none animate-in fade-in-0 zoom-in-95 duration-100 {props.class}",
             onclick: move |event| event.stop_propagation(),
             oncontextmenu: move |event| event.prevent_default(),
             {props.children}

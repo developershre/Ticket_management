@@ -1,10 +1,13 @@
 use dioxus::prelude::*;
 
 mod components;
+pub mod api;
 pub mod db;
 mod icons;
 mod pages;
 mod state;
+pub mod sync;
+mod sync_test;
 
 use components::app_sidebar::AppSidebar;
 use components::fab::Fab;
@@ -12,6 +15,8 @@ use components::titlebar::Titlebar;
 use components::ui::sidebar::SidebarProvider;
 use components::ui::toast::ToastProvider;
 use pages::calendar_page::CalendarPage;
+use pages::employees::Employees;
+use pages::notes::NotesPage;
 use pages::reminders::Reminders;
 use pages::tickets::Tickets;
 
@@ -26,6 +31,10 @@ enum Route {
     #[layout(AppShell)]
     #[route("/")]
     Tickets {},
+    #[route("/notes")]
+    NotesPage {},
+    #[route("/employees")]
+    Employees {},
     #[route("/reminders")]
     Reminders {},
     #[route("/calendar")]
@@ -38,10 +47,36 @@ const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 const DND_JS: Asset = asset!("/assets/dnd.js");
 
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Sync test harness (see src/sync_test.rs): configures its own DB path
+    // and runs scripted end-to-end scenarios, so it must run before the
+    // regular database initialization.
+    if args.first().map(String::as_str) == Some("--sync-test") {
+        let scenario = args.get(1).cloned().unwrap_or_default();
+        std::process::exit(sync_test::run(&scenario));
+    }
+
     // Initialize SQLite database adhering to DATABASE.SQL schema
     if let Err(e) = db::init_database() {
         eprintln!("[TaskFlow DB] Warning: database init failed: {:?}", e);
     }
+
+    // Operational aid: run a single sync cycle against the configured API
+    // and print the resulting status (no UI).
+    if args.first().map(String::as_str) == Some("--sync-once") {
+        sync::run_cycle_blocking();
+        let s = sync::snapshot();
+        println!(
+            "[sync] state={:?} pending={} conflicts={} detail={}",
+            s.state, s.pending_ops, s.conflicts, s.detail
+        );
+        return;
+    }
+
+    // Background sync worker: single thread, independent of the UI
+    // lifecycle (120s cadence + immediate wake after local changes).
+    sync::start_worker();
 
     // Desktop: the native window frame (navbar + OS action buttons) is
     // disabled entirely — the custom `Titlebar` component provides the
@@ -137,6 +172,8 @@ fn App() -> Element {
 fn AppShell() -> Element {
     let theme = use_theme();
     let dark_cls = if theme.is_dark() { "dark" } else { "" };
+    let db_sync = use_signal(state::AppDbRevision::default);
+    use_context_provider(|| db_sync);
 
     rsx! {
         ToastProvider {

@@ -18,22 +18,31 @@ pub struct BadgeProps {
 pub fn Badge(props: BadgeProps) -> Element {
     let variant_class = match props.variant.as_str() {
         "secondary" => {
-            "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80"
+            "border-border/60 bg-muted/80 text-muted-foreground hover:bg-muted"
         }
-        "destructive" => {
-            "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/90"
+        "destructive" | "red" => {
+            "border-rose-500/35 bg-rose-500/15 text-rose-500 dark:text-rose-400 hover:bg-rose-500/25"
         }
-        "warning" => {
-            "border-transparent bg-warning text-warning-foreground hover:bg-warning/90"
+        "warning" | "amber" => {
+            "border-amber-500/35 bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25"
         }
-        "success" => {
-            "border-transparent bg-success text-success-foreground hover:bg-success/90"
+        "success" | "emerald" | "green" => {
+            "border-emerald-500/35 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/25"
         }
-        "info" => {
-            "border-transparent bg-info text-info-foreground hover:bg-info/90"
+        "info" | "blue" | "sky" => {
+            "border-sky-500/35 bg-sky-500/15 text-sky-600 dark:text-sky-400 hover:bg-sky-500/25"
         }
-        "outline" => "border-border text-foreground",
-        _ => "border-transparent bg-primary text-primary-foreground hover:bg-primary/90",
+        "purple" | "violet" => {
+            "border-purple-500/35 bg-purple-500/15 text-purple-600 dark:text-purple-400 hover:bg-purple-500/25"
+        }
+        "cyan" | "teal" => {
+            "border-cyan-500/35 bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 hover:bg-cyan-500/25"
+        }
+        "orange" => {
+            "border-orange-500/35 bg-orange-500/15 text-orange-600 dark:text-orange-400 hover:bg-orange-500/25"
+        }
+        "outline" => "border-border text-foreground hover:bg-muted/40",
+        _ => "border-border/70 bg-muted/60 text-foreground hover:bg-muted",
     };
 
     let size_class = match props.size.as_str() {
