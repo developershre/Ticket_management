@@ -65,14 +65,18 @@ pub fn fetch_system_is_dark() -> bool {
             }
         }
 
-        // 4. Tao desktop window fallback
+        // 4. Tao desktop window fallback (safe if called within Dioxus runtime)
         #[cfg(feature = "desktop")]
         {
-            if matches!(
-                dioxus::desktop::window().theme(),
-                dioxus::desktop::tao::window::Theme::Dark
-            ) {
-                return true;
+            if let Ok(dark) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                matches!(
+                    dioxus::desktop::window().theme(),
+                    dioxus::desktop::tao::window::Theme::Dark
+                )
+            })) {
+                if dark {
+                    return true;
+                }
             }
         }
     }
@@ -91,6 +95,7 @@ pub fn fetch_system_is_dark() -> bool {
                 if stdout.trim().eq_ignore_ascii_case("dark") {
                     return true;
                 }
+                return false;
             }
         }
     }
@@ -114,20 +119,27 @@ pub fn fetch_system_is_dark() -> bool {
                 if stdout.contains("0x0") {
                     return true;
                 }
+                if stdout.contains("0x1") {
+                    return false;
+                }
             }
         }
     }
 
     // ----------------------------------------------------
-    // Cross-platform desktop fallback
+    // Cross-platform desktop fallback (safe if called within Dioxus runtime)
     // ----------------------------------------------------
     #[cfg(all(feature = "desktop", not(target_os = "linux")))]
     {
-        if matches!(
-            dioxus::desktop::window().theme(),
-            dioxus::desktop::tao::window::Theme::Dark
-        ) {
-            return true;
+        if let Ok(dark) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            matches!(
+                dioxus::desktop::window().theme(),
+                dioxus::desktop::tao::window::Theme::Dark
+            )
+        })) {
+            if dark {
+                return true;
+            }
         }
     }
 

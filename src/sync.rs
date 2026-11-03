@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::api::{ApiConfig, ApiClient, ApiError, ServerTicket};
+use crate::api::{ApiClient, ApiConfig, ApiError, ServerReminder, ServerTicket};
 use crate::db::{self, SyncOp};
 
 /// Periodic sync interval.
@@ -216,6 +216,10 @@ pub fn run_cycle_blocking() {
     rt.block_on(run_cycle());
 }
 
+pub fn get_client() -> Result<&'static ApiClient, String> {
+    ensure_client()
+}
+
 fn ensure_client() -> Result<&'static ApiClient, String> {
     if let Some(client) = CLIENT.get() {
         return Ok(client);
@@ -314,7 +318,34 @@ pub async fn run_cycle() {
                 }
             }
             // Directory failure never fails the cycle — tickets synced.
-            Err(e) => eprintln!("[sync] employee pull failed: {}", e.short()),
+            Err(e) => {
+                let backoff = if e.is_retryable() { 120 } else { 600 };
+                let next_attempt = now - EMPLOYEE_PULL_GAP_SECS + backoff;
+                let _ = db::sync_meta_set("last_employee_pull_at", &next_attempt.to_string());
+                eprintln!("[sync] employee pull failed: {}", e.short());
+            }
+        }
+    }
+
+    // ---- Reminders: pulled every 60s ----
+    const REMINDER_PULL_GAP_SECS: i64 = 60;
+    let last_rem_pull: i64 = db::sync_meta_get("last_reminder_pull_at")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    if now.saturating_sub(last_rem_pull) >= REMINDER_PULL_GAP_SECS {
+        match pull_reminders(client).await {
+            Ok(count) => {
+                let _ = db::sync_meta_set("last_reminder_pull_at", &now.to_string());
+                if count > 0 {
+                    with_status(|s| s.revision = s.revision.wrapping_add(1));
+                }
+            }
+            Err(e) => {
+                let backoff = if e.is_retryable() { 60 } else { 300 };
+                let next_attempt = now - REMINDER_PULL_GAP_SECS + backoff;
+                let _ = db::sync_meta_set("last_reminder_pull_at", &next_attempt.to_string());
+                eprintln!("[sync] reminder pull failed: {}", e.short());
+            }
         }
     }
 
@@ -411,6 +442,10 @@ fn ack_maybe_lost(last_error: &str) -> bool {
 }
 
 async fn execute_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutcome, ApiError> {
+    if op.entity_type == "reminder" {
+        return execute_reminder_op(client, op).await;
+    }
+
     match op.op_type.as_str() {
         "CREATE" => {
             if op.retry_count > 0
@@ -745,4 +780,178 @@ pub fn enqueue_delete(local_ticket_id: i64) {
         Err(e) => eprintln!("[sync] enqueue_delete failed: {e}"),
     }
     kick();
+}
+
+// ============================================================
+// Reminder sync & execution
+// ============================================================
+
+async fn execute_reminder_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutcome, ApiError> {
+    match op.op_type.as_str() {
+        "CREATE" => {
+            let remote = client.reminders_create(&op.payload).await?;
+            db::set_reminder_mapping(op.local_ticket_id, &remote.reminder_id, &remote.last_updated_at)?;
+            Ok(ExecOutcome::Synced)
+        }
+        "UPDATE" => {
+            let server_id = op
+                .server_ticket_id
+                .clone()
+                .or_else(|| db::server_reminder_id(op.local_ticket_id));
+
+            let Some(server_id) = server_id else {
+                let Some(row) = db::reminder_create_payload(op.local_ticket_id) else {
+                    return Ok(ExecOutcome::Superseded);
+                };
+                let remote = client.reminders_create(&row).await?;
+                db::set_reminder_mapping(op.local_ticket_id, &remote.reminder_id, &remote.last_updated_at)?;
+                return Ok(ExecOutcome::Synced);
+            };
+
+            let remote = client.reminders_update(&server_id, &op.payload).await?;
+            db::set_reminder_mapping(op.local_ticket_id, &remote.reminder_id, &remote.last_updated_at)?;
+            Ok(ExecOutcome::Synced)
+        }
+        "SEND_NOW" => {
+            let server_id = op
+                .server_ticket_id
+                .clone()
+                .or_else(|| db::server_reminder_id(op.local_ticket_id));
+
+            if let Some(server_id) = server_id {
+                let force = op.payload.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+                client.reminders_send_now(&server_id, force).await?;
+                let now_str = crate::state::format_utc(now_epoch());
+                let _ = db::set_reminder_sent(op.local_ticket_id, &now_str);
+            }
+            Ok(ExecOutcome::Synced)
+        }
+        other => Err(ApiError::Api {
+            code: "UNKNOWN_OP".to_string(),
+            message: format!("unsupported reminder op {other}"),
+            retryable: false,
+            retry_after: None,
+        }),
+    }
+}
+
+async fn pull_reminders(client: &ApiClient) -> Result<usize, ApiError> {
+    let mut server: HashMap<String, ServerReminder> = HashMap::new();
+    let mut offset = 0u64;
+    for _ in 0..MAX_PAGES {
+        let page = client.reminders_list(offset, PAGE_LIMIT, None, None).await?;
+        let count = page.items.len() as u64;
+        for r in page.items {
+            server.insert(r.reminder_id.clone(), r);
+        }
+        if !page.has_more || count == 0 {
+            break;
+        }
+        offset += count;
+    }
+
+    let mapped = db::mapped_reminders();
+    let local_by_server: HashMap<&str, i64> =
+        mapped.iter().map(|m| (m.server_id.as_str(), m.local_id)).collect();
+    let mut changed = 0usize;
+
+    for (server_id, r) in &server {
+        match local_by_server.get(server_id.as_str()) {
+            Some(&local_id) => {
+                let last = mapped
+                    .iter()
+                    .find(|m| m.local_id == local_id)
+                    .map(|m| m.server_last_updated.clone())
+                    .unwrap_or_default();
+                if last != r.last_updated_at {
+                    db::apply_server_reminder(local_id, r)?;
+                    changed += 1;
+                }
+            }
+            None => {
+                db::insert_server_reminder(r)?;
+                changed += 1;
+            }
+        }
+    }
+    Ok(changed)
+}
+
+/// Queue a CREATE for a freshly inserted local reminder.
+pub fn enqueue_reminder_create(local_reminder_id: i64) {
+    let Some(payload) = db::reminder_create_payload(local_reminder_id) else {
+        eprintln!("[sync] enqueue_reminder_create: row {local_reminder_id} not readable");
+        return;
+    };
+    if let Err(e) = db::enqueue_reminder_create(local_reminder_id, &payload, &now_str()) {
+        eprintln!("[sync] enqueue_reminder_create failed: {e}");
+        return;
+    }
+    kick();
+}
+
+/// Queue an UPDATE for a reminder.
+pub fn enqueue_reminder_update(local_reminder_id: i64, fields: Value) {
+    let server_id = db::server_reminder_id(local_reminder_id);
+    if let Err(e) = db::enqueue_reminder_update(local_reminder_id, server_id, &fields, &now_str()) {
+        eprintln!("[sync] enqueue_reminder_update failed: {e}");
+        return;
+    }
+    kick();
+}
+
+/// Queue immediate sending of a reminder.
+pub fn enqueue_reminder_send_now(local_reminder_id: i64, force: bool) {
+    let Some(server_id) = db::server_reminder_id(local_reminder_id) else {
+        eprintln!("[sync] enqueue_reminder_send_now: row {local_reminder_id} has no server_id");
+        return;
+    };
+    if let Err(e) = db::enqueue_reminder_send_now(local_reminder_id, &server_id, force, &now_str()) {
+        eprintln!("[sync] enqueue_reminder_send_now failed: {e}");
+        return;
+    }
+    kick();
+}
+
+/// Immediate execution of reminders.sendNow (secure form email)
+pub async fn send_reminder_now_immediate(reminder_id: &str, force: bool) -> Result<Value, ApiError> {
+    let client = ensure_client().map_err(ApiError::Network)?;
+    let result = client.reminders_send_now(reminder_id, force).await?;
+    let now_str = crate::state::format_utc(now_epoch());
+    let _ = db::set_server_reminder_sent(reminder_id, &now_str);
+    Ok(result)
+}
+
+/// Immediate execution of employees.create
+pub async fn create_employee_immediate(emp: &crate::api::Employee) -> Result<crate::api::Employee, ApiError> {
+    let client = ensure_client().map_err(ApiError::Network)?;
+    let payload = serde_json::to_value(emp).map_err(|e| ApiError::Decode(e.to_string()))?;
+    let created = client.employees_create(&payload).await?;
+    let _ = db::create_employee_db(&created);
+    Ok(created)
+}
+
+/// Immediate execution of employees.update
+pub async fn update_employee_immediate(
+    emp_code: &str,
+    fields: &Value,
+) -> Result<crate::api::Employee, ApiError> {
+    let client = ensure_client().map_err(ApiError::Network)?;
+    let updated = client.employees_update(emp_code, fields).await?;
+    let _ = db::update_employee_db(
+        &updated.employee_code,
+        &updated.employee_name,
+        &updated.email,
+        &updated.department,
+        &updated.division,
+    );
+    Ok(updated)
+}
+
+/// Immediate execution of employees.delete
+pub async fn delete_employee_immediate(emp_code: &str) -> Result<(), ApiError> {
+    let client = ensure_client().map_err(ApiError::Network)?;
+    client.employees_delete(emp_code).await?;
+    let _ = db::delete_employee_db(emp_code);
+    Ok(())
 }

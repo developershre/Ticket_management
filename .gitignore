@@ -9,3 +9,5 @@ node_modules/*
 
 /DATABASE.SQL
 management.db
+
+.env

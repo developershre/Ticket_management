@@ -112,6 +112,8 @@ pub struct DbReminder {
     pub ticket_id: String,
     pub created_at: String,
     pub last_updated_at: String,
+    pub server_reminder_id: String,
+    pub server_last_updated: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -230,6 +232,8 @@ pub fn init_database() -> Result<()> {
     //     once (SQLite ALTER TABLE has no IF NOT EXISTS, so they are checked
     //     first); the queue/meta/conflict tables are idempotent.
     ensure_ticket_sync_columns(&conn)?;
+    ensure_reminder_sync_columns(&conn)?;
+    ensure_sync_queue_columns(&conn)?;
     // 1c. Employee cache schema (nullable/duplicate emails + division —
     //     the shape the sheet's employees.list actually returns).
     ensure_user_schema(&conn)?;
@@ -858,7 +862,9 @@ pub fn get_all_reminders() -> Vec<DbReminder> {
             COALESCE(email_sent_at, 'Not sent yet'),
             COALESCE(ticket_id, ''),
             COALESCE(created_at, CURRENT_TIMESTAMP),
-            COALESCE(last_updated_at, CURRENT_TIMESTAMP)
+            COALESCE(last_updated_at, CURRENT_TIMESTAMP),
+            COALESCE(server_reminder_id, ''),
+            COALESCE(server_last_updated, '')
         FROM reminders
         ORDER BY reminder_id ASC
         "#,
@@ -881,6 +887,8 @@ pub fn get_all_reminders() -> Vec<DbReminder> {
             ticket_id: row.get(9)?,
             created_at: row.get(10)?,
             last_updated_at: row.get(11)?,
+            server_reminder_id: row.get(12)?,
+            server_last_updated: row.get(13)?,
         })
     });
 
@@ -1024,6 +1032,45 @@ fn ensure_ticket_sync_columns(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn ensure_reminder_sync_columns(conn: &Connection) -> Result<()> {
+    let has_column = |name: &str| -> bool {
+        let Ok(mut stmt) = conn.prepare("PRAGMA table_info(reminders)") else {
+            return false;
+        };
+        let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(1)) else {
+            return false;
+        };
+        let found = rows.filter_map(Result::ok).any(|c| c == name);
+        found
+    };
+
+    if !has_column("server_reminder_id") {
+        conn.execute("ALTER TABLE reminders ADD COLUMN server_reminder_id TEXT", [])?;
+    }
+    if !has_column("server_last_updated") {
+        conn.execute("ALTER TABLE reminders ADD COLUMN server_last_updated TEXT", [])?;
+    }
+    Ok(())
+}
+
+fn ensure_sync_queue_columns(conn: &Connection) -> Result<()> {
+    let has_column = |name: &str| -> bool {
+        let Ok(mut stmt) = conn.prepare("PRAGMA table_info(sync_queue)") else {
+            return false;
+        };
+        let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(1)) else {
+            return false;
+        };
+        let found = rows.filter_map(Result::ok).any(|c| c == name);
+        found
+    };
+
+    if !has_column("entity_type") {
+        conn.execute("ALTER TABLE sync_queue ADD COLUMN entity_type TEXT NOT NULL DEFAULT 'ticket'", [])?;
+    }
+    Ok(())
+}
+
 /// Migrates `USERS` to the employee-cache schema once.
 ///
 /// The original table declared `emp_email TEXT UNIQUE NOT NULL` and
@@ -1082,7 +1129,7 @@ pub struct SyncOp {
     pub op_id: i64,
     pub local_ticket_id: i64,
     pub server_ticket_id: Option<String>,
-    /// `CREATE` | `UPDATE` | `DELETE`
+    /// `CREATE` | `UPDATE` | `DELETE` | `SEND_NOW`
     pub op_type: String,
     pub payload: Value,
     pub created_at: String,
@@ -1092,10 +1139,13 @@ pub struct SyncOp {
     pub last_error: Option<String>,
     /// Epoch seconds before which the op must not be retried (backoff).
     pub next_attempt_at: Option<i64>,
+    /// `ticket` | `reminder`
+    pub entity_type: String,
 }
 
 const OP_COLUMNS: &str = "op_id, local_ticket_id, server_ticket_id, op_type, payload, \
-                          created_at, retry_count, status, last_error, next_attempt_at";
+                          created_at, retry_count, status, last_error, next_attempt_at, \
+                          COALESCE(entity_type, 'ticket')";
 
 fn row_to_op(row: &rusqlite::Row<'_>) -> rusqlite::Result<SyncOp> {
     let payload_str: String = row.get(4)?;
@@ -1110,6 +1160,7 @@ fn row_to_op(row: &rusqlite::Row<'_>) -> rusqlite::Result<SyncOp> {
         status: row.get(7)?,
         last_error: row.get(8)?,
         next_attempt_at: row.get(9)?,
+        entity_type: row.get(10)?,
     })
 }
 
@@ -1149,11 +1200,23 @@ fn insert_op(
     payload: &Value,
     created_at: &str,
 ) -> Result<i64> {
+    insert_entity_op(conn, "ticket", local_ticket_id, server_ticket_id, op_type, payload, created_at)
+}
+
+fn insert_entity_op(
+    conn: &Connection,
+    entity_type: &str,
+    local_id: i64,
+    server_id: Option<&str>,
+    op_type: &str,
+    payload: &Value,
+    created_at: &str,
+) -> Result<i64> {
     conn.execute(
         "INSERT INTO sync_queue \
-         (local_ticket_id, server_ticket_id, op_type, payload, created_at, status) \
-         VALUES (?1, ?2, ?3, ?4, ?5, 'pending')",
-        params![local_ticket_id, server_ticket_id, op_type, payload.to_string(), created_at],
+         (local_ticket_id, server_ticket_id, op_type, payload, created_at, status, entity_type) \
+         VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6)",
+        params![local_id, server_id, op_type, payload.to_string(), created_at, entity_type],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -1750,6 +1813,266 @@ pub fn resolve_conflicts_for_ticket(local_ticket_id: i64) -> Result<()> {
         "UPDATE sync_conflicts SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP \
          WHERE local_ticket_id = ?1 AND status = 'unresolved'",
         params![local_ticket_id],
+    )?;
+    Ok(())
+}
+
+// ============================================================
+// Reminder sync helpers
+// ============================================================
+
+pub struct MappedReminder {
+    pub local_id: i64,
+    pub server_id: String,
+    pub server_last_updated: String,
+}
+
+pub fn mapped_reminders() -> Vec<MappedReminder> {
+    let Ok(conn) = get_connection() else {
+        return Vec::new();
+    };
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT reminder_id, server_reminder_id, COALESCE(server_last_updated, '') \
+         FROM reminders WHERE server_reminder_id IS NOT NULL AND server_reminder_id != ''",
+    ) else {
+        return Vec::new();
+    };
+    let Ok(rows) = stmt.query_map([], |r| {
+        Ok(MappedReminder {
+            local_id: r.get(0)?,
+            server_id: r.get(1)?,
+            server_last_updated: r.get(2)?,
+        })
+    }) else {
+        return Vec::new();
+    };
+    rows.filter_map(Result::ok).collect()
+}
+
+pub fn server_reminder_id(local_reminder_id: i64) -> Option<String> {
+    let conn = get_connection().ok()?;
+    conn.query_row(
+        "SELECT server_reminder_id FROM reminders WHERE reminder_id = ?1",
+        params![local_reminder_id],
+        |r| r.get::<_, Option<String>>(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+    .flatten()
+}
+
+pub fn set_reminder_mapping(
+    local_reminder_id: i64,
+    server_reminder_id: &str,
+    server_last_updated: &str,
+) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE reminders SET server_reminder_id = ?1, server_last_updated = ?2 \
+         WHERE reminder_id = ?3",
+        params![server_reminder_id, server_last_updated, local_reminder_id],
+    )?;
+    Ok(())
+}
+
+pub fn set_reminder_sent(reminder_id: i64, sent_at: &str) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE reminders SET status = 'Sent', email_sent_at = ?1, last_updated_at = CURRENT_TIMESTAMP \
+         WHERE reminder_id = ?2",
+        params![sent_at, reminder_id],
+    )?;
+    Ok(())
+}
+
+pub fn set_server_reminder_sent(server_reminder_id: &str, sent_at: &str) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE reminders SET status = 'Sent', email_sent_at = ?1, last_updated_at = CURRENT_TIMESTAMP \
+         WHERE server_reminder_id = ?2",
+        params![sent_at, server_reminder_id],
+    )?;
+    Ok(())
+}
+
+pub fn insert_server_reminder(r: &crate::api::ServerReminder) -> Result<i64> {
+    let conn = get_connection()?;
+    conn.execute(
+        r#"
+        INSERT INTO reminders (
+            employee_code, employee_name, email_address, service_category,
+            reminder_message, send_at, status, email_sent_at, ticket_id,
+            created_at, last_updated_at, server_reminder_id, server_last_updated
+        ) VALUES (
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13
+        )
+        "#,
+        params![
+            r.employee_code,
+            r.employee_name,
+            r.email_address,
+            r.service_category,
+            r.reminder_message,
+            r.send_at,
+            r.status,
+            r.email_sent_at,
+            r.ticket_id,
+            r.created_at,
+            r.last_updated_at,
+            r.reminder_id,
+            r.last_updated_at,
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+pub fn apply_server_reminder(local_reminder_id: i64, r: &crate::api::ServerReminder) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        r#"
+        UPDATE reminders SET
+            employee_code = ?1, employee_name = ?2, email_address = ?3,
+            service_category = ?4, reminder_message = ?5, send_at = ?6,
+            status = ?7, email_sent_at = ?8, ticket_id = ?9,
+            created_at = ?10, last_updated_at = ?11,
+            server_reminder_id = ?12, server_last_updated = ?13
+        WHERE reminder_id = ?14
+        "#,
+        params![
+            r.employee_code,
+            r.employee_name,
+            r.email_address,
+            r.service_category,
+            r.reminder_message,
+            r.send_at,
+            r.status,
+            r.email_sent_at,
+            r.ticket_id,
+            r.created_at,
+            r.last_updated_at,
+            r.reminder_id,
+            r.last_updated_at,
+            local_reminder_id,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn reminder_create_payload(local_reminder_id: i64) -> Option<Value> {
+    let conn = get_connection().ok()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT employee_code, service_category, reminder_message, send_at \
+             FROM reminders WHERE reminder_id = ?1",
+        )
+        .ok()?;
+
+    let value = stmt
+        .query_row(params![local_reminder_id], |r| {
+            Ok(json!({
+                "employee_code": r.get::<_, String>(0)?,
+                "service_category": r.get::<_, String>(1)?,
+                "reminder_message": r.get::<_, String>(2)?,
+                "send_at": r.get::<_, String>(3)?,
+            }))
+        })
+        .optional()
+        .ok()
+        .flatten()?;
+
+    Some(value)
+}
+
+pub fn enqueue_reminder_create(local_reminder_id: i64, payload: &Value, created_at: &str) -> Result<i64> {
+    let conn = get_connection()?;
+    insert_entity_op(&conn, "reminder", local_reminder_id, None, "CREATE", payload, created_at)
+}
+
+pub fn enqueue_reminder_update(
+    local_reminder_id: i64,
+    server_reminder_id: Option<String>,
+    fields: &Value,
+    created_at: &str,
+) -> Result<i64> {
+    let conn = get_connection()?;
+    insert_entity_op(
+        &conn,
+        "reminder",
+        local_reminder_id,
+        server_reminder_id.as_deref(),
+        "UPDATE",
+        fields,
+        created_at,
+    )
+}
+
+pub fn enqueue_reminder_send_now(
+    local_reminder_id: i64,
+    server_reminder_id: &str,
+    force: bool,
+    created_at: &str,
+) -> Result<i64> {
+    let conn = get_connection()?;
+    let payload = json!({ "force": force });
+    insert_entity_op(
+        &conn,
+        "reminder",
+        local_reminder_id,
+        Some(server_reminder_id),
+        "SEND_NOW",
+        &payload,
+        created_at,
+    )
+}
+
+// ============================================================
+// Employee DB helpers (for local cache modifications)
+// ============================================================
+
+pub fn create_employee_db(emp: &crate::api::Employee) -> Result<i64> {
+    let conn = get_connection()?;
+    conn.execute(
+        "INSERT INTO USERS (emp_code, emp_name, emp_email, department, division, active, is_deleted) \
+         VALUES (?1, ?2, ?3, ?4, ?5, 1, 0)",
+        params![
+            emp.employee_code.trim(),
+            emp.employee_name.trim(),
+            if emp.email.trim().is_empty() { None } else { Some(emp.email.trim()) },
+            emp.department.trim(),
+            emp.division.trim(),
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+pub fn update_employee_db(
+    emp_code: &str,
+    emp_name: &str,
+    emp_email: &str,
+    department: &str,
+    division: &str,
+) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE USERS SET emp_name = ?1, emp_email = ?2, department = ?3, division = ?4 \
+         WHERE emp_code = ?5 AND is_deleted = 0",
+        params![
+            emp_name.trim(),
+            if emp_email.trim().is_empty() { None } else { Some(emp_email.trim()) },
+            department.trim(),
+            division.trim(),
+            emp_code.trim(),
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn delete_employee_db(emp_code: &str) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE USERS SET is_deleted = 1 WHERE emp_code = ?1",
+        params![emp_code.trim()],
     )?;
     Ok(())
 }

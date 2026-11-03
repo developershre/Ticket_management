@@ -19,9 +19,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// Overall request timeout. Google Apps Script can be slow to cold-start,
-/// so this is deliberately generous but still bounded.
-pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Overall request timeout. Google Apps Script can take 60-90+ seconds to
+/// cold-start its V8 engine and initialize spreadsheet connections, so this
+/// is bounded to 120 seconds.
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Maximum honored `Retry-After` value (seconds).
 const MAX_RETRY_AFTER: u64 = 86_400;
@@ -52,29 +53,31 @@ struct CollectionVariable {
     value: String,
 }
 
+pub const DEFAULT_BASE_URL: &str =
+    "https://script.google.com/macros/s/AKfycbzx_5xVNedTPoIiT6WJ68zxKKaaaH-YahglFcL81LnD206RqnhonLqqBkYgyMSbBhDaoA/exec";
+pub const DEFAULT_API_KEY: &str =
+    "902038705cda4e6cacd685e401f000da38edaa46cd644e29934b1e8f01e73f957469e7d33a384a01b2b2a7d361e6f106";
+
 impl ApiConfig {
     /// Resolution order:
-    /// 1. `TMS_API_BASE_URL`, `TMS_API_KEY`, `TMS_EMPLOYEE_CODE` env vars
+    /// 1. `TMS_API_BASE_URL`, `TMS_API_KEY`, `TMS_EMPLOYEE_CODE` env vars or `.env` file
     /// 2. `base_url` / `api_key` variables of `TMS_API.postman_collection.json`
-    ///    (searched in the working directory, next to the executable and one
-    ///    level above it — same lookup strategy as `management.db`).
+    ///    (searched in working dir, next to executable and one level above)
+    /// 3. Default built-in base URL and API key.
     pub fn load() -> Result<ApiConfig, String> {
-        let env_url = non_empty_env("TMS_API_BASE_URL");
-        let env_key = non_empty_env("TMS_API_KEY");
-        let employee_code = non_empty_env("TMS_EMPLOYEE_CODE");
+        let (dot_url, dot_key, dot_emp) = Self::from_dotenv_file();
+        let env_url = non_empty_env("TMS_API_BASE_URL").or(dot_url);
+        let env_key = non_empty_env("TMS_API_KEY").or(dot_key);
+        let employee_code = non_empty_env("TMS_EMPLOYEE_CODE").or(dot_emp);
 
         let (file_url, file_key) = Self::from_collection_file();
 
-        let base_url = env_url.or(file_url).ok_or_else(|| {
-            "API base URL not configured — set TMS_API_BASE_URL or keep \
-             TMS_API.postman_collection.json next to the application"
-                .to_string()
-        })?;
-        let api_key = env_key.or(file_key).ok_or_else(|| {
-            "API key not configured — set TMS_API_KEY or keep \
-             TMS_API.postman_collection.json next to the application"
-                .to_string()
-        })?;
+        let base_url = env_url
+            .or(file_url)
+            .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
+        let api_key = env_key
+            .or(file_key)
+            .unwrap_or_else(|| DEFAULT_API_KEY.to_string());
 
         Ok(ApiConfig {
             base_url: base_url.trim().to_string(),
@@ -83,10 +86,44 @@ impl ApiConfig {
         })
     }
 
+    /// Reads key-value pairs from `.env` in candidate paths.
+    fn from_dotenv_file() -> (Option<String>, Option<String>, Option<String>) {
+        for path in Self::candidate_paths(".env") {
+            let Ok(content) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let mut url = None;
+            let mut key = None;
+            let mut emp = None;
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+                if let Some((k, v)) = trimmed.split_once('=') {
+                    let k = k.trim();
+                    let v = v.trim().trim_matches('"').trim_matches('\'').trim();
+                    if !v.is_empty() {
+                        match k {
+                            "TMS_API_BASE_URL" => url = Some(v.to_string()),
+                            "TMS_API_KEY" => key = Some(v.to_string()),
+                            "TMS_EMPLOYEE_CODE" => emp = Some(v.to_string()),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            if url.is_some() || key.is_some() || emp.is_some() {
+                return (url, key, emp);
+            }
+        }
+        (None, None, None)
+    }
+
     /// Reads the `base_url` and `api_key` collection variables from the
     /// Postman collection file, if any candidate location contains it.
     fn from_collection_file() -> (Option<String>, Option<String>) {
-        for path in Self::collection_candidates() {
+        for path in Self::candidate_paths("TMS_API.postman_collection.json") {
             let Ok(bytes) = std::fs::read(&path) else {
                 continue;
             };
@@ -109,17 +146,16 @@ impl ApiConfig {
         (None, None)
     }
 
-    fn collection_candidates() -> Vec<PathBuf> {
-        const FILE: &str = "TMS_API.postman_collection.json";
-        let mut out = vec![PathBuf::from(FILE)];
+    fn candidate_paths(file_name: &str) -> Vec<PathBuf> {
+        let mut out = vec![PathBuf::from(file_name)];
         if let Ok(cwd) = std::env::current_dir() {
-            out.push(cwd.join(FILE));
+            out.push(cwd.join(file_name));
         }
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {
-                out.push(dir.join(FILE));
+                out.push(dir.join(file_name));
                 if let Some(parent) = dir.parent() {
-                    out.push(parent.join(FILE));
+                    out.push(parent.join(file_name));
                 }
             }
         }
@@ -431,6 +467,47 @@ pub struct Employee {
 }
 
 // ============================================================
+// Reminder row (shape verified against the live `reminders.*`)
+// ============================================================
+
+/// One reminder as returned by `reminders.get` / `reminders.create` /
+/// `reminders.update` / `reminders.list`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ServerReminder {
+    #[serde(default, deserialize_with = "flex_str")]
+    pub reminder_id: String,
+    #[serde(default, deserialize_with = "flex_str")]
+    pub employee_code: String,
+    #[serde(default, deserialize_with = "flex_str")]
+    pub employee_name: String,
+    #[serde(default, deserialize_with = "flex_str")]
+    pub email_address: String,
+    #[serde(default, deserialize_with = "flex_str")]
+    pub service_category: String,
+    #[serde(default, deserialize_with = "flex_str")]
+    pub reminder_message: String,
+    #[serde(default, deserialize_with = "flex_str")]
+    pub send_at: String,
+    #[serde(default, deserialize_with = "flex_str")]
+    pub status: String,
+    #[serde(default, deserialize_with = "flex_str")]
+    pub email_sent_at: String,
+    #[serde(default, deserialize_with = "flex_str")]
+    pub ticket_id: String,
+    #[serde(default, deserialize_with = "flex_str")]
+    pub created_at: String,
+    #[serde(default, deserialize_with = "flex_str")]
+    pub last_updated_at: String,
+}
+
+/// One page of `reminders.list`.
+pub struct ReminderListPage {
+    pub items: Vec<ServerReminder>,
+    pub invalid_items: usize,
+    pub has_more: bool,
+}
+
+// ============================================================
 // Client
 // ============================================================
 
@@ -446,6 +523,7 @@ impl ApiClient {
         let http = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .user_agent("TaskFlow-TMS/1.0")
+            .redirect(reqwest::redirect::Policy::limited(10))
             .build()
             .map_err(|e| format!("HTTP client init failed: {e}"))?;
         Ok(Self {
@@ -637,8 +715,125 @@ impl ApiClient {
         }
         Ok(items)
     }
+
+    /// `employees.get`
+    pub async fn employees_get(&self, employee_code: &str) -> Result<Employee, ApiError> {
+        let data = self
+            .post("employees.get", json!({ "employee_code": employee_code }))
+            .await?;
+        parse_employee(data)
+    }
+
+    /// `employees.create`
+    pub async fn employees_create(&self, fields: &Value) -> Result<Employee, ApiError> {
+        let data = self.post("employees.create", fields.clone()).await?;
+        parse_employee(data)
+    }
+
+    /// `employees.update`
+    pub async fn employees_update(
+        &self,
+        employee_code: &str,
+        fields: &Value,
+    ) -> Result<Employee, ApiError> {
+        let mut data = fields.as_object().cloned().unwrap_or_default();
+        data.insert("employee_code".to_string(), json!(employee_code));
+        let data = self.post("employees.update", Value::Object(data)).await?;
+        parse_employee(data)
+    }
+
+    /// `employees.delete`
+    pub async fn employees_delete(&self, employee_code: &str) -> Result<(), ApiError> {
+        self.post("employees.delete", json!({ "employee_code": employee_code }))
+            .await?;
+        Ok(())
+    }
+
+    // ---- reminders (TMS_API.postman_collection.json) ----
+
+    /// `reminders.list`
+    pub async fn reminders_list(
+        &self,
+        offset: u64,
+        limit: u64,
+        status: Option<&str>,
+        employee_code: Option<&str>,
+    ) -> Result<ReminderListPage, ApiError> {
+        let mut query = json!({ "offset": offset, "limit": limit });
+        if let Some(s) = status {
+            query.as_object_mut().unwrap().insert("status".to_string(), json!(s));
+        }
+        if let Some(ec) = employee_code {
+            query.as_object_mut().unwrap().insert("employee_code".to_string(), json!(ec));
+        }
+
+        let data = self.post("reminders.list", query).await?;
+
+        let mut items = Vec::new();
+        let mut invalid_items = 0usize;
+        if let Some(arr) = data.get("items").and_then(|v| v.as_array()) {
+            for value in arr {
+                match serde_json::from_value::<ServerReminder>(value.clone()) {
+                    Ok(r) => items.push(r),
+                    Err(_) => invalid_items += 1,
+                }
+            }
+        }
+        let has_more = data
+            .pointer("/pagination/has_more")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        Ok(ReminderListPage {
+            items,
+            invalid_items,
+            has_more,
+        })
+    }
+
+    /// `reminders.get`
+    pub async fn reminders_get(&self, reminder_id: &str) -> Result<ServerReminder, ApiError> {
+        let data = self
+            .post("reminders.get", json!({ "reminder_id": reminder_id }))
+            .await?;
+        parse_reminder(data)
+    }
+
+    /// `reminders.create`
+    pub async fn reminders_create(&self, fields: &Value) -> Result<ServerReminder, ApiError> {
+        let data = self.post("reminders.create", fields.clone()).await?;
+        parse_reminder(data)
+    }
+
+    /// `reminders.update`
+    pub async fn reminders_update(
+        &self,
+        reminder_id: &str,
+        fields: &Value,
+    ) -> Result<ServerReminder, ApiError> {
+        let mut data = fields.as_object().cloned().unwrap_or_default();
+        data.insert("reminder_id".to_string(), json!(reminder_id));
+        let data = self.post("reminders.update", Value::Object(data)).await?;
+        parse_reminder(data)
+    }
+
+    /// `reminders.sendNow`
+    pub async fn reminders_send_now(&self, reminder_id: &str, force: bool) -> Result<Value, ApiError> {
+        let mut payload = json!({ "reminder_id": reminder_id });
+        if force {
+            payload.as_object_mut().unwrap().insert("force".to_string(), json!(true));
+        }
+        self.post("reminders.sendNow", payload).await
+    }
 }
 
 fn parse_ticket(data: Value) -> Result<ServerTicket, ApiError> {
     serde_json::from_value(data).map_err(|e| ApiError::Decode(format!("invalid ticket payload: {e}")))
+}
+
+fn parse_employee(data: Value) -> Result<Employee, ApiError> {
+    serde_json::from_value(data).map_err(|e| ApiError::Decode(format!("invalid employee payload: {e}")))
+}
+
+fn parse_reminder(data: Value) -> Result<ServerReminder, ApiError> {
+    serde_json::from_value(data).map_err(|e| ApiError::Decode(format!("invalid reminder payload: {e}")))
 }

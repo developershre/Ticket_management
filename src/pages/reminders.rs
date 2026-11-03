@@ -24,7 +24,7 @@ use crate::icons::{
 /// Reminder item model stored in reactive state with all 12 fields.
 #[derive(Clone, PartialEq, Debug)]
 pub struct ReminderItem {
-    pub id: String, // "REM-{reminder_id}"
+    pub id: String, // "REM-{reminder_id}" or "RMD-..."
     pub reminder_id: i64,
     pub employee_code: String,
     pub employee_name: String,
@@ -37,6 +37,8 @@ pub struct ReminderItem {
     pub ticket_id: String,
     pub created_at: String,
     pub last_updated_at: String,
+    pub server_reminder_id: String,
+    pub server_last_updated: String,
     pub done: bool,
 }
 
@@ -81,8 +83,13 @@ fn initial_reminders() -> Vec<ReminderItem> {
             .into_iter()
             .map(|r| {
                 let done = r.status.eq_ignore_ascii_case("completed");
+                let display_id = if !r.server_reminder_id.is_empty() {
+                    r.server_reminder_id.clone()
+                } else {
+                    format!("REM-{}", r.reminder_id)
+                };
                 ReminderItem {
-                    id: format!("REM-{}", r.reminder_id),
+                    id: display_id,
                     reminder_id: r.reminder_id,
                     employee_code: r.employee_code,
                     employee_name: r.employee_name,
@@ -95,6 +102,8 @@ fn initial_reminders() -> Vec<ReminderItem> {
                     ticket_id: r.ticket_id,
                     created_at: r.created_at,
                     last_updated_at: r.last_updated_at,
+                    server_reminder_id: r.server_reminder_id,
+                    server_last_updated: r.server_last_updated,
                     done,
                 }
             })
@@ -116,6 +125,8 @@ fn initial_reminders() -> Vec<ReminderItem> {
             ticket_id: "IT-1".to_string(),
             created_at: "Today".to_string(),
             last_updated_at: "Today".to_string(),
+            server_reminder_id: String::new(),
+            server_last_updated: String::new(),
             done: false,
         },
         ReminderItem {
@@ -132,6 +143,8 @@ fn initial_reminders() -> Vec<ReminderItem> {
             ticket_id: String::new(),
             created_at: "Today".to_string(),
             last_updated_at: "Today".to_string(),
+            server_reminder_id: String::new(),
+            server_last_updated: String::new(),
             done: false,
         },
         ReminderItem {
@@ -148,6 +161,8 @@ fn initial_reminders() -> Vec<ReminderItem> {
             ticket_id: "IT-2".to_string(),
             created_at: "Yesterday".to_string(),
             last_updated_at: "Yesterday".to_string(),
+            server_reminder_id: String::new(),
+            server_last_updated: String::new(),
             done: false,
         },
     ]
@@ -170,6 +185,7 @@ struct ReminderContextMenuProps {
     on_change_category: EventHandler<(String, String)>,
     on_change_timing: EventHandler<(String, String)>,
     on_delete: EventHandler<String>,
+    on_send_now: EventHandler<ReminderItem>,
 }
 
 #[component]
@@ -210,6 +226,26 @@ fn ReminderContextMenu(props: ReminderContextMenuProps) -> Element {
                     } else {
                         "Mark as Completed"
                     }
+                }
+
+                ContextMenuItem {
+                    on_select: {
+                        let r_c = r.clone();
+                        let handler = props.on_send_now;
+                        move |_| handler.call(r_c.clone())
+                    },
+                    svg {
+                        class: "size-3.5 text-primary",
+                        view_box: "0 0 24 24",
+                        fill: "none",
+                        stroke: "currentColor",
+                        stroke_width: "2",
+                        stroke_linecap: "round",
+                        stroke_linejoin: "round",
+                        line { x1: "22", y1: "2", x2: "11", y2: "13" }
+                        polygon { points: "22 2 15 22 11 13 2 9 22 2" }
+                    }
+                    "Send Reminder Now (Email)"
                 }
 
                 ContextMenuItem {
@@ -430,6 +466,15 @@ pub fn Reminders() -> Element {
     let mut query = use_signal(String::new);
     let mut category_filter = use_signal(|| "All".to_string());
 
+    // Auto-reload from SQLite when background sync updates the DB revision
+    use_effect(move || {
+        if let Some(sync) = db_sync {
+            let _ = sync();
+        }
+        let list = initial_reminders();
+        reminders.set(list);
+    });
+
     // Drag-and-drop reactive state
     let mut dragged_id = use_signal(|| Option::<String>::None);
     let mut drag_over_id = use_signal(|| Option::<String>::None);
@@ -481,6 +526,7 @@ pub fn Reminders() -> Element {
 
         match crate::db::create_reminder_full(&input) {
             Ok(new_id) => {
+                crate::sync::enqueue_reminder_create(new_id);
                 let item = ReminderItem {
                     id: format!("REM-{new_id}"),
                     reminder_id: new_id,
@@ -495,6 +541,8 @@ pub fn Reminders() -> Element {
                     ticket_id: input.ticket_id,
                     created_at: "Just now".to_string(),
                     last_updated_at: "Just now".to_string(),
+                    server_reminder_id: String::new(),
+                    server_last_updated: String::new(),
                     done: false,
                 };
                 reminders.write().insert(0, item);
@@ -536,9 +584,42 @@ pub fn Reminders() -> Element {
             item.done = !item.done;
             item.status = if item.done { "Completed".to_string() } else { "Pending".to_string() };
             let status = item.status.clone();
-            let _ = crate::db::update_reminder_status(item.reminder_id, &status);
+            let rem_id = item.reminder_id;
+            let _ = crate::db::update_reminder_status(rem_id, &status);
+            crate::sync::enqueue_reminder_update(rem_id, serde_json::json!({ "status": status }));
             toast.info("Status Changed", format!("Reminder marked {status}"));
+            if let Some(mut sync) = db_sync {
+                sync.with_mut(|r| r.0 += 1);
+            }
         }
+    };
+
+    // Immediate send now (calls reminders.sendNow API)
+    let send_now = move |item: ReminderItem| {
+        let server_id = item.server_reminder_id.clone();
+        let rem_id = item.reminder_id;
+        let title = item.reminder_message.clone();
+        spawn(async move {
+            let target_id = if !server_id.is_empty() {
+                server_id
+            } else {
+                format!("REM-{rem_id}")
+            };
+            match crate::sync::send_reminder_now_immediate(&target_id, false).await {
+                Ok(_) => {
+                    toast.success(
+                        "Reminder Email Sent",
+                        format!("Secure ticket form link sent for \"{title}\" ({target_id})"),
+                    );
+                    if let Some(mut sync) = db_sync {
+                        sync.with_mut(|r| r.0 += 1);
+                    }
+                }
+                Err(e) => {
+                    toast.error("Send Failed", format!("Failed to send reminder email: {e}"));
+                }
+            }
+        });
     };
 
     // Delete reminder
@@ -548,6 +629,9 @@ pub fn Reminders() -> Element {
             let item = list.remove(pos);
             let _ = crate::db::delete_reminder_db(item.reminder_id);
             toast.success("Reminder Deleted", format!("\"{}\" removed", item.reminder_message));
+            if let Some(mut sync) = db_sync {
+                sync.with_mut(|r| r.0 += 1);
+            }
         }
     };
 
@@ -556,8 +640,13 @@ pub fn Reminders() -> Element {
         let mut list = reminders.write();
         if let Some(item) = list.iter_mut().find(|r| r.id == id) {
             item.service_category = new_tag.clone();
-            let _ = crate::db::update_reminder_category(item.reminder_id, &new_tag);
+            let rem_id = item.reminder_id;
+            let _ = crate::db::update_reminder_category(rem_id, &new_tag);
+            crate::sync::enqueue_reminder_update(rem_id, serde_json::json!({ "service_category": new_tag }));
             toast.info("Category Changed", format!("\"{}\" is now {new_tag}", item.reminder_message));
+            if let Some(mut sync) = db_sync {
+                sync.with_mut(|r| r.0 += 1);
+            }
         }
     };
 
@@ -566,8 +655,13 @@ pub fn Reminders() -> Element {
         let mut list = reminders.write();
         if let Some(item) = list.iter_mut().find(|r| r.id == id) {
             item.send_at = new_when.clone();
-            let _ = crate::db::update_reminder_send_at(item.reminder_id, &new_when);
+            let rem_id = item.reminder_id;
+            let _ = crate::db::update_reminder_send_at(rem_id, &new_when);
+            crate::sync::enqueue_reminder_update(rem_id, serde_json::json!({ "send_at": new_when }));
             toast.info("Timing Changed", format!("Due: {new_when}"));
+            if let Some(mut sync) = db_sync {
+                sync.with_mut(|r| r.0 += 1);
+            }
         }
     };
 
@@ -661,6 +755,34 @@ pub fn Reminders() -> Element {
                         }
                     }
                     div { class: "flex items-center gap-2 text-xs text-muted-foreground",
+                        Button {
+                            variant: "outline",
+                            size: "sm",
+                            class: "h-8 gap-1.5",
+                            title: "Sync reminders with Google Sheets".to_string(),
+                            onclick: move |_| {
+                                let _ = crate::db::sync_meta_set("last_reminder_pull_at", "0");
+                                crate::sync::kick();
+                                if let Some(mut sync) = db_sync {
+                                    sync.with_mut(|r| r.0 += 1);
+                                }
+                                toast.info("Syncing", "Pulling reminders from Google Sheets…");
+                            },
+                            svg {
+                                class: "size-3.5",
+                                view_box: "0 0 24 24",
+                                fill: "none",
+                                stroke: "currentColor",
+                                stroke_width: "2",
+                                stroke_linecap: "round",
+                                stroke_linejoin: "round",
+                                path { d: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" }
+                                path { d: "M21 3v5h-5" }
+                                path { d: "M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" }
+                                path { d: "M8 16H3v5" }
+                            }
+                            "Sync"
+                        }
                         Button {
                             variant: "default",
                             size: "sm",
@@ -810,6 +932,7 @@ pub fn Reminders() -> Element {
                                             on_change_category: move |(id, cat)| change_category((id, cat)),
                                             on_change_timing: move |(id, timing)| change_timing((id, timing)),
                                             on_delete: move |id| delete_reminder(id),
+                                            on_send_now: move |r| send_now(r),
 
                                             div {
                                                 draggable: "true",
@@ -925,31 +1048,57 @@ pub fn Reminders() -> Element {
                                                             "{reminder.employee_name}"
                                                         }
                                                     }
-                                                    button {
-                                                        r#type: "button",
-                                                        title: if is_done { "Mark incomplete" } else { "Mark complete" },
-                                                        class: "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors cursor-pointer {check_btn_cls}",
-                                                        onclick: move |e: MouseEvent| {
-                                                            e.stop_propagation();
-                                                            toggle_done(id_for_toggle.clone());
-                                                        },
-                                                        if is_done {
+                                                    div { class: "flex items-center gap-1.5",
+                                                        button {
+                                                            r#type: "button",
+                                                            title: "Send secure ticket form link email now",
+                                                            class: "flex items-center gap-1 rounded-md border border-border/80 bg-background px-2 py-1 text-xs text-muted-foreground hover:border-primary hover:text-primary transition-colors cursor-pointer",
+                                                            onclick: {
+                                                                let r_send = reminder_c.clone();
+                                                                move |e: MouseEvent| {
+                                                                    e.stop_propagation();
+                                                                    send_now(r_send.clone());
+                                                                }
+                                                            },
                                                             svg {
-                                                                class: "size-3 text-primary-foreground",
+                                                                class: "size-3",
                                                                 view_box: "0 0 24 24",
                                                                 fill: "none",
                                                                 stroke: "currentColor",
-                                                                stroke_width: "3",
+                                                                stroke_width: "2",
                                                                 stroke_linecap: "round",
                                                                 stroke_linejoin: "round",
-                                                                path { d: "M20 6 9 17l-5-5" }
+                                                                line { x1: "22", y1: "2", x2: "11", y2: "13" }
+                                                                polygon { points: "22 2 15 22 11 13 2 9 22 2" }
                                                             }
+                                                            span { "Send" }
                                                         }
-                                                        span {
+                                                        button {
+                                                            r#type: "button",
+                                                            title: if is_done { "Mark incomplete" } else { "Mark complete" },
+                                                            class: "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors cursor-pointer {check_btn_cls}",
+                                                            onclick: move |e: MouseEvent| {
+                                                                e.stop_propagation();
+                                                                toggle_done(id_for_toggle.clone());
+                                                            },
                                                             if is_done {
-                                                                "Done"
-                                                            } else {
-                                                                "Mark Done"
+                                                                svg {
+                                                                    class: "size-3 text-primary-foreground",
+                                                                    view_box: "0 0 24 24",
+                                                                    fill: "none",
+                                                                    stroke: "currentColor",
+                                                                    stroke_width: "3",
+                                                                    stroke_linecap: "round",
+                                                                    stroke_linejoin: "round",
+                                                                    path { d: "M20 6 9 17l-5-5" }
+                                                                }
+                                                            }
+                                                            span {
+                                                                if is_done {
+                                                                    "Done"
+                                                                } else {
+                                                                    "Mark Done"
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -1167,6 +1316,28 @@ pub fn Reminders() -> Element {
                                 variant: "outline",
                                 onclick: move |_| is_detail_open.set(false),
                                 "Close"
+                            }
+                            Button {
+                                variant: "default",
+                                onclick: {
+                                    let r_send = r.clone();
+                                    move |_| {
+                                        send_now(r_send.clone());
+                                        is_detail_open.set(false);
+                                    }
+                                },
+                                svg {
+                                    class: "size-3.5 mr-1.5",
+                                    view_box: "0 0 24 24",
+                                    fill: "none",
+                                    stroke: "currentColor",
+                                    stroke_width: "2",
+                                    stroke_linecap: "round",
+                                    stroke_linejoin: "round",
+                                    line { x1: "22", y1: "2", x2: "11", y2: "13" }
+                                    polygon { points: "22 2 15 22 11 13 2 9 22 2" }
+                                }
+                                "Send Email Now"
                             }
                         }
                     }

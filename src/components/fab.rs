@@ -534,6 +534,7 @@ pub fn Fab() -> Element {
                                     match crate::db::create_reminder_full(&input) {
                                         Ok(new_id) => {
                                             toast.success("Reminder Saved to DB", format!("REM-{new_id}: \"{title}\" scheduled"));
+                                            crate::sync::enqueue_reminder_create(new_id);
                                             if let Some(mut sync) = db_sync {
                                                 sync.with_mut(|r| r.0 += 1);
                                             }

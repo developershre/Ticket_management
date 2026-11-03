@@ -12,7 +12,12 @@ use dioxus::prelude::*;
 use crate::components::ui::badge::Badge;
 use crate::components::ui::button::Button;
 use crate::components::ui::data_table::{DataTable, DataTableColumn, DataTableFilter, SortValue};
-use crate::icons::UsersIcon;
+use crate::components::ui::dialog::{
+    Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+};
+use crate::components::ui::input::Input;
+use crate::components::ui::toast::ToastState;
+use crate::icons::{PencilIcon, PlusIcon, TrashIcon, UsersIcon};
 use crate::state::AppDbRevision;
 
 /// One employee row rendered in the directory table.
@@ -145,6 +150,61 @@ fn render_division_cell(e: &EmployeeItem) -> Element {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
+struct EmployeeActionState {
+    edit_open: Signal<bool>,
+    delete_open: Signal<bool>,
+    target_code: Signal<String>,
+    target_name: Signal<String>,
+    target_email: Signal<String>,
+    target_dept: Signal<String>,
+    target_div: Signal<String>,
+}
+
+#[component]
+fn EmployeeActionCell(emp: EmployeeItem) -> Element {
+    let mut state = use_context::<EmployeeActionState>();
+    let emp_edit = emp.clone();
+    let emp_del = emp.clone();
+    rsx! {
+        div { class: "flex items-center justify-end gap-1",
+            button {
+                r#type: "button",
+                title: "Edit Employee",
+                class: "flex size-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer transition-colors",
+                onclick: move |e: MouseEvent| {
+                    e.stop_propagation();
+                    state.target_code.set(emp_edit.emp_code.clone());
+                    state.target_name.set(emp_edit.emp_name.clone());
+                    state.target_email.set(emp_edit.emp_email.clone());
+                    state.target_dept.set(emp_edit.department.clone());
+                    state.target_div.set(emp_edit.division.clone());
+                    state.edit_open.set(true);
+                },
+                PencilIcon { class: "size-3.5" }
+            }
+            button {
+                r#type: "button",
+                title: "Delete Employee",
+                class: "flex size-7 items-center justify-center rounded text-muted-foreground hover:bg-destructive/15 hover:text-destructive cursor-pointer transition-colors",
+                onclick: move |e: MouseEvent| {
+                    e.stop_propagation();
+                    state.target_code.set(emp_del.emp_code.clone());
+                    state.target_name.set(emp_del.emp_name.clone());
+                    state.delete_open.set(true);
+                },
+                TrashIcon { class: "size-3.5" }
+            }
+        }
+    }
+}
+
+fn render_action_cell(e: &EmployeeItem) -> Element {
+    rsx! {
+        EmployeeActionCell { emp: e.clone() }
+    }
+}
+
 fn employee_columns() -> Vec<DataTableColumn<EmployeeItem>> {
     vec![
         DataTableColumn::new(
@@ -177,6 +237,12 @@ fn employee_columns() -> Vec<DataTableColumn<EmployeeItem>> {
             render_division_cell,
             |e: &EmployeeItem| SortValue::Text(e.division.clone()),
         ),
+        DataTableColumn::new(
+            "actions",
+            "",
+            render_action_cell,
+            |_: &EmployeeItem| SortValue::Text(String::new()),
+        ),
     ]
 }
 
@@ -187,10 +253,36 @@ fn employee_columns() -> Vec<DataTableColumn<EmployeeItem>> {
 #[component]
 pub fn Employees() -> Element {
     let db_sync = try_use_context::<Signal<AppDbRevision>>();
+    let toast = use_context::<ToastState>();
 
     // Reload whenever the sync worker bumps the revision (employee pull)
     // or the user hits Refresh.
     let local_revision = use_signal(|| 0u64);
+
+    let mut edit_open = use_signal(|| false);
+    let mut delete_open = use_signal(|| false);
+    let target_code = use_signal(String::new);
+    let mut target_name = use_signal(String::new);
+    let mut target_email = use_signal(String::new);
+    let mut target_dept = use_signal(String::new);
+    let mut target_div = use_signal(String::new);
+
+    let mut add_open = use_signal(|| false);
+    let mut add_code = use_signal(String::new);
+    let mut add_name = use_signal(String::new);
+    let mut add_email = use_signal(String::new);
+    let mut add_dept = use_signal(String::new);
+    let mut add_div = use_signal(String::new);
+
+    use_context_provider(|| EmployeeActionState {
+        edit_open,
+        delete_open,
+        target_code,
+        target_name,
+        target_email,
+        target_dept,
+        target_div,
+    });
 
     let employees: Vec<EmployeeItem> = {
         let _ = local_revision();
@@ -237,7 +329,7 @@ pub fn Employees() -> Element {
                             }
                         }
                         p { class: "mt-0.5 text-xs text-muted-foreground",
-                            "Synced from Google Sheets · cached locally for offline use"
+                            "Synced with Google Sheets API · cached locally for offline use"
                         }
                     }
                 }
@@ -248,16 +340,29 @@ pub fn Employees() -> Element {
                         size: "sm".to_string(),
                         title: "Pull the latest employee list from Google Sheets now".to_string(),
                         onclick: move |_| {
-                            // Reset the pull timer and wake the worker —
-                            // the refresh itself happens in the background.
                             crate::sync::invalidate_employee_cache();
                             crate::sync::kick();
                             if let Some(mut sync) = db_sync {
                                 sync.with_mut(|r| r.0 += 1);
                             }
+                            toast.info("Syncing", "Pulling employees from Google Sheets…");
                         },
                         RefreshIcon { class: "size-3.5 mr-1.5" }
                         "Refresh from Sheet"
+                    }
+                    Button {
+                        variant: "default".to_string(),
+                        size: "sm".to_string(),
+                        onclick: move |_| {
+                            add_code.write().clear();
+                            add_name.write().clear();
+                            add_email.write().clear();
+                            add_dept.write().clear();
+                            add_div.write().clear();
+                            add_open.set(true);
+                        },
+                        PlusIcon { class: "size-3.5 mr-1.5" }
+                        "Add Employee"
                     }
                 }
             }
@@ -292,6 +397,239 @@ pub fn Employees() -> Element {
                         filter2_value: Some(employee_division_value as fn(&EmployeeItem) -> String),
                         page_size: 25,
                         initial_sort: Some(("name".to_string(), true)),
+                    }
+                }
+            }
+
+            // ============================================================
+            // Add Employee Dialog
+            // ============================================================
+            if add_open() {
+                Dialog {
+                    open: Some(add_open),
+                    DialogContent {
+                        class: "max-w-md",
+                        DialogHeader {
+                            DialogTitle { "Add Employee" }
+                            DialogDescription { "Create a new employee profile in Google Sheets." }
+                        }
+                        div { class: "flex flex-col gap-3 py-2 text-xs",
+                            div { class: "flex flex-col gap-1",
+                                label { class: "text-xs font-semibold text-foreground", "Employee Code *" }
+                                Input {
+                                    placeholder: "e.g. EMP001".to_string(),
+                                    value: add_code.read().clone(),
+                                    oninput: move |e: FormEvent| add_code.set(e.value()),
+                                }
+                            }
+                            div { class: "flex flex-col gap-1",
+                                label { class: "text-xs font-semibold text-foreground", "Employee Name *" }
+                                Input {
+                                    placeholder: "e.g. Aarav Sharma".to_string(),
+                                    value: add_name.read().clone(),
+                                    oninput: move |e: FormEvent| add_name.set(e.value()),
+                                }
+                            }
+                            div { class: "flex flex-col gap-1",
+                                label { class: "text-xs font-semibold text-foreground", "Email Address" }
+                                Input {
+                                    placeholder: "e.g. employee@example.com".to_string(),
+                                    value: add_email.read().clone(),
+                                    oninput: move |e: FormEvent| add_email.set(e.value()),
+                                }
+                            }
+                            div { class: "grid grid-cols-2 gap-2",
+                                div { class: "flex flex-col gap-1",
+                                    label { class: "text-xs font-semibold text-foreground", "Department" }
+                                    Input {
+                                        placeholder: "e.g. IT".to_string(),
+                                        value: add_dept.read().clone(),
+                                        oninput: move |e: FormEvent| add_dept.set(e.value()),
+                                    }
+                                }
+                                div { class: "flex flex-col gap-1",
+                                    label { class: "text-xs font-semibold text-foreground", "Division" }
+                                    Input {
+                                        placeholder: "e.g. Corporate".to_string(),
+                                        value: add_div.read().clone(),
+                                        oninput: move |e: FormEvent| add_div.set(e.value()),
+                                    }
+                                }
+                            }
+                        }
+                        DialogFooter {
+                            Button {
+                                variant: "outline",
+                                onclick: move |_| add_open.set(false),
+                                "Cancel"
+                            }
+                            Button {
+                                variant: "default",
+                                onclick: move |_| {
+                                    let code = add_code.read().trim().to_string();
+                                    let name = add_name.read().trim().to_string();
+                                    if code.is_empty() || name.is_empty() {
+                                        toast.error("Validation Error", "Employee code and name are required.");
+                                        return;
+                                    }
+                                    let emp = crate::api::Employee {
+                                        employee_code: code.clone(),
+                                        employee_name: name.clone(),
+                                        department: add_dept.read().trim().to_string(),
+                                        email: add_email.read().trim().to_string(),
+                                        division: add_div.read().trim().to_string(),
+                                    };
+                                    spawn(async move {
+                                        match crate::sync::create_employee_immediate(&emp).await {
+                                            Ok(_) => {
+                                                toast.success("Employee Created", format!("{name} ({code}) added to sheet"));
+                                                add_open.set(false);
+                                                if let Some(mut sync) = db_sync {
+                                                    sync.with_mut(|r| r.0 += 1);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                toast.error("Creation Failed", format!("Failed to create employee: {e}"));
+                                            }
+                                        }
+                                    });
+                                },
+                                "Create"
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ============================================================
+            // Edit Employee Dialog
+            // ============================================================
+            if edit_open() {
+                Dialog {
+                    open: Some(edit_open),
+                    DialogContent {
+                        class: "max-w-md",
+                        DialogHeader {
+                            DialogTitle { "Edit Employee: {target_code}" }
+                            DialogDescription { "Update employee information in Google Sheets." }
+                        }
+                        div { class: "flex flex-col gap-3 py-2 text-xs",
+                            div { class: "flex flex-col gap-1",
+                                label { class: "text-xs font-semibold text-foreground", "Employee Name *" }
+                                Input {
+                                    value: target_name.read().clone(),
+                                    oninput: move |e: FormEvent| target_name.set(e.value()),
+                                }
+                            }
+                            div { class: "flex flex-col gap-1",
+                                label { class: "text-xs font-semibold text-foreground", "Email Address" }
+                                Input {
+                                    value: target_email.read().clone(),
+                                    oninput: move |e: FormEvent| target_email.set(e.value()),
+                                }
+                            }
+                            div { class: "grid grid-cols-2 gap-2",
+                                div { class: "flex flex-col gap-1",
+                                    label { class: "text-xs font-semibold text-foreground", "Department" }
+                                    Input {
+                                        value: target_dept.read().clone(),
+                                        oninput: move |e: FormEvent| target_dept.set(e.value()),
+                                    }
+                                }
+                                div { class: "flex flex-col gap-1",
+                                    label { class: "text-xs font-semibold text-foreground", "Division" }
+                                    Input {
+                                        value: target_div.read().clone(),
+                                        oninput: move |e: FormEvent| target_div.set(e.value()),
+                                    }
+                                }
+                            }
+                        }
+                        DialogFooter {
+                            Button {
+                                variant: "outline",
+                                onclick: move |_| edit_open.set(false),
+                                "Cancel"
+                            }
+                            Button {
+                                variant: "default",
+                                onclick: move |_| {
+                                    let code = target_code.read().clone();
+                                    let name = target_name.read().trim().to_string();
+                                    let email = target_email.read().trim().to_string();
+                                    let dept = target_dept.read().trim().to_string();
+                                    let div = target_div.read().trim().to_string();
+
+                                    let fields = serde_json::json!({
+                                        "employee_name": name,
+                                        "email": email,
+                                        "department": dept,
+                                        "division": div,
+                                    });
+
+                                    spawn(async move {
+                                        match crate::sync::update_employee_immediate(&code, &fields).await {
+                                            Ok(_) => {
+                                                toast.success("Employee Updated", format!("Updated {code} in Google Sheets"));
+                                                edit_open.set(false);
+                                                if let Some(mut sync) = db_sync {
+                                                    sync.with_mut(|r| r.0 += 1);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                toast.error("Update Failed", format!("Failed to update: {e}"));
+                                            }
+                                        }
+                                    });
+                                },
+                                "Save Changes"
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ============================================================
+            // Delete Confirmation Dialog
+            // ============================================================
+            if delete_open() {
+                Dialog {
+                    open: Some(delete_open),
+                    DialogContent {
+                        class: "max-w-sm",
+                        DialogHeader {
+                            DialogTitle { "Delete Employee" }
+                            DialogDescription { "Are you sure you want to delete {target_name} ({target_code})? Note: Deletion is blocked if tickets reference this employee." }
+                        }
+                        DialogFooter {
+                            Button {
+                                variant: "outline",
+                                onclick: move |_| delete_open.set(false),
+                                "Cancel"
+                            }
+                            Button {
+                                variant: "destructive",
+                                onclick: move |_| {
+                                    let code = target_code.read().clone();
+                                    spawn(async move {
+                                        match crate::sync::delete_employee_immediate(&code).await {
+                                            Ok(_) => {
+                                                toast.success("Deleted", format!("Removed {code} from Google Sheets"));
+                                                delete_open.set(false);
+                                                if let Some(mut sync) = db_sync {
+                                                    sync.with_mut(|r| r.0 += 1);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                toast.error("Deletion Blocked", format!("{e}"));
+                                                delete_open.set(false);
+                                            }
+                                        }
+                                    });
+                                },
+                                "Delete"
+                            }
+                        }
                     }
                 }
             }
