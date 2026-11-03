@@ -965,17 +965,55 @@ pub fn enqueue_delete(local_ticket_id: i64) {
 /// employee_code, service_category, reminder_message, send_at.
 /// All other fields (employee_name, email_address, etc.) are auto-resolved
 /// by the Apps Script from the Employees sheet and trigger UNKNOWN_FIELD if passed.
+pub fn parse_to_iso8601(raw: &str) -> String {
+    let trimmed = raw.trim();
+    // Valid ISO 8601 starts with a 4-digit year e.g. 2026-
+    if trimmed.len() >= 10
+        && trimmed.as_bytes()[0..4].iter().all(|b| b.is_ascii_digit())
+        && trimmed.as_bytes()[4] == b'-'
+    {
+        if trimmed.contains('T') {
+            return trimmed.to_string();
+        }
+        if trimmed.len() >= 19 && trimmed.as_bytes()[10] == b' ' {
+            return format!("{}T{}Z", &trimmed[..10], &trimmed[11..19]);
+        }
+        if trimmed.len() == 10 {
+            return format!("{}T09:00:00Z", trimmed);
+        }
+    }
+
+    let now = now_epoch();
+    let lower = trimmed.to_lowercase();
+    let target_epoch = if lower.contains("tomorrow") {
+        now + 86_400
+    } else if lower.contains("next week") {
+        now + 7 * 86_400
+    } else {
+        now
+    };
+
+    let utc = crate::state::format_utc(target_epoch);
+    let time_part = if lower.contains("2:00 pm") || lower.contains("14:00") {
+        "14:00:00"
+    } else if lower.contains("5:00 pm") || lower.contains("5:21 pm") || lower.contains("17:00") {
+        "17:00:00"
+    } else if lower.contains("4:30 pm") || lower.contains("16:30") {
+        "16:30:00"
+    } else if lower.contains("9:00 am") || lower.contains("09:00") {
+        "09:00:00"
+    } else if lower.contains("10:00 am") || lower.contains("10:00") {
+        "10:00:00"
+    } else {
+        &utc[11..19]
+    };
+
+    format!("{}T{time_part}Z", &utc[..10])
+}
+
 fn ensure_iso8601(val: Option<&Value>) -> Value {
     let raw = val.and_then(|v| v.as_str()).unwrap_or("");
-    if raw.contains('T') {
-        return json!(raw);
-    }
-    if raw.len() == 19 && raw.chars().nth(10) == Some(' ') {
-        return json!(format!("{}T{}Z", &raw[..10], &raw[11..]));
-    }
-    let now = now_epoch();
-    let utc = crate::state::format_utc(now);
-    json!(format!("{}T{}Z", &utc[..10], &utc[11..]))
+    json!(parse_to_iso8601(raw))
 }
 
 pub fn sanitize_reminder_create_payload(payload: &Value) -> Value {

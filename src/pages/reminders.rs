@@ -514,7 +514,7 @@ pub fn Reminders() -> Element {
             email_address: email_val.clone(),
             service_category: cat_val.clone(),
             reminder_message: reminder_msg,
-            send_at: now_str.clone(),
+            send_at: crate::sync::parse_to_iso8601(&now_str),
             status: "Pending".to_string(),
             email_sent_at: "Not sent yet".to_string(),
             ticket_id: String::new(),
@@ -664,7 +664,10 @@ pub fn Reminders() -> Element {
             item.send_at = new_when.clone();
             let rem_id = item.reminder_id;
             let _ = crate::db::update_reminder_send_at(rem_id, &new_when);
-            crate::sync::enqueue_reminder_update(rem_id, serde_json::json!({ "send_at": new_when }));
+            crate::sync::enqueue_reminder_update(
+                rem_id,
+                serde_json::json!({ "send_at": crate::sync::parse_to_iso8601(&new_when) }),
+            );
             toast.info("Timing Changed", format!("Due: {new_when}"));
             if let Some(mut sync) = db_sync {
                 sync.with_mut(|r| r.0 += 1);

@@ -526,7 +526,7 @@ pub fn Fab() -> Element {
                                         email_address: reminder_email.read().clone(),
                                         service_category: reminder_category.read().clone(),
                                         reminder_message: msg,
-                                        send_at: reminder_send_at.read().clone(),
+                                        send_at: crate::sync::parse_to_iso8601(&reminder_send_at.read()),
                                         status: reminder_status.read().clone(),
                                         email_sent_at: reminder_email_sent_at.read().clone(),
                                         ticket_id: reminder_ticket_id.read().clone(),

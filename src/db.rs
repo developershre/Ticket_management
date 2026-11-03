@@ -2399,12 +2399,13 @@ pub fn reminder_create_payload(local_reminder_id: i64) -> Option<Value> {
             let cat: String = r.get(1)?;
             let msg: String = r.get(2)?;
             let send_at: String = r.get(3)?;
+            let send_at_iso = crate::sync::parse_to_iso8601(&send_at);
 
             let mut map = serde_json::Map::new();
             map.insert("employee_code".to_string(), json!(emp_code));
             map.insert("service_category".to_string(), json!(cat));
             map.insert("reminder_message".to_string(), json!(msg));
-            map.insert("send_at".to_string(), json!(send_at));
+            map.insert("send_at".to_string(), json!(send_at_iso));
 
             Ok(Value::Object(map))
         })
