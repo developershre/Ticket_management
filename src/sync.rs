@@ -504,7 +504,7 @@ async fn execute_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutcome, ApiE
                     return Ok(ExecOutcome::Synced);
                 }
             }
-            let sanitized = sanitize_ticket_payload(client, &op.payload);
+            let sanitized = sanitize_ticket_payload(client, &op.payload, true);
             let remote = client.tickets_create(&sanitized).await?;
             db::set_ticket_mapping(op.local_ticket_id, &remote.ticket_id, &remote.last_updated_on)?;
             Ok(ExecOutcome::Synced)
@@ -522,13 +522,13 @@ async fn execute_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutcome, ApiE
                 let Some(row) = db::ticket_create_payload(op.local_ticket_id) else {
                     return Ok(ExecOutcome::Superseded); // row is gone
                 };
-                let sanitized = sanitize_ticket_payload(client, &row);
+                let sanitized = sanitize_ticket_payload(client, &row, true);
                 let remote = client.tickets_create(&sanitized).await?;
                 db::set_ticket_mapping(op.local_ticket_id, &remote.ticket_id, &remote.last_updated_on)?;
                 return Ok(ExecOutcome::Synced);
             };
 
-            let sanitized = sanitize_ticket_payload(client, &op.payload);
+            let sanitized = sanitize_ticket_payload(client, &op.payload, false);
             match client.tickets_update(&server_id, &sanitized).await {
                 Ok(remote) => {
                     db::set_server_last_updated(op.local_ticket_id, &remote.last_updated_on)?;
@@ -580,12 +580,30 @@ async fn execute_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutcome, ApiE
     }
 }
 
-/// Applies the configured employee override (the sheet requires
-/// `employee_code` to reference an existing employee row).
-fn with_employee_code(client: &ApiClient, payload: &Value) -> Value {
+/// Applies the configured employee override for **creates** only: the sheet
+/// requires `employee_code` to reference an existing `Employee` row, so an
+/// empty code is filled from `TMS_EMPLOYEE_CODE`. A code the user picked is
+/// never overwritten, and updates never get one injected (that would
+/// silently reassign the ticket's employee).
+fn with_employee_code(client: &ApiClient, payload: &Value, for_create: bool) -> Value {
+    if !for_create {
+        return payload.clone();
+    }
+    let has_own = payload
+        .get("employee_code")
+        .and_then(|v| v.as_str())
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    if has_own {
+        return payload.clone();
+    }
     let Some(code) = client.config().employee_code.as_deref() else {
         return payload.clone();
     };
+    let code = code.trim();
+    if code.is_empty() {
+        return payload.clone();
+    }
     let mut out = payload.clone();
     if let Some(obj) = out.as_object_mut() {
         obj.insert("employee_code".to_string(), json!(code));
@@ -665,12 +683,13 @@ pub fn from_sheet_status(val: &str) -> &'static str {
     }
 }
 
-/// Sanitizes ticket payload before sending to Google Sheets:
+/// Sanitizes a ticket payload before sending to Google Sheets:
 /// - Transforms kanban_state, stage, and status to Google Sheet's allowed data validation values
 /// - Sanitizes employee_code so names in parentheses (e.g. "11135 (It)") don't break employee reference lookups
 /// - Remaps activities to activities_text for Google Sheet column naming
-pub fn sanitize_ticket_payload(client: &ApiClient, payload: &Value) -> Value {
-    let mut out = with_employee_code(client, payload);
+/// - Fills `employee_code` from config on creates only (`for_create`)
+pub fn sanitize_ticket_payload(client: &ApiClient, payload: &Value, for_create: bool) -> Value {
+    let mut out = with_employee_code(client, payload, for_create);
     if let Some(obj) = out.as_object_mut() {
         if let Some(emp) = obj.get("employee_code").and_then(|v| v.as_str()) {
             let code = if let Some(idx) = emp.find('(') {
@@ -1016,6 +1035,11 @@ fn ensure_iso8601(val: Option<&Value>) -> Value {
     json!(parse_to_iso8601(raw))
 }
 
+/// `reminders.create` accepts only `employee_code`, `service_category`,
+/// `reminder_message`, `send_at` (required) and `cc_emails` (optional).
+/// Everything else in a local row — `employee_name`, `email_address`,
+/// `email_sent_at`, `ticket_id`, timestamps and the local
+/// `server_*` mapping columns — is sheet-only or local-only and is dropped.
 pub fn sanitize_reminder_create_payload(payload: &Value) -> Value {
     let mut out = serde_json::Map::new();
     if let Some(obj) = payload.as_object() {
@@ -1023,12 +1047,44 @@ pub fn sanitize_reminder_create_payload(payload: &Value) -> Value {
         if let Some(v) = obj.get("service_category") { out.insert("service_category".to_string(), v.clone()); }
         if let Some(v) = obj.get("reminder_message") { out.insert("reminder_message".to_string(), v.clone()); }
         out.insert("send_at".to_string(), ensure_iso8601(obj.get("send_at")));
+        // Omitted when empty: a create without `cc_emails` means "no CC".
+        if let Some(Value::String(cc)) = cc_field(obj) {
+            if !cc.is_empty() {
+                out.insert("cc_emails".to_string(), Value::String(cc));
+            }
+        }
     }
     Value::Object(out)
 }
 
-/// Google Apps Script reminders.update only accepts:
-/// employee_code, service_category, reminder_message, send_at, status.
+/// `cc_emails` (array or comma/semicolon-separated string) from a payload,
+/// normalized to a comma-separated string. `None` when the payload has no
+/// CC key at all; `Some("")` when the key is present but empty (an explicit
+/// "clear CC" on update).
+fn cc_field(obj: &serde_json::Map<String, Value>) -> Option<Value> {
+    let raw = obj.get("cc_emails").or_else(|| obj.get("cc"))?;
+    let text = match raw {
+        Value::String(s) => s.clone(),
+        Value::Array(items) => items
+            .iter()
+            .filter_map(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(", "),
+        _ => String::new(),
+    };
+    let text = text
+        .split([',', ';'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(Value::String(text))
+}
+
+/// `reminders.update` only accepts: `employee_code`, `service_category`,
+/// `reminder_message`, `send_at`, `status`, `cc_emails`.
 pub fn sanitize_reminder_update_payload(payload: &Value) -> Value {
     let mut out = serde_json::Map::new();
     if let Some(obj) = payload.as_object() {
@@ -1037,6 +1093,11 @@ pub fn sanitize_reminder_update_payload(payload: &Value) -> Value {
         if let Some(v) = obj.get("reminder_message") { out.insert("reminder_message".to_string(), v.clone()); }
         if let Some(v) = obj.get("send_at") { out.insert("send_at".to_string(), ensure_iso8601(Some(v))); }
         if let Some(v) = obj.get("status") { out.insert("status".to_string(), v.clone()); }
+        // Forwarded even when empty: `"cc_emails": ""` is how the API clears
+        // recipients. Absent key means "leave unchanged".
+        if let Some(cc) = cc_field(obj) {
+            out.insert("cc_emails".to_string(), cc);
+        }
     }
     Value::Object(out)
 }

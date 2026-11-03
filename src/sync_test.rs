@@ -171,17 +171,25 @@ fn cleanup_server(client: &ApiClient) {
 /// Creates a ticket directly through the API — simulates another user
 /// working in the Google Sheet.
 fn remote_create(client: &ApiClient, subject: &str, priority: &str) -> Result<String, ApiError> {
-    // Test-only default matching a known sheet employee; production code
-    // never hardcodes employee codes (uses TMS_EMPLOYEE_CODE or the row's
-    // own value).
+    // Test-only fallback: the configured employee, else the first code in
+    // the local sheet cache. Production code never hardcodes employee codes.
     let employee = client
         .config()
         .employee_code
         .clone()
-        .unwrap_or_else(|| "10081".to_string());
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(crate::db::first_cached_employee_code);
+    if employee.is_empty() {
+        return Err(ApiError::Api {
+            code: "EMPLOYEE_NOT_FOUND".to_string(),
+            message: "set TMS_EMPLOYEE_CODE or pull the Employee sheet before running this test"
+                .to_string(),
+            retryable: false,
+            retry_after: None,
+        });
+    }
     let payload = json!({
         "employee_code": employee,
-        "email_address": "sync-test@example.com",
         "category": "IT Support",
         "subject": subject,
         "problem_description": format!("Created by the sync test harness ({subject})."),

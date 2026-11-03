@@ -2103,11 +2103,23 @@ pub fn Tickets() -> Element {
         let fallback_id = format!("IT-{}", 200 + count);
         let col_disp = column_display_label(&col);
         let title = format!("New request ({col_disp})");
-        let employee = "EMP-1001 (CurrentUser)".to_string();
+        // Sheet directory only — the configured employee, or nothing. No
+        // fabricated employee codes/emails are written to the sheet.
+        let employee = crate::db::configured_employee_code();
+        let email = crate::db::employee_email(&employee);
+        let customer = crate::db::employee_name(&employee);
         let category = "General".to_string();
         let priority = "Medium".to_string();
         let assignee = "GR".to_string();
         let created_at = "Just now".to_string();
+
+        if employee.is_empty() {
+            toast.error(
+                "No employee configured",
+                "Set TMS_EMPLOYEE_CODE (env or .env) to an existing sheet Employee Code before quick-adding tickets.",
+            );
+            return;
+        }
 
         let db_id = crate::db::create_ticket(&title, &category, &priority, &employee, &assignee, &col, "Quick ticket created via column quick-add action");
         let real_id = if let Ok(id) = db_id { format!("IT-{id}") } else { fallback_id };
@@ -2120,7 +2132,7 @@ pub fn Tickets() -> Element {
         tickets.write().push(TicketItem::new(
             numeric_id,
             &employee,
-            "it.support@bpsl.net",
+            &email,
             &category,
             &title,
             "Quick ticket created via column quick-add action",
@@ -2128,7 +2140,7 @@ pub fn Tickets() -> Element {
             "",
             &priority,
             &assignee,
-            "Internal",
+            &customer,
             0.0,
             "Ticket created",
             "Initial assignment to team lead",

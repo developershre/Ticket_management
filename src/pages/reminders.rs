@@ -595,31 +595,37 @@ pub fn Reminders() -> Element {
         let server_id = item.server_reminder_id.clone();
         let rem_id = item.reminder_id;
         let title = item.reminder_message.clone();
-        spawn(async move {
-            let target_id = if !server_id.is_empty() {
-                server_id
-            } else {
-                item.id.clone()
-            };
-            let now_str = crate::state::format_utc(crate::sync::now_epoch());
-            // Mark as sent locally in SQLite so the status updates immediately
-            let _ = crate::db::set_reminder_sent(rem_id, &now_str);
-            if let Some(mut sync) = db_sync {
-                sync.with_mut(|r| r.0 += 1);
-            }
 
-            match crate::sync::send_reminder_now_immediate(&target_id, false).await {
+        // `reminders.sendNow` requires the sheet's Reminder ID. The local
+        // row id is never sent — firing with it would only produce NOT_FOUND.
+        if server_id.is_empty() {
+            toast.info(
+                "Not synced yet",
+                "This reminder hasn't reached the Google Sheet yet. Wait for the sync to finish, then send it again.",
+            );
+            return;
+        }
+
+        spawn(async move {
+            // The API call happens first; the local "sent" marker is only
+            // written after the server confirms (never before).
+            match crate::sync::send_reminder_now_immediate(&server_id, false).await {
                 Ok(_) => {
+                    let now_str = crate::state::format_utc(crate::sync::now_epoch());
+                    let _ = crate::db::set_reminder_sent(rem_id, &now_str);
+                    if let Some(mut sync) = db_sync {
+                        sync.with_mut(|r| r.0 += 1);
+                    }
                     toast.success(
                         "Reminder Email Sent",
-                        format!("Secure ticket form link sent for \"{title}\" ({target_id})"),
+                        format!("Secure ticket form link sent for \"{title}\" ({server_id})"),
                     );
                 }
                 Err(e) => {
                     if e.to_string().contains("SCHEMA_MISMATCH") {
-                        toast.info(
-                            "Marked as Sent (Local)",
-                            "Reminder marked as sent locally. The Google Sheet 'Reminders' tab headers need to be aligned with the Apps Script schema.",
+                        toast.error(
+                            "Send Failed",
+                            "The Google Sheet 'Reminders' tab headers must match the 13-column layout in TMS_SHEET_HEADERS_README.md (the 'CC Emails' column was missing in older sheets).",
                         );
                     } else {
                         toast.error("Send Failed", format!("Failed to send reminder email: {e}"));
@@ -634,8 +640,33 @@ pub fn Reminders() -> Element {
         let mut list = reminders.write();
         if let Some(pos) = list.iter().position(|r| r.id == id) {
             let item = list.remove(pos);
-            let _ = crate::db::delete_reminder_db(item.reminder_id);
-            toast.success("Reminder Deleted", format!("\"{}\" removed", item.reminder_message));
+            let rem_id = item.reminder_id;
+            let server_id = item.server_reminder_id.clone();
+            let title = item.reminder_message.clone();
+            drop(list);
+
+            // The API has no `reminders.delete` (documented action list has
+            // 17 actions, none of which delete reminders). The closest
+            // supported operation is `status: "Cancelled"`, which stops the
+            // scheduled email; the row itself stays in the sheet and will be
+            // re-cached locally as Cancelled on the next pull.
+            if !server_id.is_empty() {
+                crate::sync::enqueue_reminder_update(
+                    rem_id,
+                    serde_json::json!({ "status": "Cancelled" }),
+                );
+            }
+            let _ = crate::db::delete_reminder_db(rem_id);
+            toast.info(
+                "Reminder Removed",
+                if server_id.is_empty() {
+                    format!("\"{title}\" removed (it had not reached the sheet yet).")
+                } else {
+                    format!(
+                        "\"{title}\" removed locally and cancelled in the sheet. The API has no delete — the sheet keeps the row as Cancelled."
+                    )
+                },
+            );
             if let Some(mut sync) = db_sync {
                 sync.with_mut(|r| r.0 += 1);
             }

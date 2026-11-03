@@ -467,7 +467,7 @@ pub fn NotesPage() -> Element {
                                     format!("{title} — {details}")
                                 };
 
-                                match crate::db::create_note("EMP-1001", &content) {
+                                match crate::db::create_note(&crate::db::configured_employee_code(), &content) {
                                     Ok(new_id) => {
                                         toast.success("Note Saved", format!("Note #{new_id} persisted to database."));
                                         is_create_open.set(false);

@@ -110,6 +110,9 @@ pub fn Fab() -> Element {
     let mut ticket_priority = use_signal(|| "Medium".to_string());
     let mut ticket_attachment_name = use_signal(String::new);
     let mut ticket_attachment_url = use_signal(String::new);
+    // Employee the quick ticket is raised for — prefilled from
+    // `TMS_EMPLOYEE_CODE`, editable, never a baked-in seed value.
+    let mut ticket_emp_code = use_signal(String::new);
 
     // Reminder 12-field signals
     let mut reminder_emp_code = use_signal(String::new);
@@ -132,6 +135,7 @@ pub fn Fab() -> Element {
         ticket_priority.set("Medium".to_string());
         ticket_attachment_name.write().clear();
         ticket_attachment_url.write().clear();
+        ticket_emp_code.set(crate::db::configured_employee_code());
 
         reminder_emp_code.write().clear();
         reminder_emp_name.write().clear();
@@ -230,6 +234,19 @@ pub fn Fab() -> Element {
                     }
 
                     if kind() == QuickKind::Ticket {
+                        div { class: "grid gap-1.5",
+                            label { class: "text-xs font-semibold text-foreground", "Employee Code" }
+                            Input {
+                                key: "ticket-emp-{generation()}",
+                                placeholder: "Sheet employee code, e.g. 10081".to_string(),
+                                value: ticket_emp_code.read().clone(),
+                                oninput: move |e: FormEvent| ticket_emp_code.set(e.value()),
+                            }
+                            span { class: "text-[10px] text-muted-foreground",
+                                "Must exist in the Google Sheet Employee tab — the API rejects unknown codes."
+                            }
+                        }
+
                         div { class: "grid grid-cols-2 gap-2.5",
                             div { class: "grid gap-1.5",
                                 label { class: "text-xs font-semibold text-foreground", "Category" }
@@ -484,9 +501,20 @@ pub fn Fab() -> Element {
 
                             match current_kind {
                                 QuickKind::Ticket => {
+                                    let emp_code = ticket_emp_code.read().trim().to_string();
+                                    if emp_code.is_empty() {
+                                        toast.error(
+                                            "Missing employee",
+                                            "Enter the sheet Employee Code this ticket is raised for.",
+                                        );
+                                        return;
+                                    }
                                     let input = crate::db::NewTicketInput {
-                                        employee_code: "11135".to_string(),
-                                        email_address: "it.support@bpsl.net".to_string(),
+                                        employee_code: emp_code.clone(),
+                                        // Derived from the local sheet cache;
+                                        // empty when the sheet has no email.
+                                        email_address: crate::db::employee_email(&emp_code),
+                                        customer: crate::db::employee_name(&emp_code),
                                         category: ticket_category.read().clone(),
                                         subject: title.clone(),
                                         problem_description: detail.clone(),
@@ -494,7 +522,6 @@ pub fn Fab() -> Element {
                                         attachment_url: ticket_attachment_url.read().clone(),
                                         priority: ticket_priority.read().clone(),
                                         assigned_to: "IT Support".to_string(),
-                                        customer: "Internal".to_string(),
                                         kanban_state: "Pending".to_string(),
                                         stage: "Triage".to_string(),
                                         status: "Open".to_string(),
@@ -550,7 +577,7 @@ pub fn Fab() -> Element {
                                     } else {
                                         format!("{title} — {detail}")
                                     };
-                                    match crate::db::create_note("EMP-1001", &content) {
+                                    match crate::db::create_note(&crate::db::configured_employee_code(), &content) {
                                         Ok(new_id) => {
                                             let label = current_kind.label();
                                             toast.success("Saved to DB", format!("{label} #{new_id} persisted to management.db"));

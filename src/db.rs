@@ -125,7 +125,11 @@ pub struct DbReminder {
     pub ticket_id: String,
     pub created_at: String,
     pub last_updated_at: String,
+    /// Google Sheet `Reminder ID` of the row this local row maps to.
+    /// Local-only bookkeeping — never part of an outbound API payload.
     pub server_reminder_id: String,
+    /// Sheet `Last Updated At` of the mapped row (pull comparison).
+    /// Local-only bookkeeping — never part of an outbound API payload.
     pub server_last_updated: String,
 }
 
@@ -145,9 +149,11 @@ pub struct NewReminderInput {
 impl Default for NewReminderInput {
     fn default() -> Self {
         Self {
-            employee_code: "11135".to_string(),
-            employee_name: "IT Support".to_string(),
-            email_address: "it.support@bpsl.net".to_string(),
+            // No baked-in employee: the Google Sheet is the directory of
+            // record. Callers fill these from the employee picker / cache.
+            employee_code: String::new(),
+            employee_name: String::new(),
+            email_address: String::new(),
             service_category: "General".to_string(),
             reminder_message: String::new(),
             send_at: "Today · 2:00 PM".to_string(),
@@ -236,7 +242,8 @@ pub fn init_database() -> Result<()> {
             email_sent_at TEXT,
             ticket_id TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            last_updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            last_updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            cc_emails TEXT
         );
         "#,
     )?;
@@ -296,367 +303,8 @@ pub fn init_database() -> Result<()> {
          next_attempt_at = NULL WHERE status = 'in_flight'",
         [],
     )?;
-
-    seed_employees_if_empty(&conn)?;
-
     Ok(())
 }
-
-fn seed_employees_if_empty(conn: &Connection) -> Result<()> {
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM USERS", [], |r| r.get(0)).unwrap_or(0);
-    if count == 0 {
-        let mut stmt = conn.prepare(
-            "INSERT INTO USERS (emp_code, emp_name, emp_email, department, division, active, is_deleted) \
-             VALUES (?1, ?2, ?3, ?4, ?5, 1, 0)",
-        )?;
-        for line in INITIAL_SHEET_EMPLOYEES_CSV.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with("Employee Code") || line.starts_with("categories") {
-                continue;
-            }
-            let parts: Vec<&str> = line.split(',').collect();
-            if parts.len() >= 4 {
-                let code = parts[0].trim();
-                let name = parts[1].trim();
-                let dept = parts[2].trim();
-                let div = parts[3].trim();
-                let email = if parts.len() >= 5 && !parts[4].trim().is_empty() {
-                    Some(parts[4].trim())
-                } else {
-                    None
-                };
-                let _ = stmt.execute(params![code, name, email, dept, div]);
-            }
-        }
-    }
-    Ok(())
-}
-
-const INITIAL_SHEET_EMPLOYEES_CSV: &str = r#"10001,AMIT SHARMA,FINANCE AND ACCOUNTS,SPONGE IRON DIVISION,aks@bhagwatipower.com
-10037,JANT SEN,FINANCE AND ACCOUNTS,SPONGE IRON DIVISION,
-10054,GANESH DEWANGAN,MECHANICAL,SPONGE IRON DIVISION,
-10062,DHARMENDRA SACHAN,MECHANICAL,SPONGE IRON DIVISION,
-10072,RUPESH SINGH,MECH - PPD,POWER PLANT DIVISION,
-10075,KHEM NAURANGE,PROCESS/PRODUCTION,SPONGE IRON DIVISION,
-10081,ABHISHEK SHARMA,FINANCE AND ACCOUNTS,SPONGE IRON DIVISION,abhishek.sharma@bhagwatipower.com
-10089,OMPRAKASH SAHU,PROCESS/PRODUCTION,SPONGE IRON DIVISION,
-11092,HR HEAD,HR,CORPORATE,hr@bhagwatipower.com
-10100,RATAN SEN,QUALITY CONTROL,SPONGE IRON DIVISION,
-10122,TRILOCHAN SEN,ELECTRICAL DEPARTMENT(E&I),SPONGE IRON DIVISION,
-10123,SEWAK SAHU,MECHANICAL,SPONGE IRON DIVISION,
-10142,RAJ NISAD,AUTOMOBILE,SPONGE IRON DIVISION,
-10163,SHANKAR SAHU,RAW MATERIAL PLANT,SPONGE IRON DIVISION,
-10218,SHIMPI AGARWAL,FINANCE AND ACCOUNTS,SPONGE IRON DIVISION,shimpi.agarwal@bhagwatipower.com
-10219,YOGENDRA VERMA,MECHANICAL,SPONGE IRON DIVISION,
-10226,SUNIL RAY,PROCESS/PRODUCTION,SPONGE IRON DIVISION,
-10234,KUSHAL SHENDE,STORES,SPONGE IRON DIVISION,
-10255,KUMAR SAHU,MECHANICAL,SPONGE IRON DIVISION,
-10257,RAMESH VISHWAKARMA,RAW MATERIAL PLANT,SPONGE IRON DIVISION,
-10264,BINOD AGRAWAL,FINANCE AND ACCOUNTS,SPONGE IRON DIVISION,
-10267,BEDRAM NIRMALKAR,PERSONNEL & ADMINISTRATION,SPONGE IRON DIVISION,
-10330,SATISH KSHATRI,AUTOMOBILE,SPONGE IRON DIVISION,
-10350,RAJKUMAR VERMA,AUTOMOBILE,SPONGE IRON DIVISION,
-10352,ASHARAM BANJARE,MECHANICAL,SPONGE IRON DIVISION,
-10385,SATANAND BAGHMAR,QUALITY CONTROL,SPONGE IRON DIVISION,
-10407,KHEMRAJ VERMA,STORES,SPONGE IRON DIVISION,kverma@bhagwatipower.com
-10425,THAKUR RAM,ELECTTRICAL & INSTRUMENT (E&I),POWER PLANT DIVISION,
-10476,ISHWARI PRASAD,OPERATION,POWER PLANT DIVISION,
-10484,RAJKUMAR KEJRIWAL KEJRIWAL,FINANCE AND ACCOUNTS,CORPORATE DIVISION,
-10497,SANJIV KUMAR,RAW MATERIAL PLANT,SPONGE IRON DIVISION,
-10513,ROSHAN LAL,STORES,SPONGE IRON DIVISION,
-10528,SANTOSH KUMAR DHIWAR KUMAR DHIWAR,MECHANICAL,SPONGE IRON DIVISION,
-10559,RAJNISH ROY,ELECTTRICAL & INSTRUMENT (E&I),POWER PLANT DIVISION,
-10581,MANIK RAM,QUALITY CONTROL,SPONGE IRON DIVISION,
-10583,JITENDRA KUMAR,PROCESS/PRODUCTION,SPONGE IRON DIVISION,
-10586,BENU RAM,QUALITY CONTROL,SPONGE IRON DIVISION,
-10595,VED RAM,PROCESS/PRODUCTION,SPONGE IRON DIVISION,
-10599,KESHAV PRASAD,PROCESS/PRODUCTION,SPONGE IRON DIVISION,
-10616,BAISHAKHU RAM,MECHANICAL,SPONGE IRON DIVISION,
-10628,SHASHIKANT BAWANKAR,ELECTTRICAL & INSTRUMENT (E&I),POWER PLANT DIVISION,s.bawankar@bhagwatipower.com
-10633,DORI LAL,ELECTRICAL DEPARTMENT(E&I),SPONGE IRON DIVISION,
-10640,VIRENDRA KHARWAR,PERSONNEL & ADMINISTRATION,SPONGE IRON DIVISION,
-10645,MANGESHWAR KUMAR,OPERATION,POWER PLANT DIVISION,
-10648,VIKASH .,MECHANICAL,POWER PLANT DIVISION,
-10667,NEMCHAND JAISWAL,RAW MATERIAL PLANT,SPONGE IRON DIVISION,
-10669,RAMESH KUMAR,PROCESS/PRODUCTION,SPONGE IRON DIVISION,
-10672,RAMGOPAL NISHAD,MECHANICAL,SPONGE IRON DIVISION,
-10682,MANORANJAN BERA,MECHANICAL,SPONGE IRON DIVISION,
-10685,ASHOK KUMAR,MECHANICAL,SPONGE IRON DIVISION,
-10692,ISHWAR RAM,ELECTRICAL DEPARTMENT(E&I),POWER PLANT DIVISION,
-10694,NARAYAN DAS,MECHANICAL,SPONGE IRON DIVISION,
-10702,D.RAVI TEJA,FINANCE AND ACCOUNTS,CORPORATE DIVISION,
-10711,RAKESH KUMAR,AUTOMOBILE,SPONGE IRON DIVISION,
-10723,SHUBHAM AGRAWAL,PERSONNEL & ADMINISTRATION,SPONGE IRON DIVISION,
-10734,BHUNESHWAR VERMA,MECHANICAL,SPONGE IRON DIVISION,
-10743,DINESH MARKAM,MECHANICAL,SPONGE IRON DIVISION,
-10744,SATISH KR,MECHANICAL,SPONGE IRON DIVISION,
-10751,TANESHWAR SAHU,MECHANICAL,SPONGE IRON DIVISION,
-10754,MOTI CHAKRADHARI,QUALITY CONTROL,SPONGE IRON DIVISION,
-10756,YUVRAJ .,RAW MATERIAL PLANT,CORPORATE DIVISION,
-10758,RAJESH YADAV,PROCESS/PRODUCTION,SPONGE IRON DIVISION,
-10768,GHANSHYAM SAHU,ELECTRICAL DEPARTMENT(E&I),POWER PLANT DIVISION,
-10787,UPENDRA KUMAR,ELECTRICAL DEPARTMENT(E&I),POWER PLANT DIVISION,
-10791,YOGESHWER KUMAR,ELECTRICAL DEPARTMENT(E&I),SPONGE IRON DIVISION,
-10800,TORAN LAL,ELECTRICAL DEPARTMENT(E&I),POWER PLANT DIVISION,
-10812,PULESHWAR PATEL,MECHANICAL,SPONGE IRON DIVISION,
-10829,KISHOR KUMAR,ELECTRICAL DEPARTMENT(E&I),SPONGE IRON DIVISION,
-10841,NARENDRA SAHU,SALES AND DISPATCH,CORPORATE DIVISION,
-10842,JEEVAN THAKUR,STORES,CORPORATE DIVISION,
-10855,KHIROD PRADHAN,PROCESS/PRODUCTION,SPONGE IRON DIVISION,
-10856,JITENDRA YADAV,SALES AND DISPATCH,CORPORATE DIVISION,
-10867,RAJ RAM,AUTOMOBILE,SPONGE IRON DIVISION,
-10874,AMIT LAHARI,ELECTRICAL DEPARTMENT(E&I),SPONGE IRON DIVISION,
-10877,KAMLESH .,MECHANICAL,SPONGE IRON DIVISION,
-10882,AJAY KUMAR,STORES,CORPORATE DIVISION,
-10885,SHRAVAN KUMAR,PROCESS/PRODUCTION,SPONGE IRON DIVISION,
-10887,KAVERI SAHU,PERSONNEL & ADMINISTRATION,CORPORATE DIVISION,pc1@bhagwatipower.com
-10896,MAHENDRA KUMAR,ELECTRICAL DEPARTMENT(E&I),POWER PLANT DIVISION,
-10898,GOVIND SAHU,OPERATION,POWER PLANT DIVISION,
-10904,PANKAJ .,MECHANICAL,SPONGE IRON DIVISION,
-10909,RAHUL SAHU,FINANCE AND ACCOUNTS,CORPORATE DIVISION,
-10911,MAHENDRA NAYAK,ELECTRICAL DEPARTMENT(E&I),SPONGE IRON DIVISION,
-10921,TARAN CHAKRDHARI,MECHANICAL,SPONGE IRON DIVISION,
-10926,KAMALKISHOR DHIWAR,MECHANICAL,SPONGE IRON DIVISION,
-10929,UMASHANKAR .,MECHANICAL,SPONGE IRON DIVISION,
-10944,SENJEET VERMA,MECHANICAL,POWER PLANT DIVISION,
-10948,MANOJ .,QUALITY CONTROL(D.M. PLANT),POWER PLANT DIVISION,
-10949,MANISH BAGHEL,PRODUCTION,SPONGE IRON DIVISION,
-10953,MANISH .,MECHANICAL,SPONGE IRON DIVISION,
-10956,DEVID CHAKRADHARI,PROCESS/PRODUCTION,SPONGE IRON DIVISION,
-10960,YUGAL YADAV,OPERATION,POWER PLANT DIVISION,
-10964,LEKHRAM YADU,AUTOMOBILE,SPONGE IRON DIVISION,
-10969,HIRENDRA LODHI,PROCESS/PRODUCTION,SPONGE IRON DIVISION,
-10970,GYANCHAND KASHYAP,ELECTRICAL DEPARTMENT(E&I),POWER PLANT DIVISION,
-10971,Arvind Singh Rathod,OPERATION,POWER PLANT DIVISION,
-10974,RAMESH KEWAT,AUTOMOBILE,SPONGE IRON DIVISION,
-10975,HARIGOPAL JAISWAL,AUTOMOBILE,SPONGE IRON DIVISION,
-10978,PURSHOTTAM VERMA,ELECTTRICAL & INSTRUMENT (E&I),POWER PLANT DIVISION,
-10983,Digeshwar Nishad,QUALITY CONTROL(D.M. PLANT),POWER PLANT DIVISION,
-10988,Komal sahu,ELECTRICAL DEPARTMENT(E&I),SPONGE IRON DIVISION,
-10989,JAYRAM SAHU,ELECTRICAL DEPARTMENT(E&I),SPONGE IRON DIVISION,
-10990,TULENDRA KUMAR,MECHANICAL,SPONGE IRON DIVISION,
-10993,SANDEEP KUMAR,ELECTRICAL DEPARTMENT(E&I),POWER PLANT DIVISION,
-11005,SHIVSHANKAR YADAV,AUTOMOBILE,SPONGE IRON DIVISION,
-11007,YAMAN SONAWANI,MECHANICAL,SPONGE IRON DIVISION,
-11009,AKASH DAS,STORES,CORPORATE DIVISION,
-11010,RAJESH .,ELECTTRICAL & INSTRUMENT (E&I),POWER PLANT DIVISION,
-11018,RAJAT .,MECHANICAL,SPONGE IRON DIVISION,
-11020,MANOJ VERMA,MECHANICAL,SPONGE IRON DIVISION,
-11021,SURESH VERMA,MECHANICAL,SPONGE IRON DIVISION,
-11022,KEDARNATH VERMA,ELECTRICAL DEPARTMENT(E&I),SPONGE IRON DIVISION,
-11023,PREETAM BANJARE,ELECTRICAL DEPARTMENT(E&I),SPONGE IRON DIVISION,
-11024,RAKESH .,OPERATION,POWER PLANT DIVISION,
-11025,DIPESH VERMA,ELECTTRICAL & INSTRUMENT (E&I),POWER PLANT DIVISION,
-11026,BALRAM SAHU,QUALITY CONTROL(D.M. PLANT),POWER PLANT DIVISION,
-11027,SHRIRAM BARETH,ELECTRICAL DEPARTMENT(E&I),POWER PLANT DIVISION,
-11034,RAMESH KUMAR,ELECTTRICAL & INSTRUMENT (E&I),POWER PLANT DIVISION,
-11036,LALIT SAHU,OPERATION,POWER PLANT DIVISION,
-11039,RAVI SHYAM,OPERATION,POWER PLANT DIVISION,
-11040,KAMLESH NETAM,ELECTTRICAL & INSTRUMENT (E&I),POWER PLANT DIVISION,
-11044,SAHIL BARETH,OPERATION,POWER PLANT DIVISION,
-11047,SHREECHANDRA YADAV,AUTOMOBILE,SPONGE IRON DIVISION,
-11048,NAGENDRA KUMAR,OPERATION,POWER PLANT DIVISION,
-11049,HEMLAL SARANG,MECHANICAL,POWER PLANT DIVISION,
-11050,DUSHYANT KUMAR,ELECTRICAL DEPARTMENT(E&I),POWER PLANT DIVISION,
-11053,RAHUL .,ELECTTRICAL & INSTRUMENT (E&I),POWER PLANT DIVISION,
-11054,SHAILENDRA .,OPERATION,POWER PLANT DIVISION,
-11055,MITHLESH SINGH,PERSONNEL & ADMINISTRATION,CORPORATE DIVISION,
-11057,CHANDRAKANT SAHU,ELECTRICAL DEPARTMENT(E&I),SPONGE IRON DIVISION,
-11058,BHUPENDRA NISHAD,MECHANICAL,SPONGE IRON DIVISION,
-11060,ASHUTOSH Singh,PURCHASE,CORPORATE DIVISION,purchase@bhagwatipower.com
-11061,CHAITRAM .,INFORMATION TECHNOLOGY,CORPORATE DIVISION,dme@bhagwatipower.com
-11064,DEV .,OPERATION,POWER PLANT DIVISION,
-11066,RITESH SAHU,MECHANICAL,POWER PLANT DIVISION,
-11070,RAJU DHIWAR,PERSONNEL & ADMINISTRATION,CORPORATE DIVISION,
-11071,SHAILESH KUMAR,ELECTRICAL DEPARTMENT(E&I),POWER PLANT DIVISION,
-11072,AMAN CHANDRAKAR,OPERATION,POWER PLANT DIVISION,
-11076,SHUBHAM VERMA,OPERATION,POWER PLANT DIVISION,
-11077,NEMICHANDRA SAHU,ELECTRICAL DEPARTMENT(E&I),SPONGE IRON DIVISION,
-11081,BHUPENDRA DHRUW,MECHANICAL,POWER PLANT DIVISION,
-11082,KISHOR KUMAR,OPERATION,POWER PLANT DIVISION,
-11083,RAJAT KUMAR,MECHANICAL,POWER PLANT DIVISION,
-11084,KRISHNA KUMAR,MECHANICAL,POWER PLANT DIVISION,
-11085,SUNIL KUMAR,PERSONNEL & ADMINISTRATION,CORPORATE DIVISION,
-11086,SURYA PRAKASH,PERSONNEL & ADMINISTRATION,CORPORATE DIVISION,
-11087,SANJIV KUMAR,PERSONNEL & ADMINISTRATION,CORPORATE DIVISION,
-11088,KRISHNA KUMAR,PURCHASE,CORPORATE DIVISION,
-11089,NARENDRA SAHU,PURCHASE,CORPORATE DIVISION,purchase@bhagwatipower.com
-11090,RAHUL PATEL,OPERATION,POWER PLANT DIVISION,
-11091,SURYA PRAKASH,OPERATION,POWER PLANT DIVISION,
-11092,SHEEVENDRA .,PERSONNEL & ADMINISTRATION,CORPORATE DIVISION,
-11093,ABHISHEK VISHWAKARMA,OPERATION,POWER PLANT DIVISION,
-11096,Uttam Kumar,SALES & DISPATCH,CORPORATE DIVISION,
-11097,Ayush Upadhyay,Admin,CORPORATE DIVISION,mis@bhagwatipower.com
-11098,RITESH KUMAR,Admin,CORPORATE DIVISION,
-11099,KHEMCHAND RATHORE,OPERATION,POWER PLANT DIVISION,
-11100,MANISH KUMAR,MECHANICAL,POWER PLANT DIVISION,
-11101,TIKENDRA CHANDRABANSHI,RAW MATERIAL PLANT,SPONGE IRON DIVISION,
-11102,KHUBI RAM,MECHANICAL,POWER PLANT DIVISION,
-11103,DULAR SAHU,AUTOMOBILE,SPONGE IRON DIVISION,
-11104,SHUBHAM NISHAD,ELECTRICAL DEPARTMENT(E&I),SPONGE IRON DIVISION,
-11105,PUNIT .,OPERATION,POWER PLANT DIVISION,
-11106,GAJENDRA YADAV,OPERATION,POWER PLANT DIVISION,
-11107,SOHAN SAHU,MECHANICAL,POWER PLANT DIVISION,
-11108,R.VIGNESH .,MECHANICAL,POWER PLANT DIVISION,
-11109,KHILAWAN SAHU,MECHANICAL,POWER PLANT DIVISION,
-11110,SAGAR NISHAD,OPERATION,POWER PLANT DIVISION,
-11111,LAKHENDRA .,ELECTRICAL DEPARTMENT(E&I),SPONGE IRON DIVISION,
-11112,MANSISH CHANDRA .,OPERATION,POWER PLANT DIVISION,
-11114,Raman Kumar Nirmalkar,MECHANICAL,POWER PLANT DIVISION,
-11116,Bheem Singh Sahu,OPERATION,POWER PLANT DIVISION,
-11117,RAVI BARMAN,OPERATION,POWER PLANT DIVISION,
-11118,ROOP .,ELECTRICAL DEPARTMENT(E&I),POWER PLANT DIVISION,
-11119,KEWALRAM .,MECHANICAL,POWER PLANT DIVISION,
-11120,Ravendra Kumar .,ELECTRICAL DEPARTMENT(E&I),POWER PLANT DIVISION,
-11121,Heera Lal .,OPERATION,POWER PLANT DIVISION,
-11122,Manish Chaudhari,MECHANICAL,SPONGE IRON DIVISION,
-11123,Topesh Kumar Chakradhari,MECHANICAL,SPONGE IRON DIVISION,
-11126,Kunal Prasad,MECHANICAL,POWER PLANT DIVISION,
-11129,Tilak Ram Verma,PROCESS/PRODUCTION,SPONGE IRON DIVISION,
-11130,DUSHYANT ,PROCESS/PRODUCTION,SPONGE IRON DIVISION,
-11131,Parasmani Deshmukh,PROCESS/PRODUCTION,POWER PLANT DIVISION,
-11132,Satish Verma,ELECTRICAL DEPARTMENT(E&I),POWER PLANT DIVISION,
-11133,PRAVEEN KUMAR,OPERATION,POWER PLANT DIVISION,
-11135,Shreyansh Awadhiya,INFORMATION TECHNOLOGY,CORPORATE DIVISION,it@bhagwatipower.com
-11136,Narendra Kumar Banjare,AUTOMOBILE,SPONGE IRON DIVISION,
-11137,Niraj Kumar .,MECHANICAL,SPONGE IRON DIVISION,
-11138,Narendra Jangde,MECHANICAL,SPONGE IRON DIVISION,
-20003,RAM .,QUALITY CONTROL,SMS DIVISION,
-20006,ANAND LAMA,MECHANICAL,SMS DIVISION,
-20017,ARUN NAIR,ELECTRICAL DEPARTMENT(E&I),ROLLING MILL DIVISION,
-20026,RAJKISHORE KUSHWAHA,MECHANICAL,ROLLING MILL DIVISION,
-20047,RAMU SHARMA,MILL,ROLLING MILL DIVISION,
-20056,SHUDAMA VISHWAKARMA,MECHANICAL,ROLLING MILL DIVISION,
-20083,DINESH .,MECHANICAL,ROLLING MILL DIVISION,
-20098,MANJIT .,MILL,ROLLING MILL DIVISION,
-20163,CHANDRA .,MILL,ROLLING MILL DIVISION,
-20210,PITAMBER .,ELECTRICAL DEPARTMENT(E&I),ROLLING MILL DIVISION,
-20211,RAMSWRUP PARGNIHA,MILL,ROLLING MILL DIVISION,
-20281,BHUPENDRA SAHU,MECHANICAL,ROLLING MILL DIVISION,
-20286,VIKRAM TRIPATHI,SALES AND DISPATCH,CORPORATE DIVISION,dispatch@bhagwatipower.com
-20288,GOVINDA RAY,MILL,ROLLING MILL DIVISION,
-20306,DAYA .,MECHANICAL,ROLLING MILL DIVISION,
-20315,RAVIKUMAR KARSH,MECHANICAL,ROLLING MILL DIVISION,
-20325,ASHWANI SAHU,MECHANICAL,ROLLING MILL DIVISION,
-20330,DEEPAK MAHTO,MECHANICAL,ROLLING MILL DIVISION,
-20337,VISHNU PANIK,MILL,ROLLING MILL DIVISION,
-20344,MAHENDRA MESHRAM,STORES,SMS DIVISION,
-20347,MITHILESH JHA,PRODUCTION,SMS DIVISION,
-20367,AKASH CHANDEL,MILL,ROLLING MILL DIVISION,
-20400,SUNIL SAHU,MILL,ROLLING MILL DIVISION,
-20437,SHARAD DIWAN,PRODUCTION,SMS DIVISION,sms.operations@bhagwatipower.com
-20438,MANOJ KUMAR,PRODUCTION,SMS DIVISION,
-20439,LAXMAN VERMA,MILL,ROLLING MILL DIVISION,
-20445,SANTOSHKUMAR MANHARE,MECHANICAL,SMS DIVISION,
-20459,SANJU LAL,MECHANICAL,SMS DIVISION,
-20467,CHITRANJAN PATEL,QUALITY CONTROL,SMS DIVISION,
-20488,GAJANAND SAHU,PRODUCTION,SMS DIVISION,
-20489,AJAY KUMAR,QUALITY CONTROL,SMS DIVISION,
-20495,HARISHANKAR YADAV,MECHANICAL,ROLLING MILL DIVISION,
-20509,PREM .,MILL,ROLLING MILL DIVISION,
-20511,PAVAN DHIWAR,QUALITY CONTROL,SMS DIVISION,
-20513,RAJKUMAR PATRE,MILL,ROLLING MILL DIVISION,
-20518,TARUN .,MILL,ROLLING MILL DIVISION,
-20520,MANOJ VERMA,PRODUCTION,SMS DIVISION,
-20521,BAJAN .,MILL,ROLLING MILL DIVISION,
-20527,SATEESH .,MECHANICAL,ROLLING MILL DIVISION,
-20534,VIKAS YADAV,MECHANICAL,ROLLING MILL DIVISION,
-20547,RAMKUMAR KASHYAP,ELECTRICAL DEPARTMENT(E&I),SMS DIVISION,
-20549,Dhirendra tiwari,MILL,ROLLING MILL DIVISION,
-20551,TARUN NIRMALKAR,ELECTRICAL DEPARTMENT(E&I),ROLLING MILL DIVISION,
-20552,DHANESH .,ELECTRICAL DEPARTMENT(E&I),ROLLING MILL DIVISION,
-20558,RAKESH KARSH,MILL,ROLLING MILL DIVISION,
-20559,RAHUL KUAMAR,MILL,ROLLING MILL DIVISION,
-20560,LUCKY RAJPUT,MILL,ROLLING MILL DIVISION,
-20564,PRAKASH SAHU,MECHANICAL,SMS DIVISION,
-20567,PRAKASH CHANDRA,MILL,ROLLING MILL DIVISION,
-20570,MEVARAM DHRUW,MECHANICAL,SMS DIVISION,
-20571,PRADIP KUMAR,ELECTRICAL&INSTRUMENT (E&I) FURNACE,SMS DIVISION,
-20575,KHEMHU SAHU,ELECTTRICAL & INSTRUMENT (E&I),ROLLING MILL DIVISION,
-20579,VIKAS .,QUALITY CONTROL,ROLLING MILL DIVISION,
-20580,MUKESH MIRI,MECHANICAL,SMS DIVISION,
-20581,AMIT KUMAR,MECHANICAL,SMS DIVISION,
-20583,RAMAWTAR BANJARE,MECHANICAL,SMS DIVISION,
-20586,ACHCHELAL KHARWAR,QUALITY CONTROL,ROLLING MILL DIVISION,
-20588,SHANKAR VERMA,MECHANICAL,SMS DIVISION,
-20589,ASHIF ALI,MILL,ROLLING MILL DIVISION,
-20590,SUNIL BARETH,MILL,ROLLING MILL DIVISION,
-20591,TULA VERMA,MILL,ROLLING MILL DIVISION,
-20592,DIWAKAR PATEL,ELECTRICAL&INSTRUMENT (E&I) FURNACE,SMS DIVISION,
-20594,SOUMYA DUBEY,PRODUCTION,SMS DIVISION,
-20596,GAGANDEEP .,MECHANICAL,ROLLING MILL DIVISION,
-20601,KHAGESH SAHU,MECHANICAL,ROLLING MILL DIVISION,
-20603,PAWAN SAHU,QUALITY CONTROL,ROLLING MILL DIVISION,
-20608,SUNIL KUMAR,ELECTRICAL DEPARTMENT(E&I),SMS DIVISION,
-20613,PAWAN KUMAR,ELECTRICAL&INSTRUMENT (E&I) FURNACE,SMS DIVISION,
-20614,YOGESH .,MILL,ROLLING MILL DIVISION,
-20617,NITIN .,MECHANICAL,ROLLING MILL DIVISION,
-20619,MANISH NIRMALKAR,MILL,ROLLING MILL DIVISION,
-20620,RAMESHWAR SAHU,MILL,ROLLING MILL DIVISION,
-20622,GOVINDA KUMAR,MECHANICAL,ROLLING MILL DIVISION,
-20624,DHANSAY KOSHLE,MECHANICAL,SMS DIVISION,
-20625,LAKESHRU .,ELECTRICAL&INSTRUMENT (E&I) FURNACE,SMS DIVISION,
-20626,YUGAL .,MECHANICAL,ROLLING MILL DIVISION,
-20627,KRISHNA CHANDRA,MECHANICAL,ROLLING MILL DIVISION,
-20628,MANTU .,MECHANICAL,ROLLING MILL DIVISION,
-20629,DOMENDRA SAHU,MECHANICAL,ROLLING MILL DIVISION,
-20631,OMPRAKASH SAHU,MECHANICAL,ROLLING MILL DIVISION,
-20632,ANAND KUSHWAHA,MECHANICAL,ROLLING MILL DIVISION,
-20633,KISHAN KUMAR KHANDE KHANDE,MECHANICAL,SMS DIVISION,
-20634,YASH KUMAR CHAUHAN,MECHANICAL,SMS DIVISION,
-20635,Gajendra Kumar Kaushik,MECHANICAL,SMS DIVISION,
-20636,Mani Prasad .,MECHANICAL,SMS DIVISION,
-20637,KUNAL DINKAR,MECHANICAL,ROLLING MILL DIVISION,
-20638,Rajesh Kumar Yadav,MECHANICAL,ROLLING MILL DIVISION,
-20639,Ravibhan kurmi,MILL,ROLLING MILL DIVISION,
-20640,Amit .,QUALITY CONTROL,SMS DIVISION,
-20642,Jitendra Kumar .,MECHANICAL,ROLLING MILL DIVISION,
-20643,Nageshwar Kumar Baghel,ELECTRICAL DEPARTMENT(E&I),ROLLING MILL DIVISION,
-20644,Chandrakesh Ravat,MECHANICAL,ROLLING MILL DIVISION,
-20645,Yogesh Ray,MECHANICAL,ROLLING MILL DIVISION,
-20646,VIJAY KUMAR UPADHYAY,MECHANICAL,SMS DIVISION,
-20647,DEO KUMAR JAHIREY,MECHNICAL - FURNACE,SMS DIVISION,
-20648,VIMLESH KUMAR KUSHWAHA,MILL,ROLLING MILL DIVISION,
-20649,SUNIL JANGDE,MILL,ROLLING MILL DIVISION,
-20650,Sunil Kumar Kaiwart,MILL,ROLLING MILL DIVISION,
-20651,Laxmikant Singh,MILL,ROLLING MILL DIVISION,
-20652,Tajinder Singh,MILL,ROLLING MILL DIVISION,
-20653,Dhanraj .,MILL,ROLLING MILL DIVISION,
-23001,N. Rath .,Admin,CORPORATE DIVISION,
-23004,Tam Lal Sahu,OPERATION,POWER PLANT DIVISION,
-30001,KAILASH KUMAR,STORES,CORPORATE DIVISION,
-30003,MAN ANUP,MECHANICAL,SMS DIVISION,
-30007,DANI RAM,PERSONNEL & ADMINISTRATION,CORPORATE DIVISION,
-30008,KULESHVAR PRASAD,AUTOMOBILE,SPONGE IRON DIVISION,
-30009,RUPENDRA SAHU,AUTOMOBILE,SPONGE IRON DIVISION,
-30010,VIJAY KUMAR,AUTOMOBILE,SPONGE IRON DIVISION,
-30012,LIKHESHWAR PAIKRA,ELECTRICAL DEPARTMENT(E&I),SMS DIVISION,
-30014,ESHWAR PRASAD,QUALITY CONTROL,SMS DIVISION,
-30015,BHUSHAN NISHAD,QUALITY CONTROL(D.M. PLANT),POWER PLANT DIVISION,
-30016,GANESH DHRUVE,MECHANICAL,SPONGE IRON DIVISION,
-30018,BODHAN CHAKRADHARI,PROCESS/PRODUCTION,SPONGE IRON DIVISION,
-30021,KUMBHKARAN NIRMALKAR,MECHANICAL,SPONGE IRON DIVISION,
-30022,DEVENDRA NISHAD,PERSONNEL & ADMINISTRATION,CORPORATE DIVISION,
-30023,BHIKHAM SAHU,MECHANICAL,SPONGE IRON DIVISION,
-30024,AJAY .,MECHNICAL - FURNACE,SMS DIVISION,
-30025,RAMLAL .,AUTOMOBILE,SPONGE IRON DIVISION,
-30026,DAYA SHANKAR,AUTOMOBILE,SPONGE IRON DIVISION,
-30029,CHANDRA PRAKASH,PROCESS/PRODUCTION,SPONGE IRON DIVISION,
-30034,DHARMENDRA KUMAR,QUALITY CONTROL(D.M. PLANT),POWER PLANT DIVISION,
-30036,DINESH SONI,PERSONNEL & ADMINISTRATION,CORPORATE DIVISION,
-30037,MOFAT LAL,PROCESS/PRODUCTION,SPONGE IRON DIVISION,
-30038,DINDAYAL SAHU,QUALITY CONTROL(D.M. PLANT),POWER PLANT DIVISION,
-30041,KANHAIYALAL SAHU,OPERATION,POWER PLANT DIVISION,
-30043,T. JAGANNATH,AUTOMOBILE,SPONGE IRON DIVISION,
-30046,DEEPAK .,RAW MATERIAL PLANT,SPONGE IRON DIVISION,
-30049,KRISHNA SAHU,QUALITY CONTROL,SMS DIVISION,
-30051,CHOLARAM .,RAW MATERIAL PLANT,SPONGE IRON DIVISION,
-30052,BURAS BAG,PERSONNEL & ADMINISTRATION,CORPORATE DIVISION,
-30055,RAJU SAHU,MECHANICAL,SMS DIVISION,
-30059,BIRSINGH SINHA,STORES,SMS DIVISION,
-30065,GOVIND PAL,OPERATION,POWER PLANT DIVISION,
-30067,VIVEK VERMA,QUALITY CONTROL,SPONGE IRON DIVISION,
-30080,RITESH KASHYAP,STORES,SMS DIVISION,"#;
 
 // ============================================================
 // Tickets Queries & Operations
@@ -783,8 +431,11 @@ pub struct NewTicketInput {
 impl Default for NewTicketInput {
     fn default() -> Self {
         Self {
-            employee_code: "11135".to_string(),
-            email_address: "it.support@bpsl.net".to_string(),
+            // No baked-in employee: the Google Sheet is the directory of
+            // record. Callers fill `employee_code` (and the derived email /
+            // customer) from the employee picker or the local sheet cache.
+            employee_code: String::new(),
+            email_address: String::new(),
             category: "General".to_string(),
             subject: String::new(),
             problem_description: String::new(),
@@ -792,7 +443,7 @@ impl Default for NewTicketInput {
             attachment_url: String::new(),
             priority: "Medium".to_string(),
             assigned_to: "IT Support".to_string(),
-            customer: "Internal".to_string(),
+            customer: String::new(),
             time_spent: 0.0,
             activities: "Ticket created".to_string(),
             my_activity: "Initial review".to_string(),
@@ -850,6 +501,10 @@ pub fn create_ticket_full(input: &NewTicketInput) -> Result<i64> {
 }
 
 /// Inserts a new ticket into `tickets` table and returns the generated `ticket_id`.
+///
+/// `email_address` / `customer` are filled from the local sheet cache for
+/// `employee_code` (the `Employee` tab's `Mail` / `Name` columns) — never
+/// from baked-in values. Empty when the sheet has no such data.
 pub fn create_ticket(
     subject: &str,
     category: &str,
@@ -861,6 +516,8 @@ pub fn create_ticket(
 ) -> Result<i64> {
     let input = NewTicketInput {
         employee_code: employee_code.to_string(),
+        email_address: employee_email(employee_code),
+        customer: employee_name(employee_code),
         category: category.to_string(),
         subject: subject.to_string(),
         problem_description: description.to_string(),
@@ -877,7 +534,10 @@ pub fn create_ticket(
 /// Deletes a ticket by `ticket_id`.
 pub fn delete_ticket(ticket_id: i64) -> Result<()> {
     let conn = get_connection()?;
-    conn.execute("DELETE FROM tickets WHERE ticket_id = ?1", params![ticket_id])?;
+    conn.execute(
+        "DELETE FROM tickets WHERE ticket_id = ?1",
+        params![ticket_id],
+    )?;
     Ok(())
 }
 
@@ -990,8 +650,6 @@ pub fn update_ticket_full(
     Ok(())
 }
 
-
-
 // ============================================================
 // Notes & Reminders Queries & Operations
 // ============================================================
@@ -1003,7 +661,7 @@ pub fn get_all_notes() -> Vec<DbNote> {
         Err(_) => return Vec::new(),
     };
 
-    let mut stmt = match conn.prepare("SELECT id, COALESCE(emp_code, 'EMP-1001'), COALESCE(content, '') FROM NOTES ORDER BY id ASC") {
+    let mut stmt = match conn.prepare("SELECT id, COALESCE(emp_code, ''), COALESCE(content, '') FROM NOTES ORDER BY id ASC") {
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
@@ -1030,6 +688,55 @@ pub fn create_note(emp_code: &str, content: &str) -> Result<i64> {
         params![emp_code, content],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+// ============================================================
+// Employee directory helpers (read-only cache of the sheet)
+// ============================================================
+
+/// Employee code to stamp on locally-created rows:
+/// `TMS_EMPLOYEE_CODE` (env → `.env` → Postman collection), else empty.
+/// Nothing is invented — the API rejects employee codes missing from the
+/// `Employee` sheet with `EMPLOYEE_NOT_FOUND`.
+pub fn configured_employee_code() -> String {
+    crate::api::ApiConfig::load()
+        .ok()
+        .and_then(|c| c.employee_code)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_default()
+}
+
+/// Employee name for `code` from the local sheet cache, else empty.
+pub fn employee_name(code: &str) -> String {
+    find_employee_by_code(code)
+        .map(|e| e.emp_name)
+        .unwrap_or_default()
+}
+
+/// Employee email for `code` from the local sheet cache, else empty.
+/// The sheet has duplicate/blank emails, so this is a best-effort lookup
+/// used only to pre-fill local rows — never as a cache key.
+pub fn employee_email(code: &str) -> String {
+    find_employee_by_code(code)
+        .map(|e| e.emp_email)
+        .unwrap_or_default()
+}
+
+/// First employee code present in the local sheet cache (test harness
+/// fallback when `TMS_EMPLOYEE_CODE` is unset). Production code must not
+/// guess an employee.
+pub fn first_cached_employee_code() -> String {
+    let Ok(conn) = get_connection() else {
+        return String::new();
+    };
+    conn.query_row(
+        "SELECT COALESCE(emp_code, '') FROM USERS \
+         WHERE COALESCE(emp_code, '') <> '' ORDER BY emp_id ASC LIMIT 1",
+        [],
+        |r| r.get::<_, String>(0),
+    )
+    .unwrap_or_default()
 }
 
 /// Deletes a note by `id`.
@@ -1140,11 +847,9 @@ pub fn employee_count() -> usize {
         Ok(c) => c,
         Err(_) => return 0,
     };
-    conn.query_row(
-        "SELECT COUNT(*) FROM USERS WHERE is_deleted = 0",
-        [],
-        |r| r.get::<_, i64>(0),
-    )
+    conn.query_row("SELECT COUNT(*) FROM USERS WHERE is_deleted = 0", [], |r| {
+        r.get::<_, i64>(0)
+    })
     .map(|n| n as usize)
     .unwrap_or(0)
 }
@@ -1291,7 +996,12 @@ pub fn get_all_reminders() -> Vec<DbReminder> {
     }
 }
 
-/// Creates a new reminder with all 12 fields and returns the autogenerated `reminder_id`.
+/// Creates a new reminder with all 12 sheet fields plus the local mapping
+/// columns and returns the autogenerated `reminder_id`.
+///
+/// `cc_emails` (sheet column M) is left to its default here — the UI does
+/// not collect CC recipients; values pulled from the sheet are preserved by
+/// [`apply_server_reminder`].
 pub fn create_reminder_full(input: &NewReminderInput) -> Result<i64> {
     let conn = get_connection()?;
     conn.execute(
@@ -1386,7 +1096,10 @@ pub fn update_reminder_full(reminder_id: i64, input: &NewReminderInput) -> Resul
 /// Deletes a reminder by reminder_id.
 pub fn delete_reminder_db(reminder_id: i64) -> Result<()> {
     let conn = get_connection()?;
-    conn.execute("DELETE FROM reminders WHERE reminder_id = ?1", params![reminder_id])?;
+    conn.execute(
+        "DELETE FROM reminders WHERE reminder_id = ?1",
+        params![reminder_id],
+    )?;
     Ok(())
 }
 
@@ -1420,7 +1133,10 @@ fn ensure_ticket_sync_columns(conn: &Connection) -> Result<()> {
         conn.execute("ALTER TABLE tickets ADD COLUMN server_ticket_id TEXT", [])?;
     }
     if !has_column("server_last_updated") {
-        conn.execute("ALTER TABLE tickets ADD COLUMN server_last_updated TEXT", [])?;
+        conn.execute(
+            "ALTER TABLE tickets ADD COLUMN server_last_updated TEXT",
+            [],
+        )?;
     }
     Ok(())
 }
@@ -1438,10 +1154,22 @@ fn ensure_reminder_sync_columns(conn: &Connection) -> Result<()> {
     };
 
     if !has_column("server_reminder_id") {
-        conn.execute("ALTER TABLE reminders ADD COLUMN server_reminder_id TEXT", [])?;
+        conn.execute(
+            "ALTER TABLE reminders ADD COLUMN server_reminder_id TEXT",
+            [],
+        )?;
     }
     if !has_column("server_last_updated") {
-        conn.execute("ALTER TABLE reminders ADD COLUMN server_last_updated TEXT", [])?;
+        conn.execute(
+            "ALTER TABLE reminders ADD COLUMN server_last_updated TEXT",
+            [],
+        )?;
+    }
+    // Sheet column M (`CC Emails`) — part of the 13-column Reminders layout
+    // in TMS_SHEET_HEADERS_README.md. Added so the local schema mirrors the
+    // sheet; older databases are migrated in place.
+    if !has_column("cc_emails") {
+        conn.execute("ALTER TABLE reminders ADD COLUMN cc_emails TEXT", [])?;
     }
     Ok(())
 }
@@ -1459,7 +1187,10 @@ fn ensure_sync_queue_columns(conn: &Connection) -> Result<()> {
     };
 
     if !has_column("entity_type") {
-        conn.execute("ALTER TABLE sync_queue ADD COLUMN entity_type TEXT NOT NULL DEFAULT 'ticket'", [])?;
+        conn.execute(
+            "ALTER TABLE sync_queue ADD COLUMN entity_type TEXT NOT NULL DEFAULT 'ticket'",
+            [],
+        )?;
     }
     Ok(())
 }
@@ -1593,7 +1324,15 @@ fn insert_op(
     payload: &Value,
     created_at: &str,
 ) -> Result<i64> {
-    insert_entity_op(conn, "ticket", local_ticket_id, server_ticket_id, op_type, payload, created_at)
+    insert_entity_op(
+        conn,
+        "ticket",
+        local_ticket_id,
+        server_ticket_id,
+        op_type,
+        payload,
+        created_at,
+    )
 }
 
 fn insert_entity_op(
@@ -1609,7 +1348,14 @@ fn insert_entity_op(
         "INSERT INTO sync_queue \
          (local_ticket_id, server_ticket_id, op_type, payload, created_at, status, entity_type) \
          VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6)",
-        params![local_id, server_id, op_type, payload.to_string(), created_at, entity_type],
+        params![
+            local_id,
+            server_id,
+            op_type,
+            payload.to_string(),
+            created_at,
+            entity_type
+        ],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -1653,7 +1399,14 @@ pub fn enqueue_update(
     }
 
     // Otherwise queue behind any in-flight op.
-    insert_op(&conn, local_ticket_id, server_ticket_id.as_deref(), "UPDATE", fields, created_at)
+    insert_op(
+        &conn,
+        local_ticket_id,
+        server_ticket_id.as_deref(),
+        "UPDATE",
+        fields,
+        created_at,
+    )
 }
 
 /// Queue a local CREATE built from the current SQLite row.
@@ -1763,12 +1516,7 @@ pub fn mark_op_synced(op_id: i64) -> Result<()> {
 /// Attempt failed. Retryable failures go back to `pending` with a backoff
 /// deadline; non-retryable ones become `failed` (retained — never
 /// discarded — and re-checked slowly).
-pub fn mark_op_error(
-    op_id: i64,
-    error: &str,
-    retryable: bool,
-    next_attempt_at: i64,
-) -> Result<()> {
+pub fn mark_op_error(op_id: i64, error: &str, retryable: bool, next_attempt_at: i64) -> Result<()> {
     let conn = get_connection()?;
     let status = if retryable { "pending" } else { "failed" };
     conn.execute(
@@ -1866,7 +1614,11 @@ pub fn pending_create_subjects() -> Vec<String> {
     };
     rows.filter_map(Result::ok)
         .filter_map(|s| serde_json::from_str::<Value>(&s).ok())
-        .filter_map(|v| v.get("subject").and_then(|s| s.as_str()).map(str::to_string))
+        .filter_map(|v| {
+            v.get("subject")
+                .and_then(|s| s.as_str())
+                .map(str::to_string)
+        })
         .collect()
 }
 
@@ -2039,27 +1791,61 @@ pub fn ticket_create_payload(local_ticket_id: i64) -> Option<Value> {
 
             map.insert("employee_code".to_string(), json!(emp_code));
             map.insert("subject".to_string(), json!(subj));
-            if !email.is_empty() { map.insert("email_address".to_string(), json!(email)); }
-            if !cat.is_empty() { map.insert("category".to_string(), json!(cat)); }
-            if !desc.is_empty() { map.insert("problem_description".to_string(), json!(desc)); }
-            if !prio.is_empty() { map.insert("priority".to_string(), json!(prio)); }
-            if !assigned.is_empty() { map.insert("assigned_to".to_string(), json!(assigned)); }
-            if !cust.is_empty() { map.insert("customer".to_string(), json!(cust)); }
-            if !status.is_empty() { map.insert("status".to_string(), json!(status)); }
-            if !stage.is_empty() { map.insert("stage".to_string(), json!(stage)); }
-            if !kanban.is_empty() { map.insert("kanban_state".to_string(), json!(kanban)); }
-            if !att_name.is_empty() { map.insert("attachment_name".to_string(), json!(att_name)); }
-            if !att_url.is_empty() { map.insert("attachment_url".to_string(), json!(att_url)); }
-            if time_spent > 0.0 { map.insert("time_spent".to_string(), json!(time_spent)); }
+            if !email.is_empty() {
+                map.insert("email_address".to_string(), json!(email));
+            }
+            if !cat.is_empty() {
+                map.insert("category".to_string(), json!(cat));
+            }
+            if !desc.is_empty() {
+                map.insert("problem_description".to_string(), json!(desc));
+            }
+            if !prio.is_empty() {
+                map.insert("priority".to_string(), json!(prio));
+            }
+            if !assigned.is_empty() {
+                map.insert("assigned_to".to_string(), json!(assigned));
+            }
+            if !cust.is_empty() {
+                map.insert("customer".to_string(), json!(cust));
+            }
+            if !status.is_empty() {
+                map.insert("status".to_string(), json!(status));
+            }
+            if !stage.is_empty() {
+                map.insert("stage".to_string(), json!(stage));
+            }
+            if !kanban.is_empty() {
+                map.insert("kanban_state".to_string(), json!(kanban));
+            }
+            if !att_name.is_empty() {
+                map.insert("attachment_name".to_string(), json!(att_name));
+            }
+            if !att_url.is_empty() {
+                map.insert("attachment_url".to_string(), json!(att_url));
+            }
+            if time_spent > 0.0 {
+                map.insert("time_spent".to_string(), json!(time_spent));
+            }
             if !activities.is_empty() {
                 map.insert("activities".to_string(), json!(activities));
                 map.insert("activities_text".to_string(), json!(activities));
             }
-            if !my_act.is_empty() { map.insert("my_activity".to_string(), json!(my_act)); }
-            if !deadline.is_empty() { map.insert("deadline".to_string(), json!(deadline)); }
-            if !sla_status.is_empty() { map.insert("sla_status".to_string(), json!(sla_status)); }
-            if !sla_deadline.is_empty() { map.insert("sla_deadline".to_string(), json!(sla_deadline)); }
-            if !rating.is_empty() { map.insert("rating_avg_text".to_string(), json!(rating)); }
+            if !my_act.is_empty() {
+                map.insert("my_activity".to_string(), json!(my_act));
+            }
+            if !deadline.is_empty() {
+                map.insert("deadline".to_string(), json!(deadline));
+            }
+            if !sla_status.is_empty() {
+                map.insert("sla_status".to_string(), json!(sla_status));
+            }
+            if !sla_deadline.is_empty() {
+                map.insert("sla_deadline".to_string(), json!(sla_deadline));
+            }
+            if !rating.is_empty() {
+                map.insert("rating_avg_text".to_string(), json!(rating));
+            }
 
             Ok(Value::Object(map))
         })
@@ -2328,9 +2114,10 @@ pub fn insert_server_reminder(r: &crate::api::ServerReminder) -> Result<i64> {
         INSERT INTO reminders (
             employee_code, employee_name, email_address, service_category,
             reminder_message, send_at, status, email_sent_at, ticket_id,
-            created_at, last_updated_at, server_reminder_id, server_last_updated
+            created_at, last_updated_at, server_reminder_id, server_last_updated,
+            cc_emails
         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
         )
         "#,
         params![
@@ -2347,6 +2134,7 @@ pub fn insert_server_reminder(r: &crate::api::ServerReminder) -> Result<i64> {
             r.last_updated_at,
             r.reminder_id,
             r.last_updated_at,
+            r.cc_emails,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -2361,8 +2149,9 @@ pub fn apply_server_reminder(local_reminder_id: i64, r: &crate::api::ServerRemin
             service_category = ?4, reminder_message = ?5, send_at = ?6,
             status = ?7, email_sent_at = ?8, ticket_id = ?9,
             created_at = ?10, last_updated_at = ?11,
-            server_reminder_id = ?12, server_last_updated = ?13
-        WHERE reminder_id = ?14
+            server_reminder_id = ?12, server_last_updated = ?13,
+            cc_emails = ?14
+        WHERE reminder_id = ?15
         "#,
         params![
             r.employee_code,
@@ -2378,17 +2167,28 @@ pub fn apply_server_reminder(local_reminder_id: i64, r: &crate::api::ServerRemin
             r.last_updated_at,
             r.reminder_id,
             r.last_updated_at,
+            r.cc_emails,
             local_reminder_id,
         ],
     )?;
     Ok(())
 }
 
+/// Builds the `reminders.create` payload from a local row.
+///
+/// Only fields the documented API accepts are included:
+/// `employee_code`, `service_category`, `reminder_message`, `send_at`
+/// (required) plus `cc_emails` when the row carries one (optional).
+/// Sheet-only columns — `employee_name`, `email_address`, `email_sent_at`,
+/// `ticket_id`, `created_at`, `last_updated_at` — are never sent: the
+/// server derives them. `server_reminder_id` / `server_last_updated` are
+/// local mapping bookkeeping and are never sent either.
 pub fn reminder_create_payload(local_reminder_id: i64) -> Option<Value> {
     let conn = get_connection().ok()?;
     let mut stmt = conn
         .prepare(
-            "SELECT employee_code, service_category, reminder_message, send_at \
+            "SELECT employee_code, service_category, reminder_message, send_at, \
+                    COALESCE(cc_emails, '') \
              FROM reminders WHERE reminder_id = ?1",
         )
         .ok()?;
@@ -2399,6 +2199,7 @@ pub fn reminder_create_payload(local_reminder_id: i64) -> Option<Value> {
             let cat: String = r.get(1)?;
             let msg: String = r.get(2)?;
             let send_at: String = r.get(3)?;
+            let cc: String = r.get(4)?;
             let send_at_iso = crate::sync::parse_to_iso8601(&send_at);
 
             let mut map = serde_json::Map::new();
@@ -2406,6 +2207,9 @@ pub fn reminder_create_payload(local_reminder_id: i64) -> Option<Value> {
             map.insert("service_category".to_string(), json!(cat));
             map.insert("reminder_message".to_string(), json!(msg));
             map.insert("send_at".to_string(), json!(send_at_iso));
+            if !cc.trim().is_empty() {
+                map.insert("cc_emails".to_string(), json!(cc));
+            }
 
             Ok(Value::Object(map))
         })
@@ -2416,9 +2220,21 @@ pub fn reminder_create_payload(local_reminder_id: i64) -> Option<Value> {
     Some(value)
 }
 
-pub fn enqueue_reminder_create(local_reminder_id: i64, payload: &Value, created_at: &str) -> Result<i64> {
+pub fn enqueue_reminder_create(
+    local_reminder_id: i64,
+    payload: &Value,
+    created_at: &str,
+) -> Result<i64> {
     let conn = get_connection()?;
-    insert_entity_op(&conn, "reminder", local_reminder_id, None, "CREATE", payload, created_at)
+    insert_entity_op(
+        &conn,
+        "reminder",
+        local_reminder_id,
+        None,
+        "CREATE",
+        payload,
+        created_at,
+    )
 }
 
 pub fn enqueue_reminder_update(
@@ -2491,7 +2307,11 @@ pub fn update_employee_db(
          WHERE emp_code = ?5 AND is_deleted = 0",
         params![
             emp_name.trim(),
-            if emp_email.trim().is_empty() { None } else { Some(emp_email.trim()) },
+            if emp_email.trim().is_empty() {
+                None
+            } else {
+                Some(emp_email.trim())
+            },
             department.trim(),
             division.trim(),
             emp_code.trim(),
@@ -2508,4 +2328,3 @@ pub fn delete_employee_db(emp_code: &str) -> Result<()> {
     )?;
     Ok(())
 }
-

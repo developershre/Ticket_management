@@ -8,12 +8,12 @@
   "variable": [
     {
       "key": "base_url",
-      "value": "https://script.google.com/macros/s/AKfycbzx_5xVNedTPoIiT6WJ68zxKKaaaH-YahglFcL81LnD206RqnhonLqqBkYgyMSbBhDaoA/exec",
+      "value": "https://script.google.com/macros/s/REPLACE_WITH_DEPLOYMENT_ID/exec",
       "type": "string"
     },
     {
       "key": "api_key",
-      "value": "902038705cda4e6cacd685e401f000da38edaa46cd644e29934b1e8f01e73f957469e7d33a384a01b2b2a7d361e6f106",
+      "value": "PASTE_GENERATED_API_KEY_HERE",
       "type": "secret"
     },
     {
@@ -253,6 +253,30 @@
           "response": []
         },
         {
+          "name": "List All Employees (No Filters)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"employees.listAll\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}",
+            "description": "Returns every employee row in one response, regardless of department or division. No query, department, or division filters are applied. No pagination."
+          },
+          "response": []
+        },
+        {
           "name": "Update Employee",
           "request": {
             "method": "POST",
@@ -304,7 +328,7 @@
     },
     {
       "name": "Reminders",
-      "description": "Reminder API. Create schedules a reminder; it does not send immediately. Scheduled delivery requires the Apps Script time-driven trigger for sendDueReminderEmails. Use Send Reminder Now only to test mail delivery; the current API implementation sends a plain diagnostic email without the secure form URL.",
+      "description": "Reminder API. Supports optional CC recipients (cc_emails) and grouped digest emails. When more than five due pending reminders exist for one employee, they are combined into one email with a separate secure ticket link for each reminder.",
       "item": [
         {
           "name": "Create Reminder",
@@ -318,7 +342,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"reminders.create\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {\n    \"employee_code\": \"EMP001\",\n    \"service_category\": \"IT Support\",\n    \"reminder_message\": \"Please raise a ticket if your laptop/network issue is still unresolved.\",\n    \"send_at\": \"2026-11-01T10:00:00+05:30\"\n  }\n}",
+              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"reminders.create\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {\n    \"employee_code\": \"EMP001\",\n    \"service_category\": \"IT Support\",\n    \"reminder_message\": \"Please raise a ticket if your laptop/network issue is still unresolved.\",\n    \"send_at\": \"2026-12-01T10:00:00+05:30\",\n    \"cc_emails\": [\n      \"it.manager@example.com\"\n    ]\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -326,7 +350,7 @@
               }
             },
             "url": "{{base_url}}",
-            "description": "Creates reminder. If send_at is in the past or present, the API attempts immediate secure-form email delivery and returns data.delivery. Future reminders are sent by the five-minute trigger. A saved reminder remains in the sheet if immediate delivery fails."
+            "description": "Optional cc_emails accepts an array or comma/semicolon-separated email string. Due reminders send immediately; future reminders use the five-minute worker. More than five due pending reminders for the same employee are sent together as one digest email. Replace the example CC address and scheduled date with real values before sending."
           },
           "response": []
         },
@@ -390,7 +414,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"reminders.update\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {\n    \"reminder_id\": \"RMD-20261031-00001\",\n    \"reminder_message\": \"Updated reminder message.\",\n    \"send_at\": \"2026-11-02T10:00:00+05:30\",\n    \"status\": \"Pending\"\n  }\n}",
+              "raw": "{\n  \"version\": \"v1\",\n  \"action\": \"reminders.update\",\n  \"auth\": {\n    \"api_key\": \"{{api_key}}\"\n  },\n  \"request_id\": \"{{$guid}}\",\n  \"data\": {\n    \"reminder_id\": \"RMD-20261031-00001\",\n    \"reminder_message\": \"Updated reminder message.\",\n    \"send_at\": \"2026-11-02T10:00:00+05:30\",\n    \"status\": \"Pending\",\n    \"cc_emails\": [\n      \"it.manager@example.com\"\n    ]\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -398,7 +422,7 @@
               }
             },
             "url": "{{base_url}}",
-            "description": "Update employee_code, service_category, reminder_message, send_at, and/or status. Status can be Pending or Cancelled. Completed reminders are system-managed."
+            "description": "Update any supported reminder field. Add cc_emails to replace CC recipients; pass an empty string or empty array to clear CC."
           },
           "response": []
         },
@@ -422,7 +446,7 @@
               }
             },
             "url": "{{base_url}}",
-            "description": "Sends the selected pending reminder immediately using the same secure Create Support Ticket form link as the scheduled worker. Respects once-per-day duplicate prevention; optionally add data.force=true to deliberately resend."
+            "description": "Sends the secure ticket form email. If more than five eligible pending reminders exist for this employee, they are combined into one digest. Use force=true only to intentionally resend."
           },
           "response": []
         }

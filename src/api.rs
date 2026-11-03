@@ -1,18 +1,3 @@
-//! Centralized Google Sheets TMS API client.
-//!
-//! Single place that knows how to talk to the backend described by
-//! `TMS_API.postman_collection.json`:
-//!
-//! * one shared [`reqwest`] HTTP client with a request timeout,
-//! * the JSON request envelope (`version` / `action` / `auth.api_key` /
-//!   `request_id` / `data`),
-//! * the response envelope (`success` / `data` / `error.retryable` …),
-//! * typed helpers for the `tickets.*` actions.
-//!
-//! Configuration (base URL + API key) is resolved from environment
-//! variables first and falls back to the Postman collection file — no
-//! credentials are hardcoded in source.
-
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -202,7 +187,9 @@ pub enum ApiError {
 impl ApiError {
     pub fn is_retryable(&self) -> bool {
         match self {
-            ApiError::Network(_) | ApiError::Timeout | ApiError::Decode(_) | ApiError::Db(_) => true,
+            ApiError::Network(_) | ApiError::Timeout | ApiError::Decode(_) | ApiError::Db(_) => {
+                true
+            }
             ApiError::Http { retryable, .. } => *retryable,
             ApiError::Api { retryable, .. } => *retryable,
         }
@@ -234,7 +221,11 @@ impl std::fmt::Display for ApiError {
         match self {
             ApiError::Network(m) => write!(f, "NETWORK: {m}"),
             ApiError::Timeout => {
-                write!(f, "TIMEOUT: no response within {}s", REQUEST_TIMEOUT.as_secs())
+                write!(
+                    f,
+                    "TIMEOUT: no response within {}s",
+                    REQUEST_TIMEOUT.as_secs()
+                )
             }
             ApiError::Http { status, .. } => write!(f, "HTTP {status}"),
             ApiError::Api { code, message, .. } => write!(f, "{code}: {message}"),
@@ -340,6 +331,57 @@ where
     deserializer.deserialize_any(V)
 }
 
+/// Deserializes a field that the sheet/API may return as a plain string
+/// (`"a@b.c, d@e.f"`) or as an array (`["a@b.c", "d@e.f"]`) into a single
+/// comma-separated string. Used for `cc_emails` (sheet column `CC Emails`).
+fn flex_list_str<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    use std::fmt;
+
+    struct V;
+    impl<'de> Visitor<'de> for V {
+        type Value = String;
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a string, number or array of strings")
+        }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<String, E> {
+            Ok(v.to_string())
+        }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<String, E> {
+            Ok(v.to_string())
+        }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<String, E> {
+            Ok(v.to_string())
+        }
+        fn visit_f64<E: de::Error>(self, v: f64) -> Result<String, E> {
+            Ok(v.to_string())
+        }
+        fn visit_none<E: de::Error>(self) -> Result<String, E> {
+            Ok(String::new())
+        }
+        fn visit_some<D2: de::Deserializer<'de>>(self, d: D2) -> Result<String, D2::Error> {
+            d.deserialize_string(V)
+        }
+        fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<String, A::Error> {
+            let mut parts: Vec<String> = Vec::new();
+            while let Some(item) = seq.next_element::<String>()? {
+                let item = item.trim().to_string();
+                if !item.is_empty() {
+                    parts.push(item);
+                }
+            }
+            Ok(parts.join(", "))
+        }
+        fn visit_unit<E: de::Error>(self) -> Result<String, E> {
+            Ok(String::new())
+        }
+    }
+    deserializer.deserialize_any(V)
+}
+
 fn flex_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -386,51 +428,183 @@ where
 /// the sheet cell was written — both are normalized here.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ServerTicket {
-    #[serde(default, deserialize_with = "flex_str", alias = "Ticket ID", alias = "ticket_id", alias = "id")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Ticket ID",
+        alias = "ticket_id",
+        alias = "id"
+    )]
     pub ticket_id: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Employee Code", alias = "employee_code", alias = "code")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Employee Code",
+        alias = "employee_code",
+        alias = "code"
+    )]
     pub employee_code: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Email Address", alias = "email_address", alias = "email", alias = "Mail")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Email Address",
+        alias = "email_address",
+        alias = "email",
+        alias = "Mail"
+    )]
     pub email_address: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Category", alias = "category")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Category",
+        alias = "category"
+    )]
     pub category: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Subject", alias = "subject", alias = "title")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Subject",
+        alias = "subject",
+        alias = "title"
+    )]
     pub subject: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Problem Description", alias = "problem_description", alias = "description")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Problem Description",
+        alias = "problem_description",
+        alias = "description"
+    )]
     pub problem_description: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Attachment Name", alias = "attachment_name")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Attachment Name",
+        alias = "attachment_name"
+    )]
     pub attachment_name: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Attachment URL", alias = "attachment_url")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Attachment URL",
+        alias = "attachment_url"
+    )]
     pub attachment_url: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Priority", alias = "priority")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Priority",
+        alias = "priority"
+    )]
     pub priority: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Assigned to", alias = "Assigned To", alias = "assigned_to", alias = "assignee")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Assigned to",
+        alias = "Assigned To",
+        alias = "assigned_to",
+        alias = "assignee"
+    )]
     pub assigned_to: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Customer", alias = "customer")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Customer",
+        alias = "customer"
+    )]
     pub customer: String,
-    #[serde(default, deserialize_with = "flex_f64", alias = "Time Spent", alias = "time_spent", alias = "Time Spent (hours)", alias = "time_spent_hours")]
+    #[serde(
+        default,
+        deserialize_with = "flex_f64",
+        alias = "Time Spent",
+        alias = "time_spent",
+        alias = "Time Spent (hours)",
+        alias = "time_spent_hours"
+    )]
     pub time_spent: f64,
-    #[serde(default, deserialize_with = "flex_str", rename = "activities_text", alias = "activities", alias = "Activities", alias = "Activities Summary")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        rename = "activities_text",
+        alias = "activities",
+        alias = "Activities",
+        alias = "Activities Summary"
+    )]
     pub activities: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "My Activity", alias = "my_activity")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "My Activity",
+        alias = "my_activity"
+    )]
     pub my_activity: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Deadline", alias = "deadline")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Deadline",
+        alias = "deadline"
+    )]
     pub deadline: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "SLA Status", alias = "sla_status")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "SLA Status",
+        alias = "sla_status"
+    )]
     pub sla_status: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "SLA Deadline", alias = "sla_deadline")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "SLA Deadline",
+        alias = "sla_deadline"
+    )]
     pub sla_deadline: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Rating Avg Text", alias = "rating_avg_text", alias = "Rating")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Rating Avg Text",
+        alias = "rating_avg_text",
+        alias = "Rating"
+    )]
     pub rating_avg_text: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Kanban State", alias = "kanban_state")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Kanban State",
+        alias = "kanban_state"
+    )]
     pub kanban_state: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Stage", alias = "stage")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Stage",
+        alias = "stage"
+    )]
     pub stage: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Status", alias = "status")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Status",
+        alias = "status"
+    )]
     pub status: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Created on", alias = "created_on", alias = "Created At", alias = "created_at")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Created on",
+        alias = "created_on",
+        alias = "Created At",
+        alias = "created_at"
+    )]
     pub created_on: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Last Updated on", alias = "last_updated_on", alias = "Last Updated At", alias = "last_updated_at")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Last Updated on",
+        alias = "last_updated_on",
+        alias = "Last Updated At",
+        alias = "last_updated_at"
+    )]
     pub last_updated_on: String,
 }
 
@@ -451,15 +625,53 @@ pub struct TicketListPage {
 /// Headers in sheet: Employee Code, Name, Dept, Division, Mail
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Employee {
-    #[serde(default, deserialize_with = "flex_str", alias = "Employee Code", alias = "employee_code", alias = "code", alias = "emp_code", alias = "id")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Employee Code",
+        alias = "employee_code",
+        alias = "code",
+        alias = "emp_code",
+        alias = "id"
+    )]
     pub employee_code: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Name", alias = "name", alias = "Employee Name", alias = "employee_name", alias = "emp_name")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Name",
+        alias = "name",
+        alias = "Employee Name",
+        alias = "employee_name",
+        alias = "emp_name"
+    )]
     pub employee_name: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Dept", alias = "dept", alias = "Department", alias = "department")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Dept",
+        alias = "dept",
+        alias = "Department",
+        alias = "department"
+    )]
     pub department: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Division", alias = "division", alias = "div")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Division",
+        alias = "division",
+        alias = "div"
+    )]
     pub division: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Mail", alias = "mail", alias = "Email Address", alias = "email_address", alias = "email", alias = "emp_email")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Mail",
+        alias = "mail",
+        alias = "Email Address",
+        alias = "email_address",
+        alias = "email",
+        alias = "emp_email"
+    )]
     pub email: String,
 }
 
@@ -469,16 +681,45 @@ pub struct Employee {
 
 /// One reminder as returned by `reminders.get` / `reminders.create` /
 /// `reminders.update` / `reminders.list`.
-/// Headers in sheet: Reminder ID, Employee Code, Employee Name, Email Address, Service / Category, Reminder Message, Send At, Status, Email Sent At, Ticket ID, Created At, Last Updated At
+/// Sheet headers: Reminder ID, Employee Code, Employee Name, Email Address,
+/// Service / Category, Reminder Message, Send At, Status, Email Sent At,
+/// Ticket ID, Created At, Last Updated At, CC Emails
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ServerReminder {
-    #[serde(default, deserialize_with = "flex_str", alias = "Reminder ID", alias = "reminder_id", alias = "id")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Reminder ID",
+        alias = "reminder_id",
+        alias = "id"
+    )]
     pub reminder_id: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Employee Code", alias = "employee_code", alias = "code")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Employee Code",
+        alias = "employee_code",
+        alias = "code"
+    )]
     pub employee_code: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Employee Name", alias = "employee_name", alias = "Name", alias = "name")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Employee Name",
+        alias = "employee_name",
+        alias = "Name",
+        alias = "name"
+    )]
     pub employee_name: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Email Address", alias = "email_address", alias = "email", alias = "Mail", alias = "mail")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Email Address",
+        alias = "email_address",
+        alias = "email",
+        alias = "Mail",
+        alias = "mail"
+    )]
     pub email_address: String,
     #[serde(
         default,
@@ -491,20 +732,73 @@ pub struct ServerReminder {
         alias = "category"
     )]
     pub service_category: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Reminder Message", alias = "reminder_message", alias = "message")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Reminder Message",
+        alias = "reminder_message",
+        alias = "message"
+    )]
     pub reminder_message: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Send At", alias = "send_at", alias = "Send on", alias = "send_on")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Send At",
+        alias = "send_at",
+        alias = "Send on",
+        alias = "send_on"
+    )]
     pub send_at: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Status", alias = "status")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Status",
+        alias = "status"
+    )]
     pub status: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Email Sent At", alias = "email_sent_at", alias = "Email Sent on", alias = "email_sent_on")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Email Sent At",
+        alias = "email_sent_at",
+        alias = "Email Sent on",
+        alias = "email_sent_on"
+    )]
     pub email_sent_at: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Ticket ID", alias = "ticket_id")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Ticket ID",
+        alias = "ticket_id"
+    )]
     pub ticket_id: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Created At", alias = "created_at", alias = "Created on", alias = "created_on")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Created At",
+        alias = "created_at",
+        alias = "Created on",
+        alias = "created_on"
+    )]
     pub created_at: String,
-    #[serde(default, deserialize_with = "flex_str", alias = "Last Updated At", alias = "last_updated_at", alias = "Last Updated on", alias = "last_updated_on")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Last Updated At",
+        alias = "last_updated_at",
+        alias = "Last Updated on",
+        alias = "last_updated_on"
+    )]
     pub last_updated_at: String,
+    /// Sheet column M (`CC Emails`); empty when the row has no recipients.
+    #[serde(
+        default,
+        deserialize_with = "flex_list_str",
+        alias = "CC Emails",
+        alias = "cc_emails",
+        alias = "cc"
+    )]
+    pub cc_emails: String,
 }
 
 /// One page of `reminders.list`.
@@ -591,9 +885,10 @@ impl ApiClient {
             .and_then(|v| v.to_str().ok())
             .and_then(parse_retry_after);
 
-        let text = resp.text().await.map_err(|e| {
-            ApiError::Network(format!("failed to read response: {e}"))
-        })?;
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| ApiError::Network(format!("failed to read response: {e}")))?;
 
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
             return Err(ApiError::Http {
@@ -675,7 +970,9 @@ impl ApiClient {
 
     /// `tickets.get`
     pub async fn tickets_get(&self, ticket_id: &str) -> Result<ServerTicket, ApiError> {
-        let data = self.post("tickets.get", json!({ "ticket_id": ticket_id })).await?;
+        let data = self
+            .post("tickets.get", json!({ "ticket_id": ticket_id }))
+            .await?;
         parse_ticket(data)
     }
 
@@ -701,7 +998,8 @@ impl ApiClient {
     /// `tickets.delete` — hard delete; `NOT_FOUND` is treated as success
     /// by callers (already gone).
     pub async fn tickets_delete(&self, ticket_id: &str) -> Result<(), ApiError> {
-        self.post("tickets.delete", json!({ "ticket_id": ticket_id })).await?;
+        self.post("tickets.delete", json!({ "ticket_id": ticket_id }))
+            .await?;
         Ok(())
     }
 
@@ -731,7 +1029,8 @@ impl ApiClient {
             for value in arr {
                 // Rows without a usable name/code are skipped, never fatal.
                 if let Ok(emp) = serde_json::from_value::<Employee>(value.clone()) {
-                    if !emp.employee_name.trim().is_empty() || !emp.employee_code.trim().is_empty() {
+                    if !emp.employee_name.trim().is_empty() || !emp.employee_code.trim().is_empty()
+                    {
                         items.push(emp);
                     }
                 }
@@ -768,8 +1067,11 @@ impl ApiClient {
 
     /// `employees.delete`
     pub async fn employees_delete(&self, employee_code: &str) -> Result<(), ApiError> {
-        self.post("employees.delete", json!({ "employee_code": employee_code }))
-            .await?;
+        self.post(
+            "employees.delete",
+            json!({ "employee_code": employee_code }),
+        )
+        .await?;
         Ok(())
     }
 
@@ -785,20 +1087,21 @@ impl ApiClient {
     ) -> Result<ReminderListPage, ApiError> {
         let mut query = json!({ "offset": offset, "limit": limit });
         if let Some(s) = status {
-            query.as_object_mut().unwrap().insert("status".to_string(), json!(s));
+            query
+                .as_object_mut()
+                .unwrap()
+                .insert("status".to_string(), json!(s));
         }
         if let Some(ec) = employee_code {
-            query.as_object_mut().unwrap().insert("employee_code".to_string(), json!(ec));
+            query
+                .as_object_mut()
+                .unwrap()
+                .insert("employee_code".to_string(), json!(ec));
         }
 
-        // Try reminders.listAll first, fallback to reminders.list
-        let data = match self.post("reminders.listAll", json!({})).await {
-            Ok(d) => d,
-            Err(ApiError::Api { ref code, .. }) if code == "UNKNOWN_ACTION" => {
-                self.post("reminders.list", query).await?
-            }
-            Err(e) => return Err(e),
-        };
+        // `reminders.list` is the only documented list action for reminders
+        // (`reminders.listAll` does not exist and returns UNKNOWN_ACTION).
+        let data = self.post("reminders.list", query).await?;
 
         let mut items = Vec::new();
         let mut invalid_items = 0usize;
@@ -858,23 +1161,33 @@ impl ApiClient {
     }
 
     /// `reminders.sendNow`
-    pub async fn reminders_send_now(&self, reminder_id: &str, force: bool) -> Result<Value, ApiError> {
+    pub async fn reminders_send_now(
+        &self,
+        reminder_id: &str,
+        force: bool,
+    ) -> Result<Value, ApiError> {
         let mut payload = json!({ "reminder_id": reminder_id });
         if force {
-            payload.as_object_mut().unwrap().insert("force".to_string(), json!(true));
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert("force".to_string(), json!(true));
         }
         self.post("reminders.sendNow", payload).await
     }
 }
 
 fn parse_ticket(data: Value) -> Result<ServerTicket, ApiError> {
-    serde_json::from_value(data).map_err(|e| ApiError::Decode(format!("invalid ticket payload: {e}")))
+    serde_json::from_value(data)
+        .map_err(|e| ApiError::Decode(format!("invalid ticket payload: {e}")))
 }
 
 fn parse_employee(data: Value) -> Result<Employee, ApiError> {
-    serde_json::from_value(data).map_err(|e| ApiError::Decode(format!("invalid employee payload: {e}")))
+    serde_json::from_value(data)
+        .map_err(|e| ApiError::Decode(format!("invalid employee payload: {e}")))
 }
 
 fn parse_reminder(data: Value) -> Result<ServerReminder, ApiError> {
-    serde_json::from_value(data).map_err(|e| ApiError::Decode(format!("invalid reminder payload: {e}")))
+    serde_json::from_value(data)
+        .map_err(|e| ApiError::Decode(format!("invalid reminder payload: {e}")))
 }
