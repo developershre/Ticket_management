@@ -284,20 +284,23 @@ pub fn Employees() -> Element {
         target_div,
     });
 
-    let employees: Vec<EmployeeItem> = {
-        let _ = local_revision();
-        if let Some(sync) = db_sync {
-            let _ = sync();
-        }
-        crate::db::get_all_employees()
-            .into_iter()
-            .map(EmployeeItem::from_db)
-            .collect()
+    let (employees, department_options, division_options) = {
+        let memo = use_memo(move || {
+            let _ = local_revision();
+            if let Some(sync) = db_sync {
+                let _ = sync();
+            }
+            let emps: Vec<EmployeeItem> = crate::db::get_all_employees()
+                .into_iter()
+                .map(EmployeeItem::from_db)
+                .collect();
+            let depts = crate::db::employee_departments();
+            let divs = crate::db::employee_divisions();
+            (emps, depts, divs)
+        });
+        memo()
     };
-
     let total_count = employees.len();
-    let department_options = crate::db::employee_departments();
-    let division_options = crate::db::employee_divisions();
 
     // Facet filters are built from the cached data so they always match
     // what is actually present.

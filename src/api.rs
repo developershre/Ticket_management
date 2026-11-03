@@ -454,15 +454,15 @@ pub struct TicketListPage {
 /// on the wire and normalized to a `String` here.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Employee {
-    #[serde(default, deserialize_with = "flex_str")]
+    #[serde(default, deserialize_with = "flex_str", alias = "code", alias = "emp_code", alias = "id")]
     pub employee_code: String,
-    #[serde(default, deserialize_with = "flex_str")]
+    #[serde(default, deserialize_with = "flex_str", alias = "name", alias = "emp_name")]
     pub employee_name: String,
-    #[serde(default, deserialize_with = "flex_str")]
+    #[serde(default, deserialize_with = "flex_str", alias = "dept")]
     pub department: String,
-    #[serde(default, deserialize_with = "flex_str")]
+    #[serde(default, deserialize_with = "flex_str", alias = "email_address", alias = "mail")]
     pub email: String,
-    #[serde(default, deserialize_with = "flex_str")]
+    #[serde(default, deserialize_with = "flex_str", alias = "div")]
     pub division: String,
 }
 
@@ -474,29 +474,36 @@ pub struct Employee {
 /// `reminders.update` / `reminders.list`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ServerReminder {
-    #[serde(default, deserialize_with = "flex_str")]
+    #[serde(default, deserialize_with = "flex_str", alias = "Reminder ID", alias = "id")]
     pub reminder_id: String,
-    #[serde(default, deserialize_with = "flex_str")]
+    #[serde(default, deserialize_with = "flex_str", alias = "Employee Code", alias = "code")]
     pub employee_code: String,
-    #[serde(default, deserialize_with = "flex_str")]
+    #[serde(default, deserialize_with = "flex_str", alias = "Employee Name", alias = "Name", alias = "name")]
     pub employee_name: String,
-    #[serde(default, deserialize_with = "flex_str")]
+    #[serde(default, deserialize_with = "flex_str", alias = "Email Address", alias = "email", alias = "Mail")]
     pub email_address: String,
-    #[serde(default, deserialize_with = "flex_str")]
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Service / Category",
+        alias = "Service Category",
+        alias = "category",
+        alias = "service_category"
+    )]
     pub service_category: String,
-    #[serde(default, deserialize_with = "flex_str")]
+    #[serde(default, deserialize_with = "flex_str", alias = "Reminder Message", alias = "message")]
     pub reminder_message: String,
-    #[serde(default, deserialize_with = "flex_str")]
+    #[serde(default, deserialize_with = "flex_str", alias = "Send At")]
     pub send_at: String,
-    #[serde(default, deserialize_with = "flex_str")]
+    #[serde(default, deserialize_with = "flex_str", alias = "Status")]
     pub status: String,
-    #[serde(default, deserialize_with = "flex_str")]
+    #[serde(default, deserialize_with = "flex_str", alias = "Email Sent At")]
     pub email_sent_at: String,
-    #[serde(default, deserialize_with = "flex_str")]
+    #[serde(default, deserialize_with = "flex_str", alias = "Ticket ID")]
     pub ticket_id: String,
-    #[serde(default, deserialize_with = "flex_str")]
+    #[serde(default, deserialize_with = "flex_str", alias = "Created At", alias = "Created on")]
     pub created_at: String,
-    #[serde(default, deserialize_with = "flex_str")]
+    #[serde(default, deserialize_with = "flex_str", alias = "Last Updated At", alias = "Last Updated on")]
     pub last_updated_at: String,
 }
 
@@ -522,7 +529,7 @@ impl ApiClient {
     pub fn new(cfg: ApiConfig) -> Result<Self, String> {
         let http = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
-            .user_agent("TaskFlow-TMS/1.0")
+            .user_agent("BPSL-IT-Support/1.0")
             .redirect(reqwest::redirect::Policy::limited(10))
             .build()
             .map_err(|e| format!("HTTP client init failed: {e}"))?;
@@ -695,19 +702,33 @@ impl ApiClient {
         Ok(())
     }
 
-    /// `employees.list` — the full employee directory. The endpoint
-    /// accepts optional `department` / `division` / `query` filters and
-    /// returns `{ items, total }` (not paginated: one call yields all
-    /// 324 rows).
+    /// `employees.listAll` — fetches all employee data at once.
+    /// Falls back to `employees.list` if the server returns UNKNOWN_ACTION.
     pub async fn employees_list(&self) -> Result<Vec<Employee>, ApiError> {
-        let data = self.post("employees.list", json!({})).await?;
+        let data = match self.post("employees.listAll", json!({})).await {
+            Ok(d) => d,
+            Err(ApiError::Api { ref code, .. }) if code == "UNKNOWN_ACTION" => {
+                self.post("employees.list", json!({})).await?
+            }
+            Err(e) => return Err(e),
+        };
 
         let mut items = Vec::new();
-        if let Some(arr) = data.get("items").and_then(|v| v.as_array()) {
+        let arr = if let Some(arr) = data.get("items").and_then(|v| v.as_array()) {
+            Some(arr)
+        } else if let Some(arr) = data.as_array() {
+            Some(arr)
+        } else if let Some(arr) = data.get("employees").and_then(|v| v.as_array()) {
+            Some(arr)
+        } else {
+            None
+        };
+
+        if let Some(arr) = arr {
             for value in arr {
-                // Rows without a usable name are skipped, never fatal.
+                // Rows without a usable name/code are skipped, never fatal.
                 if let Ok(emp) = serde_json::from_value::<Employee>(value.clone()) {
-                    if !emp.employee_name.trim().is_empty() {
+                    if !emp.employee_name.trim().is_empty() || !emp.employee_code.trim().is_empty() {
                         items.push(emp);
                     }
                 }
@@ -767,11 +788,28 @@ impl ApiClient {
             query.as_object_mut().unwrap().insert("employee_code".to_string(), json!(ec));
         }
 
-        let data = self.post("reminders.list", query).await?;
+        // Try reminders.listAll first, fallback to reminders.list
+        let data = match self.post("reminders.listAll", json!({})).await {
+            Ok(d) => d,
+            Err(ApiError::Api { ref code, .. }) if code == "UNKNOWN_ACTION" => {
+                self.post("reminders.list", query).await?
+            }
+            Err(e) => return Err(e),
+        };
 
         let mut items = Vec::new();
         let mut invalid_items = 0usize;
-        if let Some(arr) = data.get("items").and_then(|v| v.as_array()) {
+        let arr = if let Some(arr) = data.get("items").and_then(|v| v.as_array()) {
+            Some(arr)
+        } else if let Some(arr) = data.as_array() {
+            Some(arr)
+        } else if let Some(arr) = data.get("reminders").and_then(|v| v.as_array()) {
+            Some(arr)
+        } else {
+            None
+        };
+
+        if let Some(arr) = arr {
             for value in arr {
                 match serde_json::from_value::<ServerReminder>(value.clone()) {
                     Ok(r) => items.push(r),

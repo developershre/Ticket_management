@@ -42,7 +42,7 @@ fn toggle_maximize() {}
 
 #[derive(Props, Clone, PartialEq)]
 pub struct TitlebarProps {
-    #[props(default = "TaskFlow".to_string())]
+    #[props(default = "BPSL IT Support".to_string())]
     pub app_name: String,
 }
 

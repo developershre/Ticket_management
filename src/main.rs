@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use dioxus::prelude::*;
 
 mod components;
@@ -59,7 +61,7 @@ fn main() {
 
     // Initialize SQLite database adhering to DATABASE.SQL schema
     if let Err(e) = db::init_database() {
-        eprintln!("[TaskFlow DB] Warning: database init failed: {:?}", e);
+        eprintln!("[BPSL IT Support DB] Warning: database init failed: {:?}", e);
     }
 
     // Operational aid: run a single sync cycle against the configured API
@@ -111,7 +113,7 @@ fn main() {
                                         e.dataTransfer.effectAllowed = 'all';
                                         if (id) {
                                             e.dataTransfer.setData('text/plain', id);
-                                            e.dataTransfer.setData('application/x-taskflow-id', id);
+                                            e.dataTransfer.setData('application/x-bpsl-id', id);
                                         } else {
                                             e.dataTransfer.setData('text/plain', 'drag-item');
                                         }
@@ -135,7 +137,7 @@ fn main() {
                     )
                     .with_window(
                         WindowBuilder::new()
-                            .with_title("TaskFlow")
+                            .with_title("BPSL IT Support")
                             .with_decorations(false)
                             .with_theme(Some(initial_theme))
                             .with_inner_size(LogicalSize::new(1200.0, 800.0))
@@ -160,7 +162,7 @@ fn App() -> Element {
         document::Link { rel: "stylesheet", href: MAIN_CSS }
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
         document::Script { src: DND_JS }
-        document::Title { "TaskFlow" }
+        document::Title { "BPSL IT Support" }
         ThemeProvider {
             Router::<Route> {}
         }
@@ -179,7 +181,7 @@ fn AppShell() -> Element {
         ToastProvider {
             SidebarProvider {
                 div { class: "{dark_cls} flex h-screen w-full flex-col overflow-hidden bg-background text-foreground transition-colors duration-200",
-                    Titlebar { app_name: "TaskFlow".to_string() }
+                    Titlebar { app_name: "BPSL IT Support".to_string() }
                     div { class: "flex flex-1 overflow-hidden",
                         AppSidebar {}
                         main { class: "relative flex flex-1 flex-col overflow-hidden min-h-0 w-full",

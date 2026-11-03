@@ -277,9 +277,6 @@
   .top-full {
     top: 100%;
   }
-  .-right-0\.5 {
-    right: calc(var(--spacing) * -0.5);
-  }
   .right-0 {
     right: calc(var(--spacing) * 0);
   }
@@ -297,9 +294,6 @@
   }
   .right-6 {
     right: calc(var(--spacing) * 6);
-  }
-  .-bottom-0\.5 {
-    bottom: calc(var(--spacing) * -0.5);
   }
   .bottom-6 {
     bottom: calc(var(--spacing) * 6);
@@ -528,10 +522,6 @@
   .size-7 {
     width: calc(var(--spacing) * 7);
     height: calc(var(--spacing) * 7);
-  }
-  .size-7\.5 {
-    width: calc(var(--spacing) * 7.5);
-    height: calc(var(--spacing) * 7.5);
   }
   .size-8 {
     width: calc(var(--spacing) * 8);
@@ -2244,10 +2234,6 @@
     --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor);
     box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
   }
-  .ring-2 {
-    --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor);
-    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
-  }
   .shadow-black\/10 {
     --tw-shadow-color: color-mix(in srgb, #000 10%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
@@ -2258,12 +2244,6 @@
     --tw-shadow-color: var(--primary);
     @supports (color: color-mix(in lab, red, red)) {
       --tw-shadow-color: color-mix(in oklab, color-mix(in oklab, var(--primary) 30%, transparent) var(--tw-shadow-alpha), transparent);
-    }
-  }
-  .ring-border\/60 {
-    --tw-ring-color: var(--border);
-    @supports (color: color-mix(in lab, red, red)) {
-      --tw-ring-color: color-mix(in oklab, var(--border) 60%, transparent);
     }
   }
   .ring-destructive\/20 {
@@ -2292,9 +2272,6 @@
     @supports (color: color-mix(in lab, red, red)) {
       --tw-ring-color: color-mix(in oklab, var(--primary) 40%, transparent);
     }
-  }
-  .ring-sidebar {
-    --tw-ring-color: var(--sidebar);
   }
   .outline {
     outline-style: var(--tw-outline-style);

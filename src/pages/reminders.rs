@@ -77,95 +77,39 @@ fn status_badge_variant(status: &str) -> &'static str {
 }
 
 fn initial_reminders() -> Vec<ReminderItem> {
-    let db_reminders = crate::db::get_all_reminders();
-    if !db_reminders.is_empty() {
-        return db_reminders
-            .into_iter()
-            .map(|r| {
-                let done = r.status.eq_ignore_ascii_case("completed");
-                let display_id = if !r.server_reminder_id.is_empty() {
-                    r.server_reminder_id.clone()
-                } else {
-                    format!("REM-{}", r.reminder_id)
-                };
-                ReminderItem {
-                    id: display_id,
-                    reminder_id: r.reminder_id,
-                    employee_code: r.employee_code,
-                    employee_name: r.employee_name,
-                    email_address: r.email_address,
-                    service_category: r.service_category,
-                    reminder_message: r.reminder_message,
-                    send_at: r.send_at,
-                    status: r.status,
-                    email_sent_at: r.email_sent_at,
-                    ticket_id: r.ticket_id,
-                    created_at: r.created_at,
-                    last_updated_at: r.last_updated_at,
-                    server_reminder_id: r.server_reminder_id,
-                    server_last_updated: r.server_last_updated,
-                    done,
-                }
-            })
-            .collect();
-    }
-
-    vec![
-        ReminderItem {
-            id: "REM-1".to_string(),
-            reminder_id: 1,
-            employee_code: "EMP-4019".to_string(),
-            employee_name: "David Chen".to_string(),
-            email_address: "david.chen@corp.internal".to_string(),
-            service_category: "Engineering".to_string(),
-            reminder_message: "Review pull request #482".to_string(),
-            send_at: "Today · 2:00 PM".to_string(),
-            status: "Pending".to_string(),
-            email_sent_at: "Not sent yet".to_string(),
-            ticket_id: "IT-1".to_string(),
-            created_at: "Today".to_string(),
-            last_updated_at: "Today".to_string(),
-            server_reminder_id: String::new(),
-            server_last_updated: String::new(),
-            done: false,
-        },
-        ReminderItem {
-            id: "REM-2".to_string(),
-            reminder_id: 2,
-            employee_code: "EMP-5082".to_string(),
-            employee_name: "Sarah Miller".to_string(),
-            email_address: "sarah.miller@corp.internal".to_string(),
-            service_category: "Meetings".to_string(),
-            reminder_message: "Team standup notes & updates".to_string(),
-            send_at: "Today · 4:30 PM".to_string(),
-            status: "Pending".to_string(),
-            email_sent_at: "Not sent yet".to_string(),
-            ticket_id: String::new(),
-            created_at: "Today".to_string(),
-            last_updated_at: "Today".to_string(),
-            server_reminder_id: String::new(),
-            server_last_updated: String::new(),
-            done: false,
-        },
-        ReminderItem {
-            id: "REM-3".to_string(),
-            reminder_id: 3,
-            employee_code: "EMP-1024".to_string(),
-            employee_name: "Robert Taylor".to_string(),
-            email_address: "robert.taylor@corp.internal".to_string(),
-            service_category: "Ops".to_string(),
-            reminder_message: "Renew domain + SSL certificates".to_string(),
-            send_at: "Tomorrow · 9:00 AM".to_string(),
-            status: "Pending".to_string(),
-            email_sent_at: "Not sent yet".to_string(),
-            ticket_id: "IT-2".to_string(),
-            created_at: "Yesterday".to_string(),
-            last_updated_at: "Yesterday".to_string(),
-            server_reminder_id: String::new(),
-            server_last_updated: String::new(),
-            done: false,
-        },
-    ]
+    // Reminders are read from SQLite only — the local cache of the Google
+    // Sheet. When the table is empty, no fake mock items are fabricated.
+    crate::db::get_all_reminders()
+        .into_iter()
+        .map(|r| {
+            let done = r.status.eq_ignore_ascii_case("completed")
+                || r.status.eq_ignore_ascii_case("sent")
+                || r.status.eq_ignore_ascii_case("done");
+            let display_id = if !r.server_reminder_id.is_empty() {
+                r.server_reminder_id.clone()
+            } else {
+                format!("REM-{}", r.reminder_id)
+            };
+            ReminderItem {
+                id: display_id,
+                reminder_id: r.reminder_id,
+                employee_code: r.employee_code,
+                employee_name: r.employee_name,
+                email_address: r.email_address,
+                service_category: r.service_category,
+                reminder_message: r.reminder_message,
+                send_at: r.send_at,
+                status: r.status,
+                email_sent_at: r.email_sent_at,
+                ticket_id: r.ticket_id,
+                created_at: r.created_at,
+                last_updated_at: r.last_updated_at,
+                server_reminder_id: r.server_reminder_id,
+                server_last_updated: r.server_last_updated,
+                done,
+            }
+        })
+        .collect()
 }
 
 // ============================================================
@@ -472,7 +416,9 @@ pub fn Reminders() -> Element {
             let _ = sync();
         }
         let list = initial_reminders();
-        reminders.set(list);
+        if *reminders.peek() != list {
+            reminders.set(list);
+        }
     });
 
     // Drag-and-drop reactive state
@@ -512,10 +458,18 @@ pub fn Reminders() -> Element {
             return;
         }
 
+        let emp_code = "11135".to_string();
+        let (emp_name, email_address) = crate::db::find_employee_by_code(&emp_code)
+            .map(|u| {
+                let email = if u.emp_email.is_empty() { "it.support@bpsl.net".to_string() } else { u.emp_email };
+                (u.emp_name, email)
+            })
+            .unwrap_or_else(|| ("IT Support".to_string(), "it.support@bpsl.net".to_string()));
+
         let input = crate::db::NewReminderInput {
-            employee_code: "EMP-1001".to_string(),
-            employee_name: "Gamer Rock".to_string(),
-            email_address: "admin@taskflow.internal".to_string(),
+            employee_code: emp_code,
+            employee_name: emp_name,
+            email_address: email_address,
             service_category: new_category.read().clone(),
             reminder_message: msg.clone(),
             send_at: new_send_at.read().clone(),

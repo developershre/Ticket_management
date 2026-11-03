@@ -160,7 +160,7 @@ impl TicketItem {
             },
         };
 
-        Self::new(
+        let mut item = Self::new(
             t.ticket_id,
             &t.employee_code,
             &t.email_address,
@@ -184,7 +184,13 @@ impl TicketItem {
             &stage,
             &t.created_on,
             &t.last_updated_on,
-        )
+        );
+        if let Some(ref sid) = t.server_ticket_id {
+            if !sid.trim().is_empty() {
+                item.id = sid.clone();
+            }
+        }
+        item
     }
 
     pub fn emp_code_only(&self) -> &str {
@@ -296,16 +302,16 @@ impl TicketContextState {
     }
 
     pub fn open_create(&mut self, default_column: Option<&str>) {
-        self.create_emp_name.set("CurrentUser".to_string());
-        self.create_employee_code.set("EMP-1001".to_string());
-        self.create_email_address.set("admin@taskflow.internal".to_string());
+        self.create_emp_name.set(String::new());
+        self.create_employee_code.set("11135".to_string());
+        self.create_email_address.set("it.support@bpsl.net".to_string());
         self.create_category.set("General".to_string());
         self.create_subject.set(String::new());
         self.create_problem_description.set(String::new());
         self.create_attachment_name.set(String::new());
         self.create_attachment_url.set(String::new());
         self.create_priority.set("Medium".to_string());
-        self.create_assigned_to.set("GR".to_string());
+        self.create_assigned_to.set("IT Support".to_string());
         self.create_customer.set("Internal".to_string());
         self.create_time_spent.set(0.0);
         self.create_activities.set("Ticket created".to_string());
@@ -1391,7 +1397,10 @@ pub fn Tickets() -> Element {
     use_effect(move || {
         if let Some(sync) = db_sync {
             let _ = sync();
-            tickets.set(initial_tickets());
+            let new_list = initial_tickets();
+            if *tickets.peek() != new_list {
+                tickets.set(new_list);
+            }
         }
     });
 
@@ -1432,16 +1441,16 @@ pub fn Tickets() -> Element {
     let mut edit_status = use_signal(|| "Pending".to_string());
 
     let mut is_create_open = use_signal(|| false);
-    let create_emp_name = use_signal(|| "CurrentUser".to_string());
-    let create_employee_code = use_signal(|| "EMP-1001".to_string());
-    let create_email_address = use_signal(|| "admin@taskflow.internal".to_string());
+    let create_emp_name = use_signal(String::new);
+    let create_employee_code = use_signal(|| "11135".to_string());
+    let create_email_address = use_signal(|| "it.support@bpsl.net".to_string());
     let mut create_category = use_signal(|| "General".to_string());
     let mut create_subject = use_signal(String::new);
     let mut create_problem_description = use_signal(String::new);
     let mut create_attachment_name = use_signal(String::new);
     let mut create_attachment_url = use_signal(String::new);
     let mut create_priority = use_signal(|| "Medium".to_string());
-    let mut create_assigned_to = use_signal(|| "GR".to_string());
+    let mut create_assigned_to = use_signal(|| "IT Support".to_string());
     let create_customer = use_signal(|| "Internal".to_string());
     let create_time_spent = use_signal(|| 0.0f64);
     let create_activities = use_signal(|| "Ticket created".to_string());
@@ -1604,9 +1613,14 @@ pub fn Tickets() -> Element {
             return;
         }
 
-        // Requester details automated from current active profile:
-        let emp_combined = "EMP-1001 (CurrentUser)".to_string();
-        let email_val = "admin@taskflow.internal".to_string();
+        // Requester details automated from configured profile:
+        let emp_code = "11135".to_string();
+        let (emp_combined, email_val) = crate::db::find_employee_by_code(&emp_code)
+            .map(|u| {
+                let email = if u.emp_email.is_empty() { "it.support@bpsl.net".to_string() } else { u.emp_email };
+                (format!("{} ({})", u.emp_code, u.emp_name), email)
+            })
+            .unwrap_or_else(|| ("11135".to_string(), "it.support@bpsl.net".to_string()));
 
         let cat_val = create_category.read().clone();
         let desc_val = create_problem_description.read().clone();
@@ -1888,7 +1902,7 @@ pub fn Tickets() -> Element {
         tickets.write().push(TicketItem::new(
             numeric_id,
             &employee,
-            "admin@taskflow.internal",
+            "it.support@bpsl.net",
             &category,
             &title,
             "Quick ticket created via column quick-add action",
@@ -2983,7 +2997,7 @@ pub fn Tickets() -> Element {
                                                 label { class: "text-[11px] font-semibold text-foreground", "Employee Name" }
                                                 Input {
                                                     class: "text-xs h-9 w-full",
-                                                    placeholder: "e.g. David Chen".to_string(),
+                                                    placeholder: "e.g. Employee Name".to_string(),
                                                     value: edit_emp_name.read().clone(),
                                                     oninput: move |e: FormEvent| edit_emp_name.set(e.value()),
                                                 }
@@ -2992,7 +3006,7 @@ pub fn Tickets() -> Element {
                                                 label { class: "text-[11px] font-semibold text-foreground", "Employee Code" }
                                                 Input {
                                                     class: "text-xs h-9 w-full",
-                                                    placeholder: "e.g. EMP-4019".to_string(),
+                                                    placeholder: "e.g. 10001".to_string(),
                                                     value: edit_employee_code.read().clone(),
                                                     oninput: move |e: FormEvent| edit_employee_code.set(e.value()),
                                                 }
@@ -3001,7 +3015,7 @@ pub fn Tickets() -> Element {
                                                 label { class: "text-[11px] font-semibold text-foreground", "Email Address" }
                                                 Input {
                                                     class: "text-xs h-9 w-full",
-                                                    placeholder: "e.g. name@corp.internal".to_string(),
+                                                    placeholder: "e.g. employee@bpsl.net".to_string(),
                                                     value: edit_email_address.read().clone(),
                                                     oninput: move |e: FormEvent| edit_email_address.set(e.value()),
                                                 }

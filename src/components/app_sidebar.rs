@@ -4,9 +4,8 @@
 
 use dioxus::prelude::*;
 
-use crate::components::ui::avatar::{Avatar, AvatarFallback};
 use crate::components::ui::sidebar::{
-    Sidebar, SidebarCollapsible, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent,
+    Sidebar, SidebarCollapsible, SidebarContent, SidebarGroup, SidebarGroupContent,
     SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuBadge, SidebarMenuButton,
     SidebarMenuItem, SidebarRail,
 };
@@ -62,10 +61,10 @@ pub fn AppSidebar() -> Element {
                         }
                         div { class: "sidebar-text flex min-w-0 flex-col",
                             span { class: "truncate text-xs font-bold leading-none text-sidebar-foreground",
-                                "TaskFlow"
+                                "BPSL IT Support"
                             }
                             span { class: "mt-0.5 truncate text-[10px] text-sidebar-foreground/60",
-                                "Workspace"
+                                "IT Support System"
                             }
                         }
                     }
@@ -154,26 +153,6 @@ pub fn AppSidebar() -> Element {
                     }
                 }
 
-            }
-
-            SidebarFooter {
-                div { class: "flex min-w-0 flex-col p-1",
-                    div { class: "flex min-w-0 items-center justify-between gap-2 rounded-lg p-1.5 transition-colors hover:bg-sidebar-accent/50 cursor-pointer",
-                        div { class: "flex min-w-0 items-center gap-2.5",
-                            div { class: "relative",
-                                Avatar {
-                                    class: "size-7.5 ring-1 ring-border/60",
-                                    AvatarFallback { class: "bg-primary text-xs font-bold text-primary-foreground", "GR" }
-                                }
-                                span { class: "absolute -bottom-0.5 -right-0.5 size-2 rounded-full bg-primary ring-2 ring-sidebar" }
-                            }
-                            div { class: "sidebar-text flex min-w-0 flex-col",
-                                span { class: "truncate text-xs font-semibold text-sidebar-foreground", "GamerRock" }
-                                span { class: "truncate text-[10px] text-sidebar-foreground/60", "developer@taskflow.dev" }
-                            }
-                        }
-                    }
-                }
             }
 
             SidebarRail {}

@@ -74,8 +74,8 @@ pub fn NotesPage() -> Element {
     let mut delete_id = use_signal(|| 0i64);
     let mut delete_title = use_signal(String::new);
 
-    // Read all notes from database whenever db_sync or local_revision changes
-    let notes_data: Vec<NoteItem> = {
+    // Read all notes from database only when db_sync or local_revision changes (memoized)
+    let notes_memo = use_memo(move || {
         let _ = local_revision();
         if let Some(sync) = db_sync {
             let _ = sync();
@@ -83,8 +83,9 @@ pub fn NotesPage() -> Element {
         crate::db::get_all_notes()
             .into_iter()
             .map(NoteItem::from_db)
-            .collect()
-    };
+            .collect::<Vec<NoteItem>>()
+    });
+    let notes_data = notes_memo();
 
     let total_count = notes_data.len();
 

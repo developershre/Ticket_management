@@ -50,171 +50,6 @@ fn priority_badge_variant(priority: &str) -> &'static str {
     }
 }
 
-fn seed_events(today: (u32, u32, u32)) -> Vec<CalEvent> {
-    let (y, m, d) = today;
-    let max_days = days_in_month(y, m);
-
-    let d_sub2 = d.saturating_sub(2).max(1);
-    let d_sub1 = d.saturating_sub(1).max(1);
-    let d_add1 = (d + 1).min(max_days);
-    let d_add2 = (d + 2).min(max_days);
-    let d_add3 = (d + 3).min(max_days);
-    let d_add5 = (d + 5).min(max_days);
-    let d_add7 = (d + 7).min(max_days);
-
-    vec![
-        CalEvent::new(
-            1,
-            "Q4 Sprint Planning & Retrospective",
-            (y, m, d),
-            Some("09:30 AM"),
-            Some("10:30 AM"),
-            EventColor::Blue,
-            "Engineering",
-            "Sprint 42 retrospective, velocity review, and sprint 43 backlog refinement with engineering leads.",
-            Some("Google Meet · meet.google.com/taskflow-sprint"),
-            &["David Chen", "Sarah Miller", "Gamer Rock"],
-            "High",
-        ),
-        CalEvent::new(
-            2,
-            "Security Architecture & TLS Audit",
-            (y, m, d),
-            Some("02:00 PM"),
-            Some("03:15 PM"),
-            EventColor::Purple,
-            "DevOps",
-            "Audit of TLS 1.3 cipher suites and certbot automated renewal pipeline for wildcard *.staging.corp.internal.",
-            Some("Room 402 (DevOps War Room)"),
-            &["Elena Rostova", "Robert Taylor"],
-            "Urgent",
-        ),
-        CalEvent::new(
-            3,
-            "Design System 2.0 Token Review",
-            (y, m, d),
-            Some("04:30 PM"),
-            Some("05:15 PM"),
-            EventColor::Purple,
-            "Design",
-            "Reviewing token consistency, dark-mode contrast ratios, and accessible calendar widget components.",
-            Some("Google Meet · meet.google.com/ux-sync"),
-            &["Lisa Wong", "Sarah Miller"],
-            "Medium",
-        ),
-        CalEvent {
-            id: 4,
-            title: "Production Release Window & QA Freeze".to_string(),
-            date: (y, m, d),
-            end_date: Some((y, m, d_add2)),
-            time: Some("All day".to_string()),
-            end_time: None,
-            color: EventColor::Red,
-            category: "Release & QA".to_string(),
-            description: "Code freeze for v2.4 core engine deployment; only P0 bugfix commits allowed to release branch."
-                .to_string(),
-            location: Some("CI/CD Deployment Pipeline".to_string()),
-            attendees: vec![
-                "Elena Rostova".to_string(),
-                "Gamer Rock".to_string(),
-                "David Chen".to_string(),
-            ],
-            priority: "Urgent".to_string(),
-        },
-        CalEvent::new(
-            5,
-            "Client Onboarding & Platform Demo",
-            (y, m, d_add1),
-            Some("11:00 AM"),
-            Some("12:00 PM"),
-            EventColor::Green,
-            "Client Demo",
-            "Walkthrough of TaskFlow IT management dashboard, ticketing workflow, and SLA escalation policies.",
-            Some("Zoom · meeting ID: 849 2011 4099"),
-            &["Mark Vance", "David Chen"],
-            "High",
-        ),
-        CalEvent::new(
-            6,
-            "MacBook Pro M3 Fleet Provisioning",
-            (y, m, d_add2),
-            Some("01:30 PM"),
-            Some("03:00 PM"),
-            EventColor::Amber,
-            "IT Operations",
-            "Staging standard development environment and MDM profile enrollment for incoming engineering cohort.",
-            Some("IT Lab B, Workstation 4"),
-            &["Sarah Miller", "James Smith"],
-            "Medium",
-        ),
-        CalEvent::new(
-            7,
-            "Database Failover & Replication Drill",
-            (y, m, d_sub2),
-            Some("10:00 AM"),
-            Some("11:30 AM"),
-            EventColor::Blue,
-            "DevOps",
-            "Simulating primary node failure in WAL replication cluster to verify zero-downtime leader election.",
-            Some("Server Room 2 / Slack #incident-response"),
-            &["Elena Rostova", "Robert Taylor"],
-            "High",
-        ),
-        CalEvent::new(
-            8,
-            "Active Directory Audit & Cleanup",
-            (y, m, d_sub1),
-            Some("03:30 PM"),
-            Some("04:30 PM"),
-            EventColor::Amber,
-            "IT Operations",
-            "Archiving inactive contractor credentials and verifying group policy permissions for finance dept.",
-            Some("IT Operations Desk"),
-            &["Robert Taylor", "James Smith"],
-            "Medium",
-        ),
-        CalEvent::new(
-            9,
-            "Weekly IT Operations All-Hands",
-            (y, m, d_add3),
-            Some("09:00 AM"),
-            Some("09:45 AM"),
-            EventColor::Green,
-            "General",
-            "Company-wide review of open tickets, resolution SLA metrics, and upcoming infrastructure maintenance.",
-            Some("Main Auditorium & Live Stream"),
-            &["David Chen", "Sarah Miller", "James Smith", "Elena Rostova"],
-            "Medium",
-        ),
-        CalEvent::new(
-            10,
-            "Vendor SOC2 Compliance Walkthrough",
-            (y, m, d_add5),
-            Some("02:30 PM"),
-            Some("04:00 PM"),
-            EventColor::Amber,
-            "Compliance",
-            "Annual external auditor review for SOC2 Type II trust principles and data retention controls.",
-            Some("Executive Boardroom A"),
-            &["Robert Taylor", "Gamer Rock"],
-            "High",
-        ),
-        CalEvent::new(
-            11,
-            "Floor 3 Network Switch Upgrade",
-            (y, m, d_add7),
-            Some("06:00 PM"),
-            Some("08:00 PM"),
-            EventColor::Blue,
-            "DevOps",
-            "Firmware update and redundant fiber uplink cutover for building 3 distribution switch.",
-            Some("IDF Closet 3-East"),
-            &["James Smith", "Elena Rostova"],
-            "Medium",
-        ),
-    ]
-}
-
 #[component]
 pub fn CalendarPage() -> Element {
     let today = crate::state::get_real_current_date();
@@ -228,8 +63,8 @@ pub fn CalendarPage() -> Element {
     let mut category_filter = use_signal(|| "All".to_string());
     let mut search_query = use_signal(String::new);
 
-    // Events reactive store
-    let mut events = use_signal(move || seed_events(today));
+    // Events reactive store — starts clean without dummy/mock entries
+    let mut events = use_signal(Vec::<CalEvent>::new);
 
     // Modals
     let mut detail_event = use_signal(|| None::<CalEvent>);
@@ -237,12 +72,12 @@ pub fn CalendarPage() -> Element {
 
     // Form fields for New Event modal
     let mut form_title = use_signal(String::new);
-    let mut form_category = use_signal(|| "Engineering".to_string());
+    let mut form_category = use_signal(|| "General".to_string());
     let mut form_time = use_signal(|| "10:00 AM".to_string());
     let mut form_end_time = use_signal(|| "11:00 AM".to_string());
     let mut form_location = use_signal(String::new);
     let mut form_priority = use_signal(|| "Medium".to_string());
-    let mut form_attendees = use_signal(|| "David Chen, Sarah Miller".to_string());
+    let mut form_attendees = use_signal(String::new);
     let mut form_description = use_signal(String::new);
     let mut form_day = use_signal(move || today.2);
 
@@ -407,6 +242,7 @@ pub fn CalendarPage() -> Element {
         view_month.set(target_d.1);
         form_day.set(target_d.2);
         form_title.set(String::new());
+        form_attendees.set(String::new());
         form_location.set(String::new());
         form_description.set(String::new());
         is_new_event_open.set(true);
@@ -871,7 +707,7 @@ pub fn CalendarPage() -> Element {
                                 label { class: "text-xs font-semibold text-foreground", "Participants (comma-separated)" }
                                 input {
                                     r#type: "text",
-                                    placeholder: "David Chen, Sarah Miller, Gamer Rock",
+                                    placeholder: "e.g. Employee Name, Code",
                                     class: "h-8 rounded-md border border-border/80 bg-card px-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none",
                                     value: "{form_attendees}",
                                     oninput: move |e| form_attendees.set(e.value()),

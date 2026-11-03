@@ -112,10 +112,10 @@ pub fn Fab() -> Element {
     let mut ticket_attachment_url = use_signal(String::new);
 
     // Reminder 12-field signals
-    let mut reminder_emp_code = use_signal(|| "EMP-1001".to_string());
-    let mut reminder_emp_name = use_signal(|| "Gamer Rock".to_string());
-    let mut reminder_email = use_signal(|| "admin@taskflow.internal".to_string());
-    let mut reminder_category = use_signal(|| "Engineering".to_string());
+    let mut reminder_emp_code = use_signal(String::new);
+    let mut reminder_emp_name = use_signal(String::new);
+    let mut reminder_email = use_signal(String::new);
+    let mut reminder_category = use_signal(|| "General".to_string());
     let mut reminder_send_at = use_signal(|| "Today · 2:00 PM".to_string());
     let mut reminder_status = use_signal(|| "Pending".to_string());
     let mut reminder_email_sent_at = use_signal(|| "Not sent yet".to_string());
@@ -133,10 +133,10 @@ pub fn Fab() -> Element {
         ticket_attachment_name.write().clear();
         ticket_attachment_url.write().clear();
 
-        reminder_emp_code.set("EMP-1001".to_string());
-        reminder_emp_name.set("Gamer Rock".to_string());
-        reminder_email.set("admin@taskflow.internal".to_string());
-        reminder_category.set("Engineering".to_string());
+        reminder_emp_code.write().clear();
+        reminder_emp_name.write().clear();
+        reminder_email.write().clear();
+        reminder_category.set("General".to_string());
         reminder_send_at.set("Today · 2:00 PM".to_string());
         reminder_status.set("Pending".to_string());
         reminder_email_sent_at.set("Not sent yet".to_string());
@@ -355,7 +355,7 @@ pub fn Fab() -> Element {
                                     label { class: "text-[11px] font-medium text-foreground", "Employee Code" }
                                     Input {
                                         class: "text-xs h-8",
-                                        placeholder: "EMP-1001".to_string(),
+                                        placeholder: "e.g. 10001".to_string(),
                                         value: reminder_emp_code.read().clone(),
                                         oninput: move |e: FormEvent| reminder_emp_code.set(e.value()),
                                     }
@@ -364,7 +364,7 @@ pub fn Fab() -> Element {
                                     label { class: "text-[11px] font-medium text-foreground", "Employee Name" }
                                     Input {
                                         class: "text-xs h-8",
-                                        placeholder: "Gamer Rock".to_string(),
+                                        placeholder: "e.g. Employee Name".to_string(),
                                         value: reminder_emp_name.read().clone(),
                                         oninput: move |e: FormEvent| reminder_emp_name.set(e.value()),
                                     }
@@ -373,7 +373,7 @@ pub fn Fab() -> Element {
                                     label { class: "text-[11px] font-medium text-foreground", "Email Address" }
                                     Input {
                                         class: "text-xs h-8",
-                                        placeholder: "admin@taskflow.internal".to_string(),
+                                        placeholder: "e.g. employee@bpsl.net".to_string(),
                                         value: reminder_email.read().clone(),
                                         oninput: move |e: FormEvent| reminder_email.set(e.value()),
                                     }
@@ -485,15 +485,15 @@ pub fn Fab() -> Element {
                             match current_kind {
                                 QuickKind::Ticket => {
                                     let input = crate::db::NewTicketInput {
-                                        employee_code: "EMP-1001 (CurrentUser)".to_string(),
-                                        email_address: "admin@taskflow.internal".to_string(),
+                                        employee_code: "11135".to_string(),
+                                        email_address: "it.support@bpsl.net".to_string(),
                                         category: ticket_category.read().clone(),
                                         subject: title.clone(),
                                         problem_description: detail.clone(),
                                         attachment_name: ticket_attachment_name.read().clone(),
                                         attachment_url: ticket_attachment_url.read().clone(),
                                         priority: ticket_priority.read().clone(),
-                                        assigned_to: "GR".to_string(),
+                                        assigned_to: "IT Support".to_string(),
                                         customer: "Internal".to_string(),
                                         kanban_state: "Pending".to_string(),
                                         stage: "Triage".to_string(),

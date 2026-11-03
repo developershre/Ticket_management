@@ -1,4 +1,4 @@
-//! Theme management system for TaskFlow.
+//! Theme management system for BPSL IT Support.
 //!
 //! Fetches the system theme directly from the operating system (GNOME/FreeDesktop,
 //! KDE, macOS, Windows, and Tao desktop window) and applies it properly to the
@@ -105,7 +105,11 @@ pub fn fetch_system_is_dark() -> bool {
     // ----------------------------------------------------
     #[cfg(target_os = "windows")]
     {
-        if let Ok(output) = std::process::Command::new("reg")
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let mut cmd = std::process::Command::new("reg");
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        if let Ok(output) = cmd
             .args([
                 "query",
                 r"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
@@ -270,7 +274,7 @@ pub fn ThemeProvider(props: ThemeProviderProps) -> Element {
         spawn(async move {
             let mut eval = document::eval(
                 r#"
-                const saved = localStorage.getItem('taskflow-theme') || '';
+                const saved = localStorage.getItem('bpsl-theme') || localStorage.getItem('taskflow-theme') || '';
                 dioxus.send(saved);
                 "#,
             );
@@ -284,15 +288,15 @@ pub fn ThemeProvider(props: ThemeProviderProps) -> Element {
         });
     });
 
-    // Background listener: poll OS system theme directly every 1.5 seconds so if the user
-    // switches their OS theme, the app adapts in real-time!
+    // Background listener: poll OS system theme gracefully every 30 seconds so if the user
+    // switches their OS theme, the app adapts without consuming background CPU.
     #[cfg(feature = "desktop")]
     use_hook(|| {
         spawn(async move {
             loop {
-                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
                 let current_sys_dark = fetch_system_is_dark();
-                if *system_dark.read() != current_sys_dark {
+                if *system_dark.peek() != current_sys_dark {
                     system_dark.set(current_sys_dark);
                 }
             }
@@ -323,7 +327,7 @@ pub fn ThemeProvider(props: ThemeProviderProps) -> Element {
                 const dark = {is_dark};
                 const mode = "{mode_str}";
                 try {{
-                    localStorage.setItem("taskflow-theme", mode);
+                    localStorage.setItem("bpsl-theme", mode);
                 }} catch (e) {{}}
 
                 const root = document.documentElement;
