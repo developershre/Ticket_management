@@ -284,6 +284,13 @@ pub fn Employees() -> Element {
         target_div,
     });
 
+    // Fetch latest employee directory from Google Sheets in real-time on mount
+    use_effect(move || {
+        spawn(async move {
+            let _ = crate::sync::pull_employees_now().await;
+        });
+    });
+
     let (employees, department_options, division_options) = {
         let memo = use_memo(move || {
             let _ = local_revision();

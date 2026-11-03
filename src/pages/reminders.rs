@@ -421,6 +421,13 @@ pub fn Reminders() -> Element {
         }
     });
 
+    // Fetch employee directory in real-time on mount
+    use_effect(move || {
+        spawn(async move {
+            let _ = crate::sync::pull_employees_now().await;
+        });
+    });
+
     // Drag-and-drop reactive state
     let mut dragged_id = use_signal(|| Option::<String>::None);
     let mut drag_over_id = use_signal(|| Option::<String>::None);
@@ -430,11 +437,15 @@ pub fn Reminders() -> Element {
     let mut is_detail_open = use_signal(|| false);
     let mut active_reminder = use_signal(|| Option::<ReminderItem>::None);
 
-    // Form inputs for Create Reminder dialog (essential fields only)
-    let mut new_category = use_signal(|| "Engineering".to_string());
-    let mut new_message = use_signal(String::new);
-    let mut new_send_at = use_signal(|| "Today · 2:00 PM".to_string());
-    let mut new_ticket_id = use_signal(String::new);
+    // Form inputs for Create Reminder dialog (matching the exact Create Support Ticket form)
+    let mut new_employee_code = use_signal(String::new);
+    let mut new_email_address = use_signal(String::new);
+    let mut new_employee_name = use_signal(String::new);
+    let mut new_category = use_signal(|| "Select category".to_string());
+    let mut new_priority = use_signal(|| "Low".to_string());
+    let mut new_subject = use_signal(String::new);
+    let mut new_problem_description = use_signal(String::new);
+    let directory_employees = crate::db::get_all_employees();
 
     let toast = use_context::<ToastState>();
 
@@ -443,39 +454,70 @@ pub fn Reminders() -> Element {
 
     // Open create dialog
     let mut open_create = move || {
-        new_category.set("Engineering".to_string());
-        new_message.write().clear();
-        new_send_at.set("Today · 2:00 PM".to_string());
-        new_ticket_id.write().clear();
+        new_employee_code.write().clear();
+        new_email_address.write().clear();
+        new_employee_name.write().clear();
+        new_category.set("Select category".to_string());
+        new_priority.set("Low".to_string());
+        new_subject.write().clear();
+        new_problem_description.write().clear();
         is_create_open.set(true);
     };
 
-    // Save newly created reminder (auto-populates recipient profile and status)
+    // Save newly created reminder / ticket
     let mut save_new_reminder = move || {
-        let msg = new_message.read().trim().to_string();
-        if msg.is_empty() {
-            toast.error("Required Field", "Please provide a reminder message.");
+        let emp_code = new_employee_code.read().trim().to_string();
+        if emp_code.is_empty() {
+            toast.error("Validation Error", "Please enter Employee Code");
             return;
         }
 
-        let emp_code = "11135".to_string();
-        let (emp_name, email_address) = crate::db::find_employee_by_code(&emp_code)
-            .map(|u| {
-                let email = if u.emp_email.is_empty() { "it.support@bpsl.net".to_string() } else { u.emp_email };
-                (u.emp_name, email)
-            })
-            .unwrap_or_else(|| ("IT Support".to_string(), "it.support@bpsl.net".to_string()));
+        let email_val = new_email_address.read().trim().to_string();
+        if email_val.is_empty() {
+            toast.error("Validation Error", "Please enter Email Address");
+            return;
+        }
+
+        let cat_val = new_category.read().trim().to_string();
+        if cat_val.is_empty() || cat_val == "Select category" {
+            toast.error("Validation Error", "Please select a Category");
+            return;
+        }
+
+        let subj_val = new_subject.read().trim().to_string();
+        if subj_val.is_empty() {
+            toast.error("Validation Error", "Please enter Subject");
+            return;
+        }
+
+        let desc_val = new_problem_description.read().trim().to_string();
+        if desc_val.is_empty() {
+            toast.error("Validation Error", "Please describe the problem");
+            return;
+        }
+
+        let mut emp_name = new_employee_name.read().trim().to_string();
+        if emp_name.is_empty() {
+            if let Some(u) = crate::db::find_employee_by_code(&emp_code) {
+                emp_name = u.emp_name;
+            } else {
+                emp_name = emp_code.clone();
+            }
+        }
+
+        let reminder_msg = format!("{subj_val}: {desc_val}");
+        let now_str = crate::state::format_utc(crate::sync::now_epoch());
 
         let input = crate::db::NewReminderInput {
-            employee_code: emp_code,
-            employee_name: emp_name,
-            email_address: email_address,
-            service_category: new_category.read().clone(),
-            reminder_message: msg.clone(),
-            send_at: new_send_at.read().clone(),
+            employee_code: emp_code.clone(),
+            employee_name: emp_name.clone(),
+            email_address: email_val.clone(),
+            service_category: cat_val.clone(),
+            reminder_message: reminder_msg,
+            send_at: now_str.clone(),
             status: "Pending".to_string(),
             email_sent_at: "Not sent yet".to_string(),
-            ticket_id: new_ticket_id.read().clone(),
+            ticket_id: String::new(),
         };
 
         match crate::db::create_reminder_full(&input) {
@@ -503,7 +545,7 @@ pub fn Reminders() -> Element {
                 if let Some(mut sync) = db_sync {
                     sync.with_mut(|r| r.0 += 1);
                 }
-                toast.success("Reminder Created", format!("REM-{new_id}: \"{msg}\" created successfully"));
+                toast.success("Ticket Submitted", format!("Ticket for {emp_name} ({emp_code}) submitted successfully"));
                 is_create_open.set(false);
             }
             Err(e) => {
@@ -557,20 +599,31 @@ pub fn Reminders() -> Element {
             let target_id = if !server_id.is_empty() {
                 server_id
             } else {
-                format!("REM-{rem_id}")
+                item.id.clone()
             };
+            let now_str = crate::state::format_utc(crate::sync::now_epoch());
+            // Mark as sent locally in SQLite so the status updates immediately
+            let _ = crate::db::set_reminder_sent(rem_id, &now_str);
+            if let Some(mut sync) = db_sync {
+                sync.with_mut(|r| r.0 += 1);
+            }
+
             match crate::sync::send_reminder_now_immediate(&target_id, false).await {
                 Ok(_) => {
                     toast.success(
                         "Reminder Email Sent",
                         format!("Secure ticket form link sent for \"{title}\" ({target_id})"),
                     );
-                    if let Some(mut sync) = db_sync {
-                        sync.with_mut(|r| r.0 += 1);
-                    }
                 }
                 Err(e) => {
-                    toast.error("Send Failed", format!("Failed to send reminder email: {e}"));
+                    if e.to_string().contains("SCHEMA_MISMATCH") {
+                        toast.info(
+                            "Marked as Sent (Local)",
+                            "Reminder marked as sent locally. The Google Sheet 'Reminders' tab headers need to be aligned with the Apps Script schema.",
+                        );
+                    } else {
+                        toast.error("Send Failed", format!("Failed to send reminder email: {e}"));
+                    }
                 }
             }
         });
@@ -1070,119 +1123,193 @@ pub fn Reminders() -> Element {
     }
 
         // ============================================================
-        // Create Reminder Dialog (Streamlined Essential Inputs)
+        // Create Reminder / Support Ticket Dialog (Matching exact form)
         // ============================================================
         if is_create_open() {
             Dialog {
                 open: Some(is_create_open),
                 DialogContent {
-                    class: "max-w-xl max-h-[90vh] overflow-y-auto",
+                    class: "max-w-2xl max-h-[92vh] overflow-y-auto p-6 sm:p-8 rounded-xl bg-card border border-border shadow-2xl",
                     DialogHeader {
-                        div { class: "flex items-center gap-2",
-                            div { class: "flex size-8 items-center justify-center rounded bg-primary/10 text-primary",
-                                BellIcon { class: "size-4" }
-                            }
-                            div {
-                                DialogTitle { "Create Reminder" }
-                                DialogDescription { "Schedule a reminder notification. Recipient profile and automated dispatch tracking are handled automatically." }
-                            }
+                        class: "space-y-1 pb-3 text-left",
+                        DialogTitle { class: "text-2xl font-bold tracking-tight text-foreground",
+                            "Create Support Ticket"
+                        }
+                        DialogDescription { class: "text-sm text-muted-foreground",
+                            "Enter your employee details and describe the issue."
                         }
                     }
 
-                    div { class: "flex flex-col gap-3.5 py-2 text-xs",
-                        // 1. Reminder Message (Required)
-                        div { class: "flex flex-col gap-1",
-                            label { class: "text-xs font-semibold text-foreground flex items-center gap-1",
-                                "Reminder Message"
-                                span { class: "text-destructive", "*" }
-                            }
-                            textarea {
-                                class: "min-h-[75px] rounded-md border border-input bg-card p-2 text-xs text-foreground focus:border-primary focus:outline-none",
-                                placeholder: "e.g. Renew domain + SSL certificates before expiry...",
-                                value: "{new_message}",
-                                oninput: move |e: FormEvent| new_message.set(e.value()),
-                            }
-                        }
-
-                        // 2. Service Category & Linked Ticket ID
-                        div { class: "grid grid-cols-1 sm:grid-cols-2 gap-3",
-                            div { class: "flex flex-col gap-1",
-                                label { class: "text-[11px] font-semibold text-foreground", "Service / Category" }
-                                select {
-                                    class: "h-9 rounded-md border border-input bg-card px-2 text-xs text-foreground focus:border-primary focus:outline-none cursor-pointer",
-                                    value: "{new_category}",
-                                    onchange: move |e: FormEvent| new_category.set(e.value()),
-                                    option { value: "Engineering", "Engineering" }
-                                    option { value: "Meetings", "Meetings" }
-                                    option { value: "Ops", "Ops" }
-                                    option { value: "Reporting", "Reporting" }
-                                    option { value: "Planning", "Planning" }
-                                    option { value: "Infrastructure", "Infrastructure" }
-                                    option { value: "General", "General" }
+                    div { class: "flex flex-col gap-4 py-2 text-sm",
+                        // Row 0: Select Employee feature from table
+                        div { class: "flex flex-col gap-1.5",
+                            label { class: "text-xs font-semibold text-foreground flex items-center justify-between",
+                                span { "Select Employee from Directory" }
+                                span { class: "text-[10px] text-muted-foreground font-normal",
+                                    "{directory_employees.len()} employees loaded"
                                 }
                             }
-                            div { class: "flex flex-col gap-1",
-                                label { class: "text-[11px] font-semibold text-foreground", "Ticket ID (optional link)" }
-                                Input {
-                                    class: "text-xs h-9 w-full font-mono",
-                                    placeholder: "e.g. IT-1 or leave blank".to_string(),
-                                    value: new_ticket_id.read().clone(),
-                                    oninput: move |e: FormEvent| new_ticket_id.set(e.value()),
-                                }
-                            }
-                        }
-
-                        // 3. Scheduling & Delivery Timing
-                        div { class: "rounded-md border border-border/70 bg-muted/20 p-3 flex flex-col gap-2",
-                            label { class: "text-[11px] font-semibold text-foreground flex items-center gap-1.5",
-                                ClockIcon { class: "size-3 text-primary" }
-                                "Schedule & Timing"
-                            }
-                            Input {
-                                class: "text-xs h-9 w-full",
-                                placeholder: "e.g. Today · 2:00 PM".to_string(),
-                                value: new_send_at.read().clone(),
-                                oninput: move |e: FormEvent| new_send_at.set(e.value()),
-                            }
-                            div { class: "flex flex-wrap gap-1.5 pt-0.5",
-                                for preset in ["Today · 2:00 PM", "Tomorrow · 9:00 AM", "Friday · 5:00 PM", "Mon · 10:00 AM"] {
-                                    {
-                                        let preset_str = preset.to_string();
-                                        rsx! {
-                                            button {
-                                                key: "{preset}",
-                                                r#type: "button",
-                                                class: "text-[10px] px-2 py-0.5 rounded border border-border/70 hover:bg-muted/80 text-muted-foreground hover:text-foreground cursor-pointer transition-colors",
-                                                onclick: move |_| new_send_at.set(preset_str.clone()),
-                                                "{preset}"
+                            select {
+                                class: "h-10 rounded-md border border-input bg-card px-3 text-sm text-foreground focus:border-primary focus:ring-1 focus:ring-primary/20 focus:outline-none cursor-pointer",
+                                value: "{new_employee_code}",
+                                onchange: move |e: FormEvent| {
+                                    let val = e.value();
+                                    new_employee_code.set(val.clone());
+                                    let trimmed = val.trim();
+                                    if !trimmed.is_empty() {
+                                        if let Some(emp) = crate::db::find_employee_by_code(trimmed) {
+                                            new_employee_name.set(emp.emp_name);
+                                            if !emp.emp_email.is_empty() {
+                                                new_email_address.set(emp.emp_email);
                                             }
                                         }
+                                    }
+                                },
+                                option { value: "", "-- Choose an Employee (auto-fills code & details) --" }
+                                for emp in directory_employees.iter() {
+                                    option {
+                                        key: "{emp.emp_id}",
+                                        value: "{emp.emp_code}",
+                                        "{emp.emp_code} - {emp.emp_name} ({emp.department})"
                                     }
                                 }
                             }
                         }
 
-                        // 4. Automated System Defaults Summary Banner
-                        div { class: "flex flex-wrap items-center justify-between gap-1.5 p-2.5 rounded bg-muted/30 border border-border/50 text-[10px] text-muted-foreground font-mono",
-                            span { class: "font-sans font-medium text-foreground", "⚡ Auto-populated:" }
-                            span { "Recipient: Gamer Rock (EMP-1001)" }
-                            span { "•" }
-                            span { "Status: Pending" }
-                            span { "•" }
-                            span { "Auto email dispatch" }
+                        // Row 1: Employee Code * | Email Address *
+                        div { class: "grid grid-cols-1 sm:grid-cols-2 gap-4",
+                            div { class: "flex flex-col gap-1.5",
+                                label { class: "text-xs font-semibold text-foreground flex items-center gap-0.5",
+                                    "Employee Code"
+                                    span { class: "text-destructive font-bold", " *" }
+                                }
+                                Input {
+                                    class: "h-10 text-sm rounded-md border border-input bg-card px-3 focus:border-primary focus:ring-1 focus:ring-primary/20",
+                                    placeholder: "".to_string(),
+                                    value: new_employee_code.read().clone(),
+                                    oninput: move |e: FormEvent| {
+                                        let val = e.value();
+                                        new_employee_code.set(val.clone());
+                                        let trimmed = val.trim();
+                                        if !trimmed.is_empty() {
+                                            if let Some(emp) = crate::db::find_employee_by_code(trimmed) {
+                                                new_employee_name.set(emp.emp_name);
+                                                if !emp.emp_email.is_empty() {
+                                                    new_email_address.set(emp.emp_email);
+                                                }
+                                            }
+                                        }
+                                    },
+                                }
+                            }
+                            div { class: "flex flex-col gap-1.5",
+                                label { class: "text-xs font-semibold text-foreground flex items-center gap-0.5",
+                                    "Email Address"
+                                    span { class: "text-destructive font-bold", " *" }
+                                }
+                                Input {
+                                    class: "h-10 text-sm rounded-md border border-input bg-card px-3 focus:border-primary focus:ring-1 focus:ring-primary/20",
+                                    placeholder: "".to_string(),
+                                    value: new_email_address.read().clone(),
+                                    oninput: move |e: FormEvent| new_email_address.set(e.value()),
+                                }
+                            }
+                        }
+
+                        // Row 2: Employee Name (Automatically filled from Employee sheet)
+                        div { class: "flex flex-col gap-1.5",
+                            label { class: "text-xs font-semibold text-foreground",
+                                "Employee Name"
+                            }
+                            Input {
+                                class: "h-10 text-sm rounded-md border border-input bg-card px-3 focus:border-primary focus:ring-1 focus:ring-primary/20",
+                                placeholder: "Automatically filled from Employee sheet".to_string(),
+                                value: new_employee_name.read().clone(),
+                                oninput: move |e: FormEvent| new_employee_name.set(e.value()),
+                            }
+                        }
+
+                        // Row 3: Category * | Priority
+                        div { class: "grid grid-cols-1 sm:grid-cols-2 gap-4",
+                            div { class: "flex flex-col gap-1.5",
+                                label { class: "text-xs font-semibold text-foreground flex items-center gap-0.5",
+                                    "Category"
+                                    span { class: "text-destructive font-bold", " *" }
+                                }
+                                select {
+                                    class: "h-10 rounded-md border border-input bg-card px-3 text-sm text-foreground focus:border-primary focus:ring-1 focus:ring-primary/20 focus:outline-none cursor-pointer",
+                                    value: "{new_category}",
+                                    onchange: move |e: FormEvent| new_category.set(e.value()),
+                                    option { value: "Select category", disabled: true, "Select category" }
+                                    option { value: "IT Support", "IT Support" }
+                                    option { value: "Hardware", "Hardware" }
+                                    option { value: "Software", "Software" }
+                                    option { value: "Network", "Network" }
+                                    option { value: "Access & Accounts", "Access & Accounts" }
+                                    option { value: "Security", "Security" }
+                                    option { value: "Infrastructure", "Infrastructure" }
+                                    option { value: "General", "General" }
+                                    option { value: "Other", "Other" }
+                                }
+                            }
+                            div { class: "flex flex-col gap-1.5",
+                                label { class: "text-xs font-semibold text-foreground",
+                                    "Priority"
+                                }
+                                select {
+                                    class: "h-10 rounded-md border border-input bg-card px-3 text-sm text-foreground focus:border-primary focus:ring-1 focus:ring-primary/20 focus:outline-none cursor-pointer",
+                                    value: "{new_priority}",
+                                    onchange: move |e: FormEvent| new_priority.set(e.value()),
+                                    option { value: "Low", "Low" }
+                                    option { value: "Medium", "Medium" }
+                                    option { value: "High", "High" }
+                                    option { value: "Critical", "Critical" }
+                                }
+                            }
+                        }
+
+                        // Row 4: Subject *
+                        div { class: "flex flex-col gap-1.5",
+                            label { class: "text-xs font-semibold text-foreground flex items-center gap-0.5",
+                                "Subject"
+                                span { class: "text-destructive font-bold", " *" }
+                            }
+                            Input {
+                                class: "h-10 text-sm rounded-md border border-input bg-card px-3 focus:border-primary focus:ring-1 focus:ring-primary/20",
+                                placeholder: "".to_string(),
+                                value: new_subject.read().clone(),
+                                oninput: move |e: FormEvent| new_subject.set(e.value()),
+                            }
+                        }
+
+                        // Row 5: Problem Description *
+                        div { class: "flex flex-col gap-1.5",
+                            label { class: "text-xs font-semibold text-foreground flex items-center gap-0.5",
+                                "Problem Description"
+                                span { class: "text-destructive font-bold", " *" }
+                            }
+                            textarea {
+                                class: "min-h-[130px] rounded-md border border-input bg-card p-3 text-sm text-foreground focus:border-primary focus:ring-1 focus:ring-primary/20 focus:outline-none resize-y",
+                                placeholder: "".to_string(),
+                                value: "{new_problem_description}",
+                                oninput: move |e: FormEvent| new_problem_description.set(e.value()),
+                            }
                         }
                     }
 
                     DialogFooter {
-                        Button {
-                            variant: "outline",
+                        class: "flex items-center justify-start gap-3 pt-3",
+                        button {
+                            r#type: "button",
+                            class: "inline-flex items-center justify-center rounded-md bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-2.5 text-sm shadow-xs transition-colors cursor-pointer",
+                            onclick: move |_| save_new_reminder(),
+                            "Submit Ticket"
+                        }
+                        button {
+                            r#type: "button",
+                            class: "inline-flex items-center justify-center rounded-md border border-border bg-card hover:bg-muted text-foreground font-medium px-4 py-2.5 text-sm transition-colors cursor-pointer",
                             onclick: move |_| is_create_open.set(false),
                             "Cancel"
-                        }
-                        Button {
-                            variant: "default",
-                            onclick: move |_| save_new_reminder(),
-                            "Create Reminder"
                         }
                     }
                 }

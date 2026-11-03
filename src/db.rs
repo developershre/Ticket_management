@@ -1245,9 +1245,9 @@ pub fn get_all_reminders() -> Vec<DbReminder> {
         r#"
         SELECT
             reminder_id,
-            COALESCE(employee_code, '11135'),
-            COALESCE(employee_name, 'IT Support'),
-            COALESCE(email_address, 'it.support@bpsl.net'),
+            COALESCE(employee_code, ''),
+            COALESCE(employee_name, ''),
+            COALESCE(email_address, ''),
             COALESCE(service_category, 'General'),
             reminder_message,
             COALESCE(send_at, 'Today · 2:00 PM'),
@@ -1788,6 +1788,16 @@ pub fn mark_op_superseded(op_id: i64) -> Result<()> {
     Ok(())
 }
 
+/// Resets any previously failed operations in sync_queue to pending so they can retry.
+pub fn reset_failed_sync_ops() -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE sync_queue SET status = 'pending', next_attempt_at = NULL, last_error = NULL WHERE status = 'failed'",
+        [],
+    )?;
+    Ok(())
+}
+
 /// Merge additional fields into an op's payload (used when collapsing
 /// duplicate ops for the same ticket before execution).
 pub fn merge_op_payload(op_id: i64, patch: &Value) -> Result<()> {
@@ -2041,7 +2051,10 @@ pub fn ticket_create_payload(local_ticket_id: i64) -> Option<Value> {
             if !att_name.is_empty() { map.insert("attachment_name".to_string(), json!(att_name)); }
             if !att_url.is_empty() { map.insert("attachment_url".to_string(), json!(att_url)); }
             if time_spent > 0.0 { map.insert("time_spent".to_string(), json!(time_spent)); }
-            if !activities.is_empty() { map.insert("activities_text".to_string(), json!(activities)); }
+            if !activities.is_empty() {
+                map.insert("activities".to_string(), json!(activities));
+                map.insert("activities_text".to_string(), json!(activities));
+            }
             if !my_act.is_empty() { map.insert("my_activity".to_string(), json!(my_act)); }
             if !deadline.is_empty() { map.insert("deadline".to_string(), json!(deadline)); }
             if !sla_status.is_empty() { map.insert("sla_status".to_string(), json!(sla_status)); }
@@ -2382,12 +2395,18 @@ pub fn reminder_create_payload(local_reminder_id: i64) -> Option<Value> {
 
     let value = stmt
         .query_row(params![local_reminder_id], |r| {
-            Ok(json!({
-                "employee_code": r.get::<_, String>(0)?,
-                "service_category": r.get::<_, String>(1)?,
-                "reminder_message": r.get::<_, String>(2)?,
-                "send_at": r.get::<_, String>(3)?,
-            }))
+            let emp_code: String = r.get(0)?;
+            let cat: String = r.get(1)?;
+            let msg: String = r.get(2)?;
+            let send_at: String = r.get(3)?;
+
+            let mut map = serde_json::Map::new();
+            map.insert("employee_code".to_string(), json!(emp_code));
+            map.insert("service_category".to_string(), json!(cat));
+            map.insert("reminder_message".to_string(), json!(msg));
+            map.insert("send_at".to_string(), json!(send_at));
+
+            Ok(Value::Object(map))
         })
         .optional()
         .ok()

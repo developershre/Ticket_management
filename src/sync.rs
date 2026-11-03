@@ -5,7 +5,7 @@
 //! * **Single worker thread**, independent of the Dioxus UI lifecycle —
 //!   one cycle at a time, never overlapping.
 //! * Wakes **immediately** after local changes ([`kick`]), otherwise runs
-//!   every [`CYCLE_SECS`] seconds (120 s). Between cycles the thread
+//!   every [`CYCLE_SECS`] seconds (20 s). Between cycles the thread
 //!   sleeps on a condvar — no CPU usage.
 //! * **Push phase**: executes queued operations oldest-first, coalescing
 //!   duplicate ops per ticket into a single API request.
@@ -31,11 +31,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::api::{ApiClient, ApiConfig, ApiError, ServerReminder, ServerTicket};
 use crate::db::{self, SyncOp};
 
-/// Periodic sync interval.
-pub const CYCLE_SECS: u64 = 120;
+/// Periodic sync interval (seconds). Reduced to 20s for high-responsiveness.
+pub const CYCLE_SECS: u64 = 20;
+/// Debounce window: wait 60ms after a local change before updating all data in Google Sheets.
+pub const DEBOUNCE_MS: u64 = 60;
 /// Minimum gap between two pull phases (local edits trigger extra cycles;
 /// pulls are rate-limited so rapid edits don't spam `tickets.list`).
-const MIN_PULL_GAP_SECS: i64 = 20;
+const MIN_PULL_GAP_SECS: i64 = 5;
 /// Maximum operations executed per cycle.
 const OPS_PER_CYCLE: i64 = 50;
 /// `tickets.list` page size (API max is 200).
@@ -188,7 +190,7 @@ fn worker_loop() {
 
     let mut deadline = Instant::now() + Duration::from_secs(CYCLE_SECS);
     loop {
-        {
+        let was_kicked = {
             let mut wake = lock(&WAKE);
             while !*wake {
                 let now = Instant::now();
@@ -200,8 +202,37 @@ fn worker_loop() {
                     .unwrap_or_else(|e| e.into_inner());
                 wake = guard;
             }
+            let kicked = *wake;
             *wake = false;
+            kicked
+        };
+
+        // When a change is made in the app, wait 60ms to coalesce and then update all data in Google Sheets
+        if was_kicked {
+            let debounce = Duration::from_millis(DEBOUNCE_MS);
+            let mut debounce_deadline = Instant::now() + debounce;
+            loop {
+                let mut wake = lock(&WAKE);
+                let now = Instant::now();
+                if now >= debounce_deadline {
+                    *wake = false;
+                    break;
+                }
+                let (guard, timeout_result) = WAKE_CV
+                    .wait_timeout(wake, debounce_deadline - now)
+                    .unwrap_or_else(|e| e.into_inner());
+                wake = guard;
+                if timeout_result.timed_out() {
+                    *wake = false;
+                    break;
+                }
+                if *wake {
+                    *wake = false;
+                    debounce_deadline = Instant::now() + debounce;
+                }
+            }
         }
+
         deadline = Instant::now() + Duration::from_secs(CYCLE_SECS);
         rt.block_on(run_cycle());
     }
@@ -231,7 +262,7 @@ fn ensure_client() -> Result<&'static ApiClient, String> {
     Ok(CLIENT.get_or_init(|| client))
 }
 
-fn now_epoch() -> i64 {
+pub fn now_epoch() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -265,21 +296,40 @@ pub async fn run_cycle() {
 
     // ---- Push: confirm local changes with the API ----
     let now = now_epoch();
-    let due = db::due_ops(now, OPS_PER_CYCLE).unwrap_or_default();
-    for op in merge_due_ops(due) {
-        let _ = db::mark_op_in_flight(op.op_id);
-        match execute_op(client, &op).await {
-            Ok(ExecOutcome::Synced) => {
-                let _ = db::mark_op_synced(op.op_id);
+    loop {
+        let due = db::due_ops(now, OPS_PER_CYCLE).unwrap_or_default();
+        if due.is_empty() {
+            break;
+        }
+        let merged = merge_due_ops(due);
+        if merged.is_empty() {
+            break;
+        }
+        for op in merged {
+            let _ = db::mark_op_in_flight(op.op_id);
+            match execute_op(client, &op).await {
+                Ok(ExecOutcome::Synced) => {
+                    let _ = db::mark_op_synced(op.op_id);
+                }
+                Ok(ExecOutcome::Superseded) => {
+                    let _ = db::mark_op_superseded(op.op_id);
+                }
+                Err(e) => {
+                    let is_schema_mismatch = matches!(&e, ApiError::Api { code, .. } if code == "SCHEMA_MISMATCH");
+                    if !is_schema_mismatch || op.retry_count == 0 {
+                        eprintln!("[sync execute_op ERROR] op={:?} entity={:?} err={}", op.op_type, op.entity_type, e);
+                    }
+                    let next = next_attempt_at(&op, &e);
+                    let _ = db::mark_op_error(op.op_id, &e.short(), e.is_retryable(), next);
+                    // Don't let a reminder schema error block ticket syncing in the same cycle
+                    if op.entity_type != "reminder" {
+                        cycle_error.get_or_insert_with(|| e.short());
+                    }
+                }
             }
-            Ok(ExecOutcome::Superseded) => {
-                let _ = db::mark_op_superseded(op.op_id);
-            }
-            Err(e) => {
-                let next = next_attempt_at(&op, &e);
-                let _ = db::mark_op_error(op.op_id, &e.short(), e.is_retryable(), next);
-                cycle_error.get_or_insert_with(|| e.short());
-            }
+        }
+        if cycle_error.is_some() {
+            break;
         }
     }
 
@@ -301,10 +351,8 @@ pub async fn run_cycle() {
         }
     }
 
-    // ---- Employee directory: pulled far less often (the sheet's 324
-    //      rows change rarely) — every 30 minutes, and always on the
-    //      first cycle after launch so the Employees page is populated.
-    const EMPLOYEE_PULL_GAP_SECS: i64 = 1800;
+    // ---- Employee directory: real-time sync with Google Sheets ----
+    const EMPLOYEE_PULL_GAP_SECS: i64 = 10;
     let last_emp_pull: i64 = db::sync_meta_get("last_employee_pull_at")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
@@ -313,13 +361,13 @@ pub async fn run_cycle() {
             Ok(count) => {
                 let _ = db::sync_meta_set("last_employee_pull_at", &now.to_string());
                 if count > 0 {
-                    // Bump the revision so the Employees page reloads.
+                    // Bump the revision so the Employees page and selectors reload.
                     with_status(|s| s.revision = s.revision.wrapping_add(1));
                 }
             }
             // Directory failure never fails the cycle — tickets synced.
             Err(e) => {
-                let backoff = if e.is_retryable() { 120 } else { 600 };
+                let backoff = if e.is_retryable() { 10 } else { 60 };
                 let next_attempt = now - EMPLOYEE_PULL_GAP_SECS + backoff;
                 let _ = db::sync_meta_set("last_employee_pull_at", &next_attempt.to_string());
                 eprintln!("[sync] employee pull failed: {}", e.short());
@@ -456,7 +504,8 @@ async fn execute_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutcome, ApiE
                     return Ok(ExecOutcome::Synced);
                 }
             }
-            let remote = client.tickets_create(&with_employee_code(client, &op.payload)).await?;
+            let sanitized = sanitize_ticket_payload(client, &op.payload);
+            let remote = client.tickets_create(&sanitized).await?;
             db::set_ticket_mapping(op.local_ticket_id, &remote.ticket_id, &remote.last_updated_on)?;
             Ok(ExecOutcome::Synced)
         }
@@ -473,12 +522,14 @@ async fn execute_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutcome, ApiE
                 let Some(row) = db::ticket_create_payload(op.local_ticket_id) else {
                     return Ok(ExecOutcome::Superseded); // row is gone
                 };
-                let remote = client.tickets_create(&with_employee_code(client, &row)).await?;
+                let sanitized = sanitize_ticket_payload(client, &row);
+                let remote = client.tickets_create(&sanitized).await?;
                 db::set_ticket_mapping(op.local_ticket_id, &remote.ticket_id, &remote.last_updated_on)?;
                 return Ok(ExecOutcome::Synced);
             };
 
-            match client.tickets_update(&server_id, &op.payload).await {
+            let sanitized = sanitize_ticket_payload(client, &op.payload);
+            match client.tickets_update(&server_id, &sanitized).await {
                 Ok(remote) => {
                     db::set_server_last_updated(op.local_ticket_id, &remote.last_updated_on)?;
                     Ok(ExecOutcome::Synced)
@@ -538,6 +589,111 @@ fn with_employee_code(client: &ApiClient, payload: &Value) -> Value {
     let mut out = payload.clone();
     if let Some(obj) = out.as_object_mut() {
         obj.insert("employee_code".to_string(), json!(code));
+    }
+    out
+}
+
+/// Maps internal Kanban status ("Pending", "InProgress", "Onhold", "Completed")
+/// to Google Sheet's validated dropdown choices for Cell S ("Open", "In Progress", "On Hold", "Done").
+pub fn to_sheet_kanban_state(val: &str) -> &'static str {
+    match val {
+        "Pending" | "Open" | "To Do" | "Todo" | "New" => "Open",
+        "InProgress" | "In Progress" | "In-Progress" => "In Progress",
+        "Onhold" | "On Hold" | "On-Hold" | "Hold" => "On Hold",
+        "Completed" | "Done" | "Resolved" | "Closed" => "Done",
+        other => match other {
+            s if s.eq_ignore_ascii_case("pending") || s.eq_ignore_ascii_case("open") || s.eq_ignore_ascii_case("new") => "Open",
+            s if s.eq_ignore_ascii_case("inprogress") || s.eq_ignore_ascii_case("in progress") => "In Progress",
+            s if s.eq_ignore_ascii_case("onhold") || s.eq_ignore_ascii_case("on hold") => "On Hold",
+            s if s.eq_ignore_ascii_case("completed") || s.eq_ignore_ascii_case("done") || s.eq_ignore_ascii_case("resolved") || s.eq_ignore_ascii_case("closed") => "Done",
+            _ => "Open",
+        },
+    }
+}
+
+/// Maps internal stage/status to Google Sheet's validated dropdown choices for Cell T ("New", "Assigned", "Investigation", "Resolution").
+pub fn to_sheet_stage(val: &str) -> &'static str {
+    match val {
+        "Pending" | "Open" | "New" | "To Do" | "Todo" => "New",
+        "Assigned" => "Assigned",
+        "InProgress" | "In Progress" | "Investigation" => "Investigation",
+        "Onhold" | "On Hold" | "Hold" => "Assigned",
+        "Completed" | "Done" | "Resolution" | "Resolved" | "Closed" => "Resolution",
+        other => match other {
+            s if s.eq_ignore_ascii_case("pending") || s.eq_ignore_ascii_case("open") || s.eq_ignore_ascii_case("new") => "New",
+            s if s.eq_ignore_ascii_case("assigned") => "Assigned",
+            s if s.eq_ignore_ascii_case("inprogress") || s.eq_ignore_ascii_case("in progress") || s.eq_ignore_ascii_case("investigation") => "Investigation",
+            s if s.eq_ignore_ascii_case("onhold") || s.eq_ignore_ascii_case("on hold") => "Assigned",
+            s if s.eq_ignore_ascii_case("completed") || s.eq_ignore_ascii_case("done") || s.eq_ignore_ascii_case("resolution") || s.eq_ignore_ascii_case("resolved") => "Resolution",
+            _ => "New",
+        },
+    }
+}
+
+/// Maps internal status to Google Sheet's status column ("Open", "In Progress", "On Hold", "Closed").
+pub fn to_sheet_status(val: &str) -> &'static str {
+    match val {
+        "Pending" | "Open" | "To Do" | "Todo" | "New" => "Open",
+        "InProgress" | "In Progress" | "In-Progress" => "In Progress",
+        "Onhold" | "On Hold" | "On-Hold" | "Hold" => "On Hold",
+        "Completed" | "Done" | "Resolved" | "Closed" => "Closed",
+        other => match other {
+            s if s.eq_ignore_ascii_case("pending") || s.eq_ignore_ascii_case("open") || s.eq_ignore_ascii_case("new") => "Open",
+            s if s.eq_ignore_ascii_case("inprogress") || s.eq_ignore_ascii_case("in progress") => "In Progress",
+            s if s.eq_ignore_ascii_case("onhold") || s.eq_ignore_ascii_case("on hold") => "On Hold",
+            s if s.eq_ignore_ascii_case("completed") || s.eq_ignore_ascii_case("done") || s.eq_ignore_ascii_case("resolved") || s.eq_ignore_ascii_case("closed") => "Closed",
+            _ => "Open",
+        },
+    }
+}
+
+/// Maps Google Sheet's validated dropdown choices ("Open", "In Progress", "On Hold", "Done", "New", "Assigned", "Investigation", "Resolution")
+/// to internal Kanban column status ("Pending", "InProgress", "Onhold", "Completed").
+pub fn from_sheet_status(val: &str) -> &'static str {
+    match val {
+        "Open" | "Pending" | "To Do" | "Todo" | "New" => "Pending",
+        "In Progress" | "InProgress" | "In-Progress" | "Investigation" => "InProgress",
+        "On Hold" | "Onhold" | "On-Hold" | "Hold" | "Assigned" => "Onhold",
+        "Done" | "Completed" | "Resolved" | "Closed" | "Resolution" => "Completed",
+        other => match other {
+            s if s.eq_ignore_ascii_case("open") || s.eq_ignore_ascii_case("pending") || s.eq_ignore_ascii_case("new") => "Pending",
+            s if s.eq_ignore_ascii_case("in progress") || s.eq_ignore_ascii_case("inprogress") || s.eq_ignore_ascii_case("investigation") => "InProgress",
+            s if s.eq_ignore_ascii_case("on hold") || s.eq_ignore_ascii_case("onhold") || s.eq_ignore_ascii_case("assigned") => "Onhold",
+            s if s.eq_ignore_ascii_case("done") || s.eq_ignore_ascii_case("completed") || s.eq_ignore_ascii_case("resolved") || s.eq_ignore_ascii_case("closed") || s.eq_ignore_ascii_case("resolution") => "Completed",
+            _ => "Pending",
+        },
+    }
+}
+
+/// Sanitizes ticket payload before sending to Google Sheets:
+/// - Transforms kanban_state, stage, and status to Google Sheet's allowed data validation values
+/// - Sanitizes employee_code so names in parentheses (e.g. "11135 (It)") don't break employee reference lookups
+/// - Remaps activities to activities_text for Google Sheet column naming
+pub fn sanitize_ticket_payload(client: &ApiClient, payload: &Value) -> Value {
+    let mut out = with_employee_code(client, payload);
+    if let Some(obj) = out.as_object_mut() {
+        if let Some(emp) = obj.get("employee_code").and_then(|v| v.as_str()) {
+            let code = if let Some(idx) = emp.find('(') {
+                emp[..idx].trim()
+            } else {
+                emp.trim()
+            };
+            obj.insert("employee_code".to_string(), json!(code));
+        }
+        if let Some(kanban) = obj.get("kanban_state").and_then(|v| v.as_str()) {
+            obj.insert("kanban_state".to_string(), json!(to_sheet_kanban_state(kanban)));
+        }
+        if let Some(stage) = obj.get("stage").and_then(|v| v.as_str()) {
+            obj.insert("stage".to_string(), json!(to_sheet_stage(stage)));
+        }
+        if let Some(status) = obj.get("status").and_then(|v| v.as_str()) {
+            obj.insert("status".to_string(), json!(to_sheet_status(status)));
+        }
+        if let Some(act) = obj.remove("activities") {
+            if !obj.contains_key("activities_text") {
+                obj.insert("activities_text".to_string(), act);
+            }
+        }
     }
     out
 }
@@ -641,6 +797,11 @@ async fn pull(client: &ApiClient) -> Result<usize, ApiError> {
 
     // ---- server rows → local ----
     for (server_id, t) in &server {
+        let mut t_norm = (*t).clone();
+        t_norm.kanban_state = from_sheet_status(&t.kanban_state).to_string();
+        t_norm.stage = from_sheet_status(&t.stage).to_string();
+        t_norm.status = from_sheet_status(&t.status).to_string();
+        let t = &t_norm;
         // Never re-insert a row that has a queued DELETE.
         if db::server_id_has_active_delete(server_id) {
             continue;
@@ -739,6 +900,18 @@ pub fn invalidate_employee_cache() {
     let _ = db::sync_meta_set("last_employee_pull_at", "0");
 }
 
+/// Fetches all employees from Google Sheets immediately in real-time.
+pub async fn pull_employees_now() -> Result<usize, ApiError> {
+    let client = ensure_client().map_err(ApiError::Network)?;
+    let count = pull_employees(client).await?;
+    let now = now_epoch();
+    let _ = db::sync_meta_set("last_employee_pull_at", &now.to_string());
+    if count > 0 {
+        with_status(|s| s.revision = s.revision.wrapping_add(1));
+    }
+    Ok(count)
+}
+
 // ============================================================
 // Enqueue helpers (called by the UI right after a local write)
 // ============================================================
@@ -785,11 +958,56 @@ pub fn enqueue_delete(local_ticket_id: i64) {
 // ============================================================
 // Reminder sync & execution
 // ============================================================
+// Reminder sync helpers
+// ============================================================
+
+/// Google Apps Script reminders.create only accepts these four fields:
+/// employee_code, service_category, reminder_message, send_at.
+/// All other fields (employee_name, email_address, etc.) are auto-resolved
+/// by the Apps Script from the Employees sheet and trigger UNKNOWN_FIELD if passed.
+fn ensure_iso8601(val: Option<&Value>) -> Value {
+    let raw = val.and_then(|v| v.as_str()).unwrap_or("");
+    if raw.contains('T') {
+        return json!(raw);
+    }
+    if raw.len() == 19 && raw.chars().nth(10) == Some(' ') {
+        return json!(format!("{}T{}Z", &raw[..10], &raw[11..]));
+    }
+    let now = now_epoch();
+    let utc = crate::state::format_utc(now);
+    json!(format!("{}T{}Z", &utc[..10], &utc[11..]))
+}
+
+pub fn sanitize_reminder_create_payload(payload: &Value) -> Value {
+    let mut out = serde_json::Map::new();
+    if let Some(obj) = payload.as_object() {
+        if let Some(v) = obj.get("employee_code") { out.insert("employee_code".to_string(), v.clone()); }
+        if let Some(v) = obj.get("service_category") { out.insert("service_category".to_string(), v.clone()); }
+        if let Some(v) = obj.get("reminder_message") { out.insert("reminder_message".to_string(), v.clone()); }
+        out.insert("send_at".to_string(), ensure_iso8601(obj.get("send_at")));
+    }
+    Value::Object(out)
+}
+
+/// Google Apps Script reminders.update only accepts:
+/// employee_code, service_category, reminder_message, send_at, status.
+pub fn sanitize_reminder_update_payload(payload: &Value) -> Value {
+    let mut out = serde_json::Map::new();
+    if let Some(obj) = payload.as_object() {
+        if let Some(v) = obj.get("employee_code") { out.insert("employee_code".to_string(), v.clone()); }
+        if let Some(v) = obj.get("service_category") { out.insert("service_category".to_string(), v.clone()); }
+        if let Some(v) = obj.get("reminder_message") { out.insert("reminder_message".to_string(), v.clone()); }
+        if let Some(v) = obj.get("send_at") { out.insert("send_at".to_string(), ensure_iso8601(Some(v))); }
+        if let Some(v) = obj.get("status") { out.insert("status".to_string(), v.clone()); }
+    }
+    Value::Object(out)
+}
 
 async fn execute_reminder_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutcome, ApiError> {
     match op.op_type.as_str() {
         "CREATE" => {
-            let remote = client.reminders_create(&op.payload).await?;
+            let sanitized = sanitize_reminder_create_payload(&op.payload);
+            let remote = client.reminders_create(&sanitized).await?;
             db::set_reminder_mapping(op.local_ticket_id, &remote.reminder_id, &remote.last_updated_at)?;
             Ok(ExecOutcome::Synced)
         }
@@ -803,12 +1021,14 @@ async fn execute_reminder_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutc
                 let Some(row) = db::reminder_create_payload(op.local_ticket_id) else {
                     return Ok(ExecOutcome::Superseded);
                 };
-                let remote = client.reminders_create(&row).await?;
+                let sanitized = sanitize_reminder_create_payload(&row);
+                let remote = client.reminders_create(&sanitized).await?;
                 db::set_reminder_mapping(op.local_ticket_id, &remote.reminder_id, &remote.last_updated_at)?;
                 return Ok(ExecOutcome::Synced);
             };
 
-            let remote = client.reminders_update(&server_id, &op.payload).await?;
+            let sanitized = sanitize_reminder_update_payload(&op.payload);
+            let remote = client.reminders_update(&server_id, &sanitized).await?;
             db::set_reminder_mapping(op.local_ticket_id, &remote.reminder_id, &remote.last_updated_at)?;
             Ok(ExecOutcome::Synced)
         }

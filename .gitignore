@@ -9,5 +9,7 @@ node_modules/*
 
 /DATABASE.SQL
 management.db
+management.db-shm
+management.db-wal
 
 .env

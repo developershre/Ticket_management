@@ -77,7 +77,7 @@ fn main() {
     }
 
     // Background sync worker: single thread, independent of the UI
-    // lifecycle (120s cadence + immediate wake after local changes).
+    // lifecycle (20s cadence + immediate wake after local changes).
     sync::start_worker();
 
     // Desktop: the native window frame (navbar + OS action buttons) is
