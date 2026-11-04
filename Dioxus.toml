@@ -1,30 +1,31 @@
 [application]
+name = "management"
+default_platform = "desktop"
 
 [web.app]
-
 # HTML title tag content
-title = "management"
+title = "BPSL IT Support"
 
 # include `assets` in web platform
 [web.resource]
-
-# Additional CSS style files
 style = []
-
-# Additional JavaScript files
 script = []
 
 [web.resource.dev]
-
-# Javascript code file
-# serve: [dev-server] only
 script = []
 
 [bundle]
-identifier = "com.bpsl.management"
-publisher = "BPSL"
-icon = ["assets/logo.svg"]
-resources = ["assets/**/*"]
+name = "BPSL IT Support"
+identifier = "com.bpsl.itsupport"
+publisher = "Bhagwati Power and Steel Limited"
+icon = ["assets/favicon.ico"]
+resources = ["management.db"]
+copyright = "Copyright © 2026 Bhagwati Power and Steel Limited. All rights reserved."
+short_description = "BPSL IT Support Ticket and Task Management"
+long_description = "Internal IT Support Ticket and Task Management desktop application with real-time Google Sheets synchronization for BPSL."
 
 [bundle.windows]
 icon_path = "assets/favicon.ico"
+upgrade_code = "7A3E8D55-2248-4C87-8A7B-E5B7C2A961E3"
+digest_algorithm = "sha256"
+allow_downgrades = true

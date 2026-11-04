@@ -20,6 +20,16 @@ pub fn db_path() -> PathBuf {
     DB_PATH_CACHE.get_or_init(resolve_db_path).clone()
 }
 
+fn is_dir_writable(dir: &Path) -> bool {
+    let test_file = dir.join(format!(".write_test_{}", std::process::id()));
+    if std::fs::write(&test_file, b"").is_ok() {
+        let _ = std::fs::remove_file(test_file);
+        true
+    } else {
+        false
+    }
+}
+
 fn resolve_db_path() -> PathBuf {
     let local = Path::new("management.db");
     if local.exists() {
@@ -29,6 +39,26 @@ fn resolve_db_path() -> PathBuf {
         if let Some(parent) = exe.parent() {
             let candidate = parent.join("management.db");
             if candidate.exists() {
+                // If the directory containing the exe is writable (e.g. portable mode/dev build),
+                // use it directly.
+                if is_dir_writable(parent) {
+                    return candidate;
+                }
+
+                // If installed in a read-only directory like Program Files, copy the seed
+                // database to the user's writable AppData folder so SQLite has write/WAL access.
+                if let Some(app_data) = std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA")) {
+                    let app_dir = PathBuf::from(app_data).join("BPSL IT Support");
+                    let _ = std::fs::create_dir_all(&app_dir);
+                    let target_db = app_dir.join("management.db");
+                    if !target_db.exists() {
+                        let _ = std::fs::copy(&candidate, &target_db);
+                    }
+                    if target_db.exists() {
+                        return target_db;
+                    }
+                }
+
                 return candidate;
             }
             if let Some(up) = parent.parent() {
@@ -109,6 +139,7 @@ pub struct DbNote {
     pub id: i64,
     pub emp_code: String,
     pub content: String,
+    pub created_at: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -233,7 +264,8 @@ pub fn init_database() -> Result<()> {
         CREATE TABLE IF NOT EXISTS NOTES(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             emp_code TEXT,
-            content TEXT
+            content TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
         CREATE TABLE IF NOT EXISTS reminders (
@@ -261,6 +293,7 @@ pub fn init_database() -> Result<()> {
     //     first); the queue/meta/conflict tables are idempotent.
     ensure_ticket_sync_columns(&conn)?;
     ensure_reminder_sync_columns(&conn)?;
+    ensure_note_sync_columns(&conn)?;
     ensure_sync_queue_columns(&conn)?;
     // 1c. Employee cache schema (nullable/duplicate emails + division —
     //     the shape the sheet's employees.list actually returns).
@@ -671,7 +704,7 @@ pub fn get_all_notes() -> Vec<DbNote> {
     };
 
     let mut stmt = match conn.prepare(
-        "SELECT id, COALESCE(emp_code, ''), COALESCE(content, '') FROM NOTES ORDER BY id ASC",
+        "SELECT id, COALESCE(emp_code, ''), COALESCE(content, ''), COALESCE(created_at, CURRENT_TIMESTAMP) FROM NOTES ORDER BY id ASC",
     ) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
@@ -682,6 +715,7 @@ pub fn get_all_notes() -> Vec<DbNote> {
             id: row.get(0)?,
             emp_code: row.get(1)?,
             content: row.get(2)?,
+            created_at: row.get(3).unwrap_or_default(),
         })
     });
 
@@ -695,7 +729,7 @@ pub fn get_all_notes() -> Vec<DbNote> {
 pub fn create_note(emp_code: &str, content: &str) -> Result<i64> {
     let conn = get_connection()?;
     conn.execute(
-        "INSERT INTO NOTES (emp_code, content) VALUES (?1, ?2)",
+        "INSERT INTO NOTES (emp_code, content, created_at) VALUES (?1, ?2, CURRENT_TIMESTAMP)",
         params![emp_code, content],
     )?;
     Ok(conn.last_insert_rowid())
@@ -1198,6 +1232,28 @@ fn ensure_reminder_sync_columns(conn: &Connection) -> Result<()> {
     // sheet; older databases are migrated in place.
     if !has_column("cc_emails") {
         conn.execute("ALTER TABLE reminders ADD COLUMN cc_emails TEXT", [])?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::let_and_return)]
+fn ensure_note_sync_columns(conn: &Connection) -> Result<()> {
+    let has_column = |name: &str| -> bool {
+        let Ok(mut stmt) = conn.prepare("PRAGMA table_info(NOTES)") else {
+            return false;
+        };
+        let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(1)) else {
+            return false;
+        };
+        let cols: Vec<String> = rows.filter_map(Result::ok).collect();
+        cols.iter().any(|c| c == name)
+    };
+
+    if !has_column("created_at") {
+        let _ = conn.execute(
+            "ALTER TABLE NOTES ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+            [],
+        );
     }
     Ok(())
 }

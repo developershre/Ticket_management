@@ -5,6 +5,7 @@
   },
   "scripts": {
     "build": "npx @tailwindcss/cli -i ./tailwind.css -o ./assets/tailwind.css",
-    "watch": "npx @tailwindcss/cli -i ./tailwind.css -o ./assets/tailwind.css --watch"
+    "watch": "npx @tailwindcss/cli -i ./tailwind.css -o ./assets/tailwind.css --watch",
+    "bundle:msi": "npm run build && dx bundle --package-types msi --desktop -r"
   }
 }

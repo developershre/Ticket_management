@@ -1,52 +1,123 @@
-//! Calendar Page — Full-page event calendar workstation with Context Menus.
-//! Clean, architectural aesthetic with reduced roundness, full-width layouts,
-//! rich event details, switchable views, and full right-click context menu actions.
+//! Calendar Page — Interactive Workstation for Tickets, Reminders, and Notes.
+//! Shows activity by selected date or inclusive date range of 2 dates.
+//! Clean, architectural aesthetic with Roboto typography and real-time SQLite sync.
 #![allow(clippy::redundant_closure)]
 
 use dioxus::prelude::*;
 
 use crate::components::month_calendar::{
-    day_of_week, days_in_month, first_day_of_month, format_date_pretty, is_event_on, CalEvent,
-    EventColor, MONTH_NAMES, SHORT_MONTH_NAMES,
+    days_in_month, extract_time_str, first_day_of_month, format_date_pretty, format_ymd,
+    parse_date_ymd, DateRange, MONTH_NAMES, SHORT_MONTH_NAMES,
 };
 use crate::components::ui::badge::Badge;
 use crate::components::ui::button::Button;
-use crate::components::ui::context_menu::{
-    ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator,
-    ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger,
-};
-use crate::components::ui::separator::Separator;
 use crate::components::ui::toast::ToastState;
-use crate::icons::{
-    CalendarIcon, ChevronLeftIcon, ChevronRightIcon, ClockIcon, ExternalLinkIcon, MapPinIcon,
-    PlusIcon, SearchIcon, TrashIcon, UsersIcon, VideoIcon, XIcon,
+use crate::db::{
+    get_all_notes, get_all_reminders, get_all_tickets, DbNote, DbReminder, DbTicket,
 };
+use crate::icons::{
+    BellIcon, CalendarIcon, ChevronLeftIcon, ChevronRightIcon, ClockIcon, EyeIcon, FilterIcon,
+    GridIcon, ListIcon, SearchIcon, StickyNoteIcon, TicketIcon, UsersIcon, XIcon,
+};
+use crate::pages::tickets::{assignee_color_classes, get_assignee_initials};
+use crate::state::AppDbRevision;
 
+/// Entity kind for filtering and badge styles.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CalendarView {
-    Month,
-    Week,
-    Day,
-    Schedule,
+pub enum CalendarItemKind {
+    Ticket,
+    Reminder,
+    Note,
 }
 
-impl CalendarView {
+#[allow(dead_code)]
+impl CalendarItemKind {
     pub fn label(&self) -> &'static str {
         match self {
-            CalendarView::Month => "Month",
-            CalendarView::Week => "Week",
-            CalendarView::Day => "Day",
-            CalendarView::Schedule => "Schedule",
+            CalendarItemKind::Ticket => "Ticket",
+            CalendarItemKind::Reminder => "Reminder",
+            CalendarItemKind::Note => "Note",
         }
     }
 }
 
+/// Category / Type filter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemFilterType {
+    All,
+    Tickets,
+    Reminders,
+    Notes,
+}
+
+/// Selection mode: single day or range of two dates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DateSelectionMode {
+    SingleDate,
+    DateRange,
+}
+
+/// Calendar presentation format: Month Grid or Schedule Timeline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CalendarViewMode {
+    Month,
+    Schedule,
+}
+
+/// Polymorphic entity wrapper so any ticket, reminder, or note can be inspected.
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, Debug, PartialEq)]
+pub enum CalendarEntityData {
+    Ticket(DbTicket),
+    Reminder(DbReminder),
+    Note(DbNote),
+}
+
+/// Unified calendar entry created from SQLite records.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CalendarEntry {
+    pub key: String,
+    pub kind: CalendarItemKind,
+    pub title: String,
+    pub subtitle: String,
+    pub date: (u32, u32, u32),
+    pub time_str: String,
+    pub priority: String,
+    pub status: String,
+    pub employee: String,
+    pub details: String,
+    pub tag: Option<String>,
+    pub data: CalendarEntityData,
+}
+
 fn priority_badge_variant(priority: &str) -> &'static str {
-    match priority {
-        "Urgent" => "destructive",
-        "High" => "warning",
-        "Medium" => "info",
+    match priority.to_lowercase().as_str() {
+        "urgent" => "destructive",
+        "high" => "warning",
+        "medium" => "info",
         _ => "outline",
+    }
+}
+
+fn status_badge_classes(status: &str) -> (&'static str, &'static str) {
+    match status.to_lowercase().as_str() {
+        "completed" | "closed" | "done" => (
+            "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/25",
+            "Completed",
+        ),
+        "inprogress" | "in progress" => (
+            "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/25",
+            "In Progress",
+        ),
+        "onhold" | "on hold" => (
+            "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/25",
+            "On Hold",
+        ),
+        "pending" | "open" | "new" => (
+            "bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/25",
+            "Pending",
+        ),
+        _ => ("bg-muted text-muted-foreground border-border", "Active"),
     }
 }
 
@@ -54,744 +125,988 @@ fn priority_badge_variant(priority: &str) -> &'static str {
 pub fn CalendarPage() -> Element {
     let today = crate::state::get_real_current_date();
     let toast = use_context::<ToastState>();
+    let db_sync = try_use_context::<Signal<AppDbRevision>>();
 
-    // Main calendar view state
-    let mut selected_date = use_signal(move || Some(today));
+    // Calendar navigation state
     let mut view_year = use_signal(move || today.0);
     let mut view_month = use_signal(move || today.1);
-    let mut active_view = use_signal(|| CalendarView::Month);
-    let mut category_filter = use_signal(|| "All".to_string());
+    let mut view_mode = use_signal(|| CalendarViewMode::Month);
+
+    // Selection mode: Single Date vs Range of 2 Dates
+    let mut selection_mode = use_signal(|| DateSelectionMode::SingleDate);
+    let mut selected_date = use_signal(move || today);
+    let mut date_range = use_signal(|| None::<DateRange>);
+    let mut range_pick_step = use_signal(|| 0u8);
+
+    // Filtering & search
+    let mut item_filter = use_signal(|| ItemFilterType::All);
     let mut search_query = use_signal(String::new);
 
-    // Events reactive store — starts clean without dummy/mock entries
-    let mut events = use_signal(Vec::<CalEvent>::new);
-
-    // Modals
-    let mut detail_event = use_signal(|| None::<CalEvent>);
-    let mut is_new_event_open = use_signal(|| false);
-
-    // Form fields for New Event modal
-    let mut form_title = use_signal(String::new);
-    let mut form_category = use_signal(|| "General".to_string());
-    let mut form_time = use_signal(|| "10:00 AM".to_string());
-    let mut form_end_time = use_signal(|| "11:00 AM".to_string());
-    let mut form_location = use_signal(String::new);
-    let mut form_priority = use_signal(|| "Medium".to_string());
-    let mut form_attendees = use_signal(String::new);
-    let mut form_description = use_signal(String::new);
-    let mut form_day = use_signal(move || today.2);
+    // Detail modal state
+    let mut inspect_item = use_signal(|| None::<CalendarEntityData>);
 
     let cur_y = view_year();
     let cur_m = view_month();
-    let active_selected = (*selected_date.read()).unwrap_or(today);
+    let sel_d = selected_date();
 
-    // Context menu event mutations
-    let on_change_priority = move |(ev_id, new_prio): (u32, String)| {
-        if let Some(ev) = events.write().iter_mut().find(|e| e.id == ev_id) {
-            ev.priority = new_prio.clone();
-            toast.info(
-                "Priority Updated",
-                format!("Event priority set to {new_prio}"),
-            );
+    // -------------------------------------------------------------
+    // Load and unify all tickets, reminders, and notes from SQLite
+    // -------------------------------------------------------------
+    let all_entries = use_memo(move || {
+        if let Some(sync) = db_sync {
+            let _ = sync();
         }
-    };
 
-    let on_change_category = move |(ev_id, new_cat): (u32, String)| {
-        if let Some(ev) = events.write().iter_mut().find(|e| e.id == ev_id) {
-            ev.color = match new_cat.as_str() {
-                "Engineering" | "DevOps" => EventColor::Blue,
-                "Design" => EventColor::Purple,
-                "Client Demo" => EventColor::Green,
-                "Release & QA" => EventColor::Red,
-                _ => EventColor::Amber,
+        let mut entries = Vec::new();
+
+        // 1. Tickets
+        let tickets = get_all_tickets();
+        for t in tickets {
+            let date = parse_date_ymd(&t.created_on)
+                .or_else(|| parse_date_ymd(&t.last_updated_on))
+                .unwrap_or(today);
+            let time_str = extract_time_str(&t.created_on);
+            let display_id = t
+                .server_ticket_id
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| format!("TKT-{}", t.ticket_id));
+
+            entries.push(CalendarEntry {
+                key: format!("ticket-{}", t.ticket_id),
+                kind: CalendarItemKind::Ticket,
+                title: if t.subject.is_empty() {
+                    "Untitled Support Ticket".to_string()
+                } else {
+                    t.subject.clone()
+                },
+                subtitle: format!(
+                    "Assigned: {}",
+                    if t.assigned_to.is_empty() {
+                        "Unassigned"
+                    } else {
+                        &t.assigned_to
+                    }
+                ),
+                date,
+                time_str,
+                priority: t.priority.clone(),
+                status: t.kanban_state.clone(),
+                employee: if !t.employee_code.is_empty() {
+                    t.employee_code.clone()
+                } else {
+                    t.email_address.clone()
+                },
+                details: t.problem_description.clone(),
+                tag: Some(format!("{display_id} • {}", t.category)),
+                data: CalendarEntityData::Ticket(t),
+            });
+        }
+
+        // 2. Reminders
+        let reminders = get_all_reminders();
+        for r in reminders {
+            let date = parse_date_ymd(&r.created_at).unwrap_or(today);
+            let time_str = if !r.send_at.is_empty() {
+                format!("Due: {}", r.send_at)
+            } else {
+                extract_time_str(&r.created_at)
             };
-            ev.category = new_cat.clone();
-            toast.info(
-                "Category Updated",
-                format!("Event category set to {new_cat}"),
-            );
+            let display_id = if !r.server_reminder_id.is_empty() {
+                r.server_reminder_id.clone()
+            } else {
+                format!("REM-{}", r.reminder_id)
+            };
+
+            entries.push(CalendarEntry {
+                key: format!("reminder-{}", r.reminder_id),
+                kind: CalendarItemKind::Reminder,
+                title: if r.reminder_message.is_empty() {
+                    "Untitled Reminder".to_string()
+                } else {
+                    r.reminder_message.clone()
+                },
+                subtitle: format!("Recipient: {} ({})", r.employee_name, r.employee_code),
+                date,
+                time_str,
+                priority: "Medium".to_string(),
+                status: r.status.clone(),
+                employee: r.employee_name.clone(),
+                details: format!(
+                    "Category: {} | Email: {}",
+                    r.service_category, r.email_address
+                ),
+                tag: Some(display_id),
+                data: CalendarEntityData::Reminder(r),
+            });
         }
-    };
 
-    let on_delete_event = move |ev_id: u32| {
-        events.write().retain(|e| e.id != ev_id);
-        detail_event.set(None);
-        toast.error(
-            "Event Deleted",
-            "The event has been removed from your calendar.",
-        );
-    };
+        // 3. Notes
+        let notes = get_all_notes();
+        for n in notes {
+            let date = parse_date_ymd(&n.created_at).unwrap_or(today);
+            let time_str = extract_time_str(&n.created_at);
+            let (title, subtitle) = if let Some((t, d)) = n.content.split_once(" — ") {
+                (t.trim().to_string(), d.trim().to_string())
+            } else if let Some((t, d)) = n.content.split_once('\n') {
+                (t.trim().to_string(), d.trim().to_string())
+            } else {
+                (n.content.clone(), String::new())
+            };
 
-    // Filter events based on active category & search keyword
+            entries.push(CalendarEntry {
+                key: format!("note-{}", n.id),
+                kind: CalendarItemKind::Note,
+                title: if title.is_empty() {
+                    format!("Note #{}", n.id)
+                } else {
+                    title
+                },
+                subtitle: if !subtitle.is_empty() {
+                    subtitle
+                } else if !n.emp_code.is_empty() {
+                    format!("Employee: {}", n.emp_code)
+                } else {
+                    "Quick Note".to_string()
+                },
+                date,
+                time_str,
+                priority: "Low".to_string(),
+                status: "Note".to_string(),
+                employee: n.emp_code.clone(),
+                details: n.content.clone(),
+                tag: Some(format!("NOTE-{}", n.id)),
+                data: CalendarEntityData::Note(n),
+            });
+        }
+
+        // Sort descending by date, then key
+        entries.sort_by(|a, b| b.date.cmp(&a.date).then_with(|| b.key.cmp(&a.key)));
+        entries
+    });
+
+    let entries = all_entries();
+
+    // -------------------------------------------------------------
+    // Filter items based on active selection (Single Date or Range)
+    // -------------------------------------------------------------
     let q = search_query.read().trim().to_lowercase();
-    let cat = category_filter.read().clone();
+    let current_filter = item_filter();
+    let current_mode = selection_mode();
+    let active_range = date_range();
 
-    let filtered_events: Vec<CalEvent> = events
-        .read()
+    let filtered_items: Vec<CalendarEntry> = entries
         .iter()
         .filter(|e| {
-            if cat != "All" && e.category != cat {
+            // 1. Date match
+            let date_matches = match current_mode {
+                DateSelectionMode::SingleDate => e.date == sel_d,
+                DateSelectionMode::DateRange => {
+                    if let Some((start, end)) = active_range {
+                        e.date >= start && e.date <= end
+                    } else {
+                        e.date == sel_d
+                    }
+                }
+            };
+            if !date_matches {
                 return false;
             }
+
+            // 2. Kind / Type filter
+            let kind_matches = match current_filter {
+                ItemFilterType::All => true,
+                ItemFilterType::Tickets => e.kind == CalendarItemKind::Ticket,
+                ItemFilterType::Reminders => e.kind == CalendarItemKind::Reminder,
+                ItemFilterType::Notes => e.kind == CalendarItemKind::Note,
+            };
+            if !kind_matches {
+                return false;
+            }
+
+            // 3. Search query
             if !q.is_empty() {
-                let match_title = e.title.to_lowercase().contains(&q);
-                let match_desc = e.description.to_lowercase().contains(&q);
-                let match_loc = e
-                    .location
+                let m_title = e.title.to_lowercase().contains(&q);
+                let m_sub = e.subtitle.to_lowercase().contains(&q);
+                let m_emp = e.employee.to_lowercase().contains(&q);
+                let m_det = e.details.to_lowercase().contains(&q);
+                let m_tag = e
+                    .tag
                     .as_ref()
-                    .map(|l| l.to_lowercase().contains(&q))
+                    .map(|t| t.to_lowercase().contains(&q))
                     .unwrap_or(false);
-                let match_attendee = e.attendees.iter().any(|a| a.to_lowercase().contains(&q));
-                if !match_title && !match_desc && !match_loc && !match_attendee {
+                if !m_title && !m_sub && !m_emp && !m_det && !m_tag {
                     return false;
                 }
             }
+
             true
         })
         .cloned()
         .collect();
 
+    // Activity summary counts for current selected date/range
+    let (total_tickets, total_reminders, total_notes) = {
+        let in_scope: Vec<&CalendarEntry> = entries
+            .iter()
+            .filter(|e| match current_mode {
+                DateSelectionMode::SingleDate => e.date == sel_d,
+                DateSelectionMode::DateRange => {
+                    if let Some((start, end)) = active_range {
+                        e.date >= start && e.date <= end
+                    } else {
+                        e.date == sel_d
+                    }
+                }
+            })
+            .collect();
+
+        let t = in_scope
+            .iter()
+            .filter(|e| e.kind == CalendarItemKind::Ticket)
+            .count();
+        let r = in_scope
+            .iter()
+            .filter(|e| e.kind == CalendarItemKind::Reminder)
+            .count();
+        let n = in_scope
+            .iter()
+            .filter(|e| e.kind == CalendarItemKind::Note)
+            .count();
+        (t, r, n)
+    };
+
     // Navigation callbacks
-    let on_prev = move |_| match active_view() {
-        CalendarView::Month | CalendarView::Schedule => {
-            let m = view_month();
-            let y = view_year();
-            if m == 1 {
-                view_month.set(12);
-                view_year.set(y - 1);
-            } else {
-                view_month.set(m - 1);
-            }
-        }
-        CalendarView::Week => {
-            let (y, m, d) = active_selected;
-            let new_d = if d > 7 {
-                (y, m, d - 7)
-            } else {
-                let pm = if m == 1 { 12 } else { m - 1 };
-                let py = if m == 1 { y - 1 } else { y };
-                let pmax = days_in_month(py, pm);
-                (py, pm, pmax - (7 - d))
-            };
-            selected_date.set(Some(new_d));
-            view_year.set(new_d.0);
-            view_month.set(new_d.1);
-        }
-        CalendarView::Day => {
-            let (y, m, d) = active_selected;
-            let new_d = if d > 1 {
-                (y, m, d - 1)
-            } else {
-                let pm = if m == 1 { 12 } else { m - 1 };
-                let py = if m == 1 { y - 1 } else { y };
-                let pmax = days_in_month(py, pm);
-                (py, pm, pmax)
-            };
-            selected_date.set(Some(new_d));
-            view_year.set(new_d.0);
-            view_month.set(new_d.1);
+    let mut on_prev_month = move |_| {
+        let m = view_month();
+        let y = view_year();
+        if m == 1 {
+            view_month.set(12);
+            view_year.set(y - 1);
+        } else {
+            view_month.set(m - 1);
         }
     };
 
-    let on_next = move |_| match active_view() {
-        CalendarView::Month | CalendarView::Schedule => {
-            let m = view_month();
-            let y = view_year();
-            if m == 12 {
-                view_month.set(1);
-                view_year.set(y + 1);
-            } else {
-                view_month.set(m + 1);
-            }
-        }
-        CalendarView::Week => {
-            let (y, m, d) = active_selected;
-            let max_d = days_in_month(y, m);
-            let new_d = if d + 7 <= max_d {
-                (y, m, d + 7)
-            } else {
-                let nm = if m == 12 { 1 } else { m + 1 };
-                let ny = if m == 12 { y + 1 } else { y };
-                (ny, nm, (d + 7) - max_d)
-            };
-            selected_date.set(Some(new_d));
-            view_year.set(new_d.0);
-            view_month.set(new_d.1);
-        }
-        CalendarView::Day => {
-            let (y, m, d) = active_selected;
-            let max_d = days_in_month(y, m);
-            let new_d = if d < max_d {
-                (y, m, d + 1)
-            } else {
-                let nm = if m == 12 { 1 } else { m + 1 };
-                let ny = if m == 12 { y + 1 } else { y };
-                (ny, nm, 1)
-            };
-            selected_date.set(Some(new_d));
-            view_year.set(new_d.0);
-            view_month.set(new_d.1);
+    let mut on_next_month = move |_| {
+        let m = view_month();
+        let y = view_year();
+        if m == 12 {
+            view_month.set(1);
+            view_year.set(y + 1);
+        } else {
+            view_month.set(m + 1);
         }
     };
 
-    let mut handle_today = move || {
-        selected_date.set(Some(today));
+    let mut on_goto_today = move |_| {
         view_year.set(today.0);
         view_month.set(today.1);
+        selected_date.set(today);
+        if selection_mode() == DateSelectionMode::DateRange {
+            date_range.set(Some((today, today)));
+        }
     };
 
-    // Open New Event modal for specific day
-    let mut open_new_event_for = move |target_d: (u32, u32, u32)| {
-        selected_date.set(Some(target_d));
-        view_year.set(target_d.0);
-        view_month.set(target_d.1);
-        form_day.set(target_d.2);
-        form_title.set(String::new());
-        form_attendees.set(String::new());
-        form_location.set(String::new());
-        form_description.set(String::new());
-        is_new_event_open.set(true);
+    // Day click handler supporting both Single Date and 2-Date Range selection
+    let mut handle_day_click = move |clicked: (u32, u32, u32)| {
+        match selection_mode() {
+            DateSelectionMode::SingleDate => {
+                selected_date.set(clicked);
+                view_year.set(clicked.0);
+                view_month.set(clicked.1);
+            }
+            DateSelectionMode::DateRange => {
+                let step = *range_pick_step.read();
+                if step == 0 {
+                    date_range.set(Some((clicked, clicked)));
+                    range_pick_step.set(1);
+                    selected_date.set(clicked);
+                    toast.info(
+                        "Start Date Selected",
+                        format!("Start: {}. Click a second date for the end.", format_ymd(clicked)),
+                    );
+                } else {
+                    let current_start = date_range().map(|(s, _)| s).unwrap_or(clicked);
+                    let (s, e) = if clicked < current_start {
+                        (clicked, current_start)
+                    } else {
+                        (current_start, clicked)
+                    };
+                    date_range.set(Some((s, e)));
+                    range_pick_step.set(0);
+                    toast.success(
+                        "Date Range Active",
+                        format!("Viewing items created between {} and {}", format_ymd(s), format_ymd(e)),
+                    );
+                }
+            }
+        }
     };
-
-    let active_detail = detail_event();
 
     rsx! {
-        div { class: "flex flex-col flex-1 w-full h-full p-4 md:p-6 min-h-0 overflow-hidden",
+        div { class: "flex h-full w-full flex-col overflow-hidden bg-background font-sans",
 
             // ========================================================
-            // Unified Top Header & Controls Bar
+            // Top Workspace Header Toolbar
             // ========================================================
-            div { class: "shrink-0 flex flex-col gap-3 border-b border-border/50 pb-3 mb-3",
-                div { class: "flex flex-wrap items-center justify-between gap-3",
+            div { class: "shrink-0 border-b border-border/70 bg-card/60 backdrop-blur-md px-6 py-3.5 flex flex-wrap items-center justify-between gap-3 shadow-2xs",
 
-                    // Left: Brand / Title + Period Navigation
-                    div { class: "flex flex-wrap items-center gap-3",
-                        div { class: "flex items-center gap-2.5",
-                            div { class: "flex size-8 items-center justify-center rounded-md bg-primary/10 text-primary border border-primary/25",
-                                CalendarIcon { class: "size-4" }
-                            }
-                            h1 { class: "text-lg font-bold tracking-tight text-foreground sm:text-xl",
-                                "Calendar"
-                            }
+                // Month / Year Title + Prev / Next Controls
+                div { class: "flex items-center gap-3",
+                    div { class: "flex items-center gap-1.5",
+                        span { class: "text-lg font-bold tracking-tight text-foreground",
+                            "{MONTH_NAMES[(cur_m - 1) as usize]} {cur_y}"
+                        }
+                    }
+
+                    div { class: "flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 p-0.5",
+                        button {
+                            r#type: "button",
+                            class: "flex size-7 items-center justify-center rounded-sm hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer",
+                            title: "Previous month",
+                            onclick: move |e| on_prev_month(e),
+                            ChevronLeftIcon { class: "size-4" }
+                        }
+                        button {
+                            r#type: "button",
+                            class: "flex size-7 items-center justify-center rounded-sm hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer",
+                            title: "Next month",
+                            onclick: move |e| on_next_month(e),
+                            ChevronRightIcon { class: "size-4" }
+                        }
+                    }
+
+                    Button {
+                        variant: "outline",
+                        size: "sm",
+                        class: "h-7 text-xs px-2.5",
+                        onclick: move |e| on_goto_today(e),
+                        "Today"
+                    }
+                }
+
+                // Center: Mode Switcher (Single Date vs Date Range)
+                div { class: "flex items-center gap-2",
+                    div { class: "inline-flex items-center rounded-md border border-border/70 bg-card p-0.5 shadow-2xs",
+                        button {
+                            r#type: "button",
+                            class: if current_mode == DateSelectionMode::SingleDate {
+                                "flex items-center gap-1.5 rounded-[4px] bg-primary text-primary-foreground font-semibold px-3 py-1 text-xs shadow-2xs transition-all cursor-pointer"
+                            } else {
+                                "flex items-center gap-1.5 rounded-[4px] text-muted-foreground hover:text-foreground hover:bg-muted/60 px-3 py-1 text-xs transition-all cursor-pointer"
+                            },
+                            onclick: move |_| {
+                                selection_mode.set(DateSelectionMode::SingleDate);
+                                range_pick_step.set(0);
+                            },
+                            CalendarIcon { class: "size-3.5" }
+                            span { "Single Date" }
                         }
 
-                        Separator { orientation: "vertical", class: "h-4 mx-1 hidden sm:block" }
+                        button {
+                            r#type: "button",
+                            class: if current_mode == DateSelectionMode::DateRange {
+                                "flex items-center gap-1.5 rounded-[4px] bg-primary text-primary-foreground font-semibold px-3 py-1 text-xs shadow-2xs transition-all cursor-pointer"
+                            } else {
+                                "flex items-center gap-1.5 rounded-[4px] text-muted-foreground hover:text-foreground hover:bg-muted/60 px-3 py-1 text-xs transition-all cursor-pointer"
+                            },
+                            onclick: move |_| {
+                                selection_mode.set(DateSelectionMode::DateRange);
+                                if date_range().is_none() {
+                                    date_range.set(Some((today, today)));
+                                }
+                            },
+                            FilterIcon { class: "size-3.5" }
+                            span { "Date Range (2 Dates)" }
+                        }
+                    }
 
-                        // Navigation Buttons
-                        div { class: "flex items-center gap-1.5",
-                            Button {
-                                variant: "outline",
-                                size: "sm",
-                                class: "h-8 px-2.5",
-                                onclick: move |_| handle_today(),
-                                "Today"
+                    // View Mode Switcher: Grid vs Timeline
+                    div { class: "inline-flex items-center rounded-md border border-border/70 bg-card p-0.5 shadow-2xs",
+                        button {
+                            r#type: "button",
+                            class: if view_mode() == CalendarViewMode::Month {
+                                "flex items-center gap-1 rounded-[4px] bg-muted font-semibold text-foreground px-2 py-1 text-xs cursor-pointer"
+                            } else {
+                                "flex items-center gap-1 rounded-[4px] text-muted-foreground hover:text-foreground px-2 py-1 text-xs cursor-pointer"
+                            },
+                            title: "Month Calendar Grid",
+                            onclick: move |_| view_mode.set(CalendarViewMode::Month),
+                            GridIcon { class: "size-3.5" }
+                            span { "Grid" }
+                        }
+                        button {
+                            r#type: "button",
+                            class: if view_mode() == CalendarViewMode::Schedule {
+                                "flex items-center gap-1 rounded-[4px] bg-muted font-semibold text-foreground px-2 py-1 text-xs cursor-pointer"
+                            } else {
+                                "flex items-center gap-1 rounded-[4px] text-muted-foreground hover:text-foreground px-2 py-1 text-xs cursor-pointer"
+                            },
+                            title: "Schedule Agenda View",
+                            onclick: move |_| view_mode.set(CalendarViewMode::Schedule),
+                            ListIcon { class: "size-3.5" }
+                            span { "Agenda" }
+                        }
+                    }
+                }
+
+                // Right: Search Input
+                div { class: "relative w-full sm:w-64",
+                    div { class: "pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground",
+                        SearchIcon { class: "size-3.5" }
+                    }
+                    input {
+                        r#type: "text",
+                        placeholder: "Search created items...",
+                        class: "h-8 w-full rounded-md border border-border/80 bg-background/80 pl-8 pr-7 text-xs text-foreground placeholder:text-muted-foreground/70 focus:border-primary focus:outline-none transition-colors",
+                        value: "{search_query}",
+                        oninput: move |e| search_query.set(e.value()),
+                    }
+                    if !search_query.read().is_empty() {
+                        button {
+                            r#type: "button",
+                            class: "absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer",
+                            onclick: move |_| search_query.set(String::new()),
+                            XIcon { class: "size-3" }
+                        }
+                    }
+                }
+            }
+
+            // ========================================================
+            // Date Range Control Ribbon (shown when Date Range is active)
+            // ========================================================
+            if current_mode == DateSelectionMode::DateRange {
+                div { class: "shrink-0 border-b border-border/70 bg-primary/5 px-6 py-2 flex flex-wrap items-center justify-between gap-3 text-xs",
+                    div { class: "flex items-center gap-2",
+                        span { class: "font-semibold text-primary flex items-center gap-1.5",
+                            CalendarIcon { class: "size-4" }
+                            "Active Date Range:"
+                        }
+                        if let Some((start, end)) = active_range {
+                            span { class: "font-mono font-bold bg-background border border-primary/30 text-foreground px-2 py-0.5 rounded shadow-2xs",
+                                "{format_ymd(start)} \u{2013} {format_ymd(end)}"
                             }
+                        } else {
+                            span { class: "italic text-muted-foreground", "Click 2 dates on the calendar below" }
+                        }
 
-                            div { class: "flex items-center rounded-md border border-border/70 bg-card overflow-hidden",
-                                Button {
-                                    variant: "ghost",
-                                    size: "icon-sm",
-                                    class: "rounded-none border-r border-border/40",
-                                    onclick: on_prev,
-                                    title: "Previous".to_string(),
-                                    ChevronLeftIcon { class: "size-3.5" }
-                                }
-                                Button {
-                                    variant: "ghost",
-                                    size: "icon-sm",
-                                    class: "rounded-none",
-                                    onclick: on_next,
-                                    title: "Next".to_string(),
-                                    ChevronRightIcon { class: "size-3.5" }
-                                }
-                            }
-
-                            // Period Label
-                            h2 { class: "ml-2 text-sm sm:text-base font-semibold tracking-tight text-foreground select-none",
-                                match active_view() {
-                                    CalendarView::Month | CalendarView::Schedule => format!("{} {}", MONTH_NAMES[(cur_m - 1) as usize], cur_y),
-                                    CalendarView::Week => {
-                                        format!("Week of {}, {} {}", SHORT_MONTH_NAMES[(active_selected.1 - 1) as usize], active_selected.2, active_selected.0)
-                                    },
-                                    CalendarView::Day => {
-                                        format_date_pretty(active_selected.0, active_selected.1, active_selected.2)
-                                    },
-                                }
+                        if *range_pick_step.read() == 1 {
+                            span { class: "text-amber-500 font-medium animate-pulse",
+                                "• Select second date to complete range"
                             }
                         }
                     }
 
-                    // Right: Category Filters + Search + View Switcher + New Event
-                    div { class: "flex flex-wrap items-center gap-2",
-
-                        // Category Filter Dropdown
-                        select {
-                            class: "h-8 rounded-md border border-border/70 bg-card px-2.5 text-xs font-medium text-foreground focus:border-primary focus:outline-none cursor-pointer",
-                            value: "{category_filter}",
-                            onchange: move |e| category_filter.set(e.value()),
-                            option { value: "All", "All Categories" }
-                            option { value: "Engineering", "Engineering" }
-                            option { value: "DevOps", "DevOps" }
-                            option { value: "Design", "Design" }
-                            option { value: "Client Demo", "Client Demo" }
-                            option { value: "IT Operations", "IT Operations" }
-                            option { value: "Release & QA", "Release & QA" }
+                    // Quick range preset pills
+                    div { class: "flex items-center gap-1.5",
+                        span { class: "text-[11px] text-muted-foreground font-medium", "Presets:" }
+                        button {
+                            r#type: "button",
+                            class: "rounded border border-border/70 bg-background px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-muted hover:border-primary/50 cursor-pointer transition-colors",
+                            onclick: move |_| {
+                                date_range.set(Some((today, today)));
+                                range_pick_step.set(0);
+                            },
+                            "Today"
                         }
+                        button {
+                            r#type: "button",
+                            class: "rounded border border-border/70 bg-background px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-muted hover:border-primary/50 cursor-pointer transition-colors",
+                            onclick: move |_| {
+                                let (y, m, d) = today;
+                                let start = if d > 7 {
+                                    (y, m, d - 6)
+                                } else {
+                                    let pm = if m == 1 { 12 } else { m - 1 };
+                                    let py = if m == 1 { y - 1 } else { y };
+                                    let pmax = days_in_month(py, pm);
+                                    (py, pm, pmax - (6 - d))
+                                };
+                                date_range.set(Some((start, today)));
+                                range_pick_step.set(0);
+                            },
+                            "Last 7 Days"
+                        }
+                        button {
+                            r#type: "button",
+                            class: "rounded border border-border/70 bg-background px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-muted hover:border-primary/50 cursor-pointer transition-colors",
+                            onclick: move |_| {
+                                let max_d = days_in_month(cur_y, cur_m);
+                                date_range.set(Some(((cur_y, cur_m, 1), (cur_y, cur_m, max_d))));
+                                range_pick_step.set(0);
+                            },
+                            "This Month"
+                        }
+                        button {
+                            r#type: "button",
+                            class: "rounded border border-border/70 bg-background px-2 py-0.5 text-[11px] font-medium text-destructive hover:bg-destructive/10 cursor-pointer transition-colors",
+                            onclick: move |_| {
+                                selection_mode.set(DateSelectionMode::SingleDate);
+                                range_pick_step.set(0);
+                            },
+                            "Reset to Single Date"
+                        }
+                    }
+                }
+            }
 
-                        // Search Bar
-                        div { class: "relative hidden md:block",
-                            SearchIcon { class: "absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" }
-                            input {
-                                r#type: "text",
-                                placeholder: "Search schedule...",
-                                class: "h-8 w-40 lg:w-52 rounded-md border border-border/70 bg-card pl-8 pr-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none transition-all",
-                                value: "{search_query}",
-                                oninput: move |e| search_query.set(e.value()),
+            // ========================================================
+            // Main Responsive Split-Screen Workstation
+            // ========================================================
+            div { class: "flex flex-1 overflow-hidden min-h-0",
+
+                // ----------------------------------------------------
+                // LEFT: Interactive Calendar Grid / Timeline
+                // ----------------------------------------------------
+                div { class: "flex flex-1 flex-col overflow-y-auto p-4 min-h-0 border-r border-border/60",
+                    match view_mode() {
+                        CalendarViewMode::Month => rsx! {
+                            MonthCalendarView {
+                                year: cur_y,
+                                month: cur_m,
+                                today: today,
+                                selected_date: sel_d,
+                                date_range: active_range,
+                                selection_mode: current_mode,
+                                entries: entries.clone(),
+                                on_day_click: move |d| handle_day_click(d),
                             }
-                            if !search_query.read().is_empty() {
-                                button {
-                                    r#type: "button",
-                                    class: "absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer",
-                                    onclick: move |_| search_query.set(String::new()),
-                                    XIcon { class: "size-3" }
+                        },
+                        CalendarViewMode::Schedule => rsx! {
+                            ScheduleTimelineListView {
+                                year: cur_y,
+                                month: cur_m,
+                                today: today,
+                                selected_date: sel_d,
+                                date_range: active_range,
+                                selection_mode: current_mode,
+                                entries: entries.clone(),
+                                on_select_day: move |d| {
+                                    selected_date.set(d);
+                                    selection_mode.set(DateSelectionMode::SingleDate);
+                                },
+                                on_open_item: move |item| inspect_item.set(Some(item)),
+                            }
+                        },
+                    }
+                }
+
+                // ----------------------------------------------------
+                // RIGHT: Created Activity Panel (Tickets, Reminders, Notes)
+                // ----------------------------------------------------
+                div { class: "flex w-full md:w-[460px] lg:w-[500px] shrink-0 flex-col overflow-hidden bg-card/40 backdrop-blur-xs",
+
+                    // Panel Header & Active Date/Range Title
+                    div { class: "shrink-0 border-b border-border/70 bg-card/80 p-4",
+                        div { class: "flex items-start justify-between gap-2",
+                            div { class: "flex flex-col gap-0.5 min-w-0",
+                                span { class: "text-[11px] font-bold uppercase tracking-wider text-muted-foreground",
+                                    if current_mode == DateSelectionMode::DateRange {
+                                        "Activity in Date Range"
+                                    } else {
+                                        "Activity on Selected Date"
+                                    }
+                                }
+                                {
+                                    let range_display_text = if current_mode == DateSelectionMode::DateRange {
+                                        if let Some((start, end)) = active_range {
+                                            format!("{} \u{2013} {}", format_ymd(start), format_ymd(end))
+                                        } else {
+                                            "No Date Range Active".to_string()
+                                        }
+                                    } else {
+                                        format_date_pretty(sel_d.0, sel_d.1, sel_d.2)
+                                    };
+                                    rsx! {
+                                        h2 { class: "text-base font-bold text-foreground truncate",
+                                            "{range_display_text}"
+                                        }
+                                    }
                                 }
                             }
+
+                            span { class: "rounded-full bg-primary/10 text-primary border border-primary/20 px-2.5 py-0.5 text-xs font-bold shrink-0",
+                                "{filtered_items.len()} items"
+                            }
                         }
 
-                        // View Switcher: Month | Week | Day | Schedule
-                        div { class: "inline-flex items-center rounded-md border border-border/70 bg-card p-0.5",
-                            for v in [CalendarView::Month, CalendarView::Week, CalendarView::Day, CalendarView::Schedule] {
+                        // Summary Metric Cards
+                        div { class: "grid grid-cols-3 gap-2 mt-3",
+                            div { class: "flex flex-col rounded-md border border-blue-500/20 bg-blue-500/5 p-2 text-center",
+                                span { class: "text-[10px] font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide", "Tickets" }
+                                span { class: "text-base font-extrabold text-blue-700 dark:text-blue-300", "{total_tickets}" }
+                            }
+                            div { class: "flex flex-col rounded-md border border-amber-500/20 bg-amber-500/5 p-2 text-center",
+                                span { class: "text-[10px] font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wide", "Reminders" }
+                                span { class: "text-base font-extrabold text-amber-700 dark:text-amber-300", "{total_reminders}" }
+                            }
+                            div { class: "flex flex-col rounded-md border border-emerald-500/20 bg-emerald-500/5 p-2 text-center",
+                                span { class: "text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide", "Notes" }
+                                span { class: "text-base font-extrabold text-emerald-700 dark:text-emerald-300", "{total_notes}" }
+                            }
+                        }
+
+                        // Entity Filter Tabs: All | Tickets | Reminders | Notes
+                        div { class: "flex items-center gap-1.5 mt-3 pt-3 border-t border-border/50",
+                            button {
+                                r#type: "button",
+                                class: if current_filter == ItemFilterType::All {
+                                    "rounded-md bg-primary text-primary-foreground font-bold px-2.5 py-1 text-xs cursor-pointer shadow-2xs"
+                                } else {
+                                    "rounded-md text-muted-foreground hover:bg-muted hover:text-foreground px-2.5 py-1 text-xs cursor-pointer"
+                                },
+                                onclick: move |_| item_filter.set(ItemFilterType::All),
+                                "All ({total_tickets + total_reminders + total_notes})"
+                            }
+                            button {
+                                r#type: "button",
+                                class: if current_filter == ItemFilterType::Tickets {
+                                    "rounded-md bg-blue-600 text-white font-bold px-2.5 py-1 text-xs cursor-pointer shadow-2xs"
+                                } else {
+                                    "rounded-md text-muted-foreground hover:bg-muted hover:text-foreground px-2.5 py-1 text-xs cursor-pointer"
+                                },
+                                onclick: move |_| item_filter.set(ItemFilterType::Tickets),
+                                "Tickets ({total_tickets})"
+                            }
+                            button {
+                                r#type: "button",
+                                class: if current_filter == ItemFilterType::Reminders {
+                                    "rounded-md bg-amber-600 text-white font-bold px-2.5 py-1 text-xs cursor-pointer shadow-2xs"
+                                } else {
+                                    "rounded-md text-muted-foreground hover:bg-muted hover:text-foreground px-2.5 py-1 text-xs cursor-pointer"
+                                },
+                                onclick: move |_| item_filter.set(ItemFilterType::Reminders),
+                                "Reminders ({total_reminders})"
+                            }
+                            button {
+                                r#type: "button",
+                                class: if current_filter == ItemFilterType::Notes {
+                                    "rounded-md bg-emerald-600 text-white font-bold px-2.5 py-1 text-xs cursor-pointer shadow-2xs"
+                                } else {
+                                    "rounded-md text-muted-foreground hover:bg-muted hover:text-foreground px-2.5 py-1 text-xs cursor-pointer"
+                                },
+                                onclick: move |_| item_filter.set(ItemFilterType::Notes),
+                                "Notes ({total_notes})"
+                            }
+                        }
+                    }
+
+                    // Items List Area
+                    div { class: "flex-1 overflow-y-auto p-4 flex flex-col gap-2.5 min-h-0",
+                        if filtered_items.is_empty() {
+                            div { class: "flex flex-col items-center justify-center py-16 text-center text-muted-foreground gap-2",
+                                CalendarIcon { class: "size-10 text-muted-foreground/40 stroke-1" }
+                                span { class: "text-sm font-semibold text-foreground/80", "No items recorded" }
+                                p { class: "text-xs max-w-xs text-muted-foreground",
+                                    "No tickets, reminders, or notes were created on this date or range."
+                                }
+                            }
+                        } else {
+                            for item in filtered_items.iter() {
                                 {
-                                    let is_active = active_view() == v;
-                                    let variant = if is_active { "default" } else { "ghost" };
+                                    let item_clone = item.clone();
+                                    let (border_color, badge_icon, badge_bg, badge_label) = match item.kind {
+                                        CalendarItemKind::Ticket => (
+                                            "border-l-blue-500",
+                                            rsx! { TicketIcon { class: "size-3 text-blue-600 dark:text-blue-400" } },
+                                            "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
+                                            "Ticket",
+                                        ),
+                                        CalendarItemKind::Reminder => (
+                                            "border-l-amber-500",
+                                            rsx! { BellIcon { class: "size-3 text-amber-600 dark:text-amber-400" } },
+                                            "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+                                            "Reminder",
+                                        ),
+                                        CalendarItemKind::Note => (
+                                            "border-l-emerald-500",
+                                            rsx! { StickyNoteIcon { class: "size-3 text-emerald-600 dark:text-emerald-400" } },
+                                            "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+                                            "Note",
+                                        ),
+                                    };
+
+                                    let (status_cls, status_txt) = status_badge_classes(&item.status);
+
                                     rsx! {
-                                        Button {
-                                            variant: "{variant}",
-                                            size: "sm",
-                                            key: "{v.label()}",
-                                            class: "h-7 px-2.5 text-xs rounded-[4px]",
-                                            onclick: move |_| active_view.set(v),
-                                            "{v.label()}"
+                                        div {
+                                            key: "{item.key}",
+                                            class: "group relative flex flex-col gap-2 rounded-lg border border-border/80 bg-card p-3 shadow-2xs hover:border-primary/50 hover:shadow-sm transition-all border-l-4 {border_color} cursor-pointer",
+                                            onclick: move |_| inspect_item.set(Some(item_clone.data.clone())),
+
+                                            // Top Row: Type & Tag + Time + Action
+                                            div { class: "flex items-center justify-between gap-2",
+                                                div { class: "flex items-center gap-1.5 flex-wrap min-w-0",
+                                                    span { class: "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold border {badge_bg}",
+                                                        {badge_icon}
+                                                        span { "{badge_label}" }
+                                                    }
+                                                    if let Some(t) = &item.tag {
+                                                        span { class: "font-mono text-[10px] text-muted-foreground truncate",
+                                                            "{t}"
+                                                        }
+                                                    }
+                                                }
+
+                                                div { class: "flex items-center gap-2 shrink-0",
+                                                    if !item.time_str.is_empty() {
+                                                        span { class: "flex items-center gap-1 font-mono text-[10px] text-muted-foreground",
+                                                            ClockIcon { class: "size-3" }
+                                                            span { "{item.time_str}" }
+                                                        }
+                                                    }
+                                                    button {
+                                                        r#type: "button",
+                                                        class: "opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-primary transition-opacity cursor-pointer",
+                                                        title: "Inspect Details",
+                                                        EyeIcon { class: "size-3.5" }
+                                                    }
+                                                }
+                                            }
+
+                                            // Title & Content
+                                            div { class: "flex flex-col gap-0.5",
+                                                h4 { class: "text-xs font-bold text-foreground leading-snug group-hover:text-primary transition-colors line-clamp-1",
+                                                    "{item.title}"
+                                                }
+                                                if !item.details.is_empty() {
+                                                    p { class: "text-[11px] text-muted-foreground line-clamp-2 leading-relaxed",
+                                                        "{item.details}"
+                                                    }
+                                                }
+                                            }
+
+                                            // Bottom Metadata Ribbon
+                                            div { class: "flex items-center justify-between gap-2 pt-1.5 border-t border-border/40 text-[11px]",
+                                                // Employee or Assigned user
+                                                div { class: "flex items-center gap-1.5 min-w-0",
+                                                    if item.kind == CalendarItemKind::Ticket {
+                                                        span { class: "flex size-5 shrink-0 items-center justify-center rounded-full text-[9px] font-extrabold uppercase border shadow-2xs {assignee_color_classes(&item.employee)}",
+                                                            "{get_assignee_initials(&item.employee)}"
+                                                        }
+                                                        span { class: "truncate font-medium text-foreground/80", "{item.subtitle}" }
+                                                    } else {
+                                                        UsersIcon { class: "size-3 text-muted-foreground shrink-0" }
+                                                        span { class: "truncate text-muted-foreground", "{item.subtitle}" }
+                                                    }
+                                                }
+
+                                                // Status / Priority Badges
+                                                div { class: "flex items-center gap-1.5 shrink-0",
+                                                    if item.kind == CalendarItemKind::Ticket {
+                                                        Badge {
+                                                            variant: "{priority_badge_variant(&item.priority)}",
+                                                            class: "text-[10px] py-0 h-4.5 px-1.5",
+                                                            "{item.priority}"
+                                                        }
+                                                    }
+                                                    span { class: "rounded border px-1.5 py-0 text-[10px] font-medium {status_cls}",
+                                                        "{status_txt}"
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-
-                        // "+ New Event" Button
-                        Button {
-                            variant: "default",
-                            size: "sm",
-                            class: "h-8 gap-1.5 shadow-xs",
-                            onclick: move |_| open_new_event_for(active_selected),
-                            PlusIcon { class: "size-3.5" }
-                            span { "New Event" }
-                        }
                     }
                 }
             }
 
             // ========================================================
-            // Full Page Calendar View Area
+            // Detail Inspection Modal Dialog
             // ========================================================
-            div { class: "flex-1 overflow-y-auto min-h-0 w-full pr-1",
-                match active_view() {
-                    CalendarView::Month => rsx! {
-                        MonthCalendarGrid {
-                            year: cur_y,
-                            month: cur_m,
-                            today: today,
-                            selected_date: selected_date,
-                            filtered_events: filtered_events.clone(),
-                            on_select_day: move |d| selected_date.set(Some(d)),
-                            on_quick_add: move |d| open_new_event_for(d),
-                            on_open_event: move |ev| detail_event.set(Some(ev)),
-                            on_change_priority: on_change_priority,
-                            on_change_category: on_change_category,
-                            on_delete_event: on_delete_event,
-                            on_switch_view: move |v| active_view.set(v),
-                            on_today: move |_| handle_today(),
-                        }
-                    },
-                    CalendarView::Week => rsx! {
-                        WeekCalendarGrid {
-                            selected_date: active_selected,
-                            today: today,
-                            filtered_events: filtered_events.clone(),
-                            on_select_day: move |d| selected_date.set(Some(d)),
-                            on_quick_add: move |d| open_new_event_for(d),
-                            on_open_event: move |ev| detail_event.set(Some(ev)),
-                            on_change_priority: on_change_priority,
-                            on_change_category: on_change_category,
-                            on_delete_event: on_delete_event,
-                        }
-                    },
-                    CalendarView::Day => rsx! {
-                        DayPlannerView {
-                            selected_date: active_selected,
-                            today: today,
-                            filtered_events: filtered_events.clone(),
-                            on_quick_add: move |d| open_new_event_for(d),
-                            on_open_event: move |ev| detail_event.set(Some(ev)),
-                            on_change_priority: on_change_priority,
-                            on_change_category: on_change_category,
-                            on_delete_event: on_delete_event,
-                        }
-                    },
-                    CalendarView::Schedule => rsx! {
-                        ScheduleTimelineView {
-                            today: today,
-                            filtered_events: filtered_events.clone(),
-                            on_open_event: move |ev| detail_event.set(Some(ev)),
-                            on_quick_add: move || open_new_event_for(today),
-                            on_change_priority: on_change_priority,
-                            on_change_category: on_change_category,
-                            on_delete_event: on_delete_event,
-                        }
-                    },
-                }
-            }
-
-            // ========================================================
-            // Event Details Modal Dialog
-            // ========================================================
-            if let Some(ev) = active_detail {
+            if let Some(detail) = inspect_item() {
                 div { class: "fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in-0 duration-150",
-                    onclick: move |_| detail_event.set(None),
+                    onclick: move |_| inspect_item.set(None),
 
                     div {
-                        class: "relative w-full max-w-lg rounded-lg border border-border/80 bg-background p-5 shadow-2xl transition-all",
+                        class: "relative w-full max-w-lg rounded-lg border border-border/80 bg-background p-6 shadow-2xl transition-all",
                         onclick: move |e| e.stop_propagation(),
 
-                        // Header Ribbon
-                        div { class: "flex items-start justify-between gap-3 border-b border-border/50 pb-3",
-                            div { class: "flex items-center gap-2",
-                                Badge {
-                                    variant: "outline",
-                                    class: "{ev.color.pill_classes().2} {ev.color.pill_classes().0} {ev.color.pill_classes().1}",
-                                    "{ev.category}"
-                                }
-                                Badge {
-                                    variant: "{priority_badge_variant(&ev.priority)}",
-                                    "{ev.priority}"
+                        match detail {
+                            CalendarEntityData::Ticket(t) => {
+                                let display_ticket_id = t.server_ticket_id.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| format!("TKT-{}", t.ticket_id));
+                                rsx! {
+                                    div { class: "flex flex-col gap-4",
+                                        div { class: "flex items-start justify-between border-b border-border/60 pb-3",
+                                            div { class: "flex flex-col gap-1",
+                                                div { class: "flex items-center gap-2",
+                                                    span { class: "rounded bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/25 px-2 py-0.5 text-xs font-bold",
+                                                        "Support Ticket"
+                                                    }
+                                                    span { class: "font-mono text-xs font-bold text-foreground",
+                                                        "{display_ticket_id}"
+                                                    }
+                                                }
+                                                h3 { class: "text-base font-bold text-foreground leading-snug mt-1", "{t.subject}" }
+                                            }
+                                            button {
+                                                r#type: "button",
+                                                class: "p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer",
+                                                onclick: move |_| inspect_item.set(None),
+                                                XIcon { class: "size-4" }
+                                            }
+                                        }
+
+                                    div { class: "grid grid-cols-2 gap-3 text-xs bg-muted/20 p-3 rounded-md border border-border/50",
+                                        div { class: "flex flex-col gap-0.5",
+                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Category" }
+                                            span { class: "font-semibold text-foreground", "{t.category}" }
+                                        }
+                                        div { class: "flex flex-col gap-0.5",
+                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Priority" }
+                                            span { class: "font-semibold text-foreground", "{t.priority}" }
+                                        }
+                                        div { class: "flex flex-col gap-0.5",
+                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Assigned To" }
+                                            span { class: "font-semibold text-foreground", "{t.assigned_to}" }
+                                        }
+                                        div { class: "flex flex-col gap-0.5",
+                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Status" }
+                                            span { class: "font-semibold text-foreground", "{t.kanban_state}" }
+                                        }
+                                        div { class: "flex flex-col gap-0.5",
+                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Created Date" }
+                                            span { class: "font-mono font-medium text-foreground", "{t.created_on}" }
+                                        }
+                                        div { class: "flex flex-col gap-0.5",
+                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Employee Code" }
+                                            span { class: "font-mono font-medium text-foreground", "{t.employee_code}" }
+                                        }
+                                    }
+
+                                    if !t.problem_description.is_empty() {
+                                        div { class: "flex flex-col gap-1",
+                                            span { class: "text-[11px] font-bold uppercase tracking-wider text-muted-foreground", "Problem Description" }
+                                            p { class: "text-xs text-foreground/90 bg-card border border-border/60 p-3 rounded-md leading-relaxed whitespace-pre-wrap",
+                                                "{t.problem_description}"
+                                            }
+                                        }
+                                    }
+
+                                    div { class: "flex justify-end pt-3 border-t border-border/50",
+                                        Button {
+                                            variant: "outline",
+                                            size: "sm",
+                                            onclick: move |_| inspect_item.set(None),
+                                            "Close"
+                                        }
+                                    }
                                 }
                             }
-                            button {
-                                r#type: "button",
-                                class: "rounded-sm p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer",
-                                onclick: move |_| detail_event.set(None),
-                                XIcon { class: "size-4" }
-                            }
-                        }
-
-                        // Event Body
-                        div { class: "mt-4 flex flex-col gap-3.5",
-                            h3 { class: "text-lg font-bold tracking-tight text-foreground", "{ev.title}" }
-
-                            // Time & Date info
-                            div { class: "flex flex-col gap-2 rounded-md border border-border/60 bg-muted/20 p-3",
-                                div { class: "flex items-center gap-2 text-xs font-medium text-foreground",
-                                    CalendarIcon { class: "size-3.5 text-primary shrink-0" }
-                                    span { "{format_date_pretty(ev.date.0, ev.date.1, ev.date.2)}" }
-                                }
-                                div { class: "flex items-center gap-2 font-mono text-xs text-muted-foreground",
-                                    ClockIcon { class: "size-3.5 text-primary shrink-0" }
-                                    span { "{ev.time_display()}" }
-                                }
-                                if let Some(loc) = &ev.location {
-                                    div { class: "flex items-center justify-between gap-2 pt-1 border-t border-border/30",
-                                        div { class: "flex items-center gap-2 text-xs text-foreground min-w-0",
-                                            VideoIcon { class: "size-3.5 text-primary shrink-0" }
-                                            span { class: "truncate font-medium", "{loc}" }
+                        },
+                            CalendarEntityData::Reminder(r) => {
+                                rsx! {
+                                    div { class: "flex flex-col gap-4",
+                                    div { class: "flex items-start justify-between border-b border-border/60 pb-3",
+                                        div { class: "flex flex-col gap-1",
+                                            div { class: "flex items-center gap-2",
+                                                span { class: "rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/25 px-2 py-0.5 text-xs font-bold",
+                                                    "Reminder"
+                                                }
+                                                span { class: "font-mono text-xs font-bold text-foreground",
+                                                    "#{r.reminder_id}"
+                                                }
+                                            }
+                                            h3 { class: "text-base font-bold text-foreground leading-snug mt-1", "{r.reminder_message}" }
                                         }
                                         button {
                                             r#type: "button",
-                                            class: "shrink-0 inline-flex items-center gap-1 rounded-sm bg-primary/10 hover:bg-primary/20 px-2 py-0.5 text-[11px] font-semibold text-primary transition-colors cursor-pointer",
-                                            onclick: {
-                                                let loc_text = loc.clone();
-                                                move |_| {
-                                                    toast.info("Meeting Link", format!("Location: {loc_text}"));
-                                                }
-                                            },
-                                            span { "Connect" }
-                                            ExternalLinkIcon { class: "size-3" }
+                                            class: "p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer",
+                                            onclick: move |_| inspect_item.set(None),
+                                            XIcon { class: "size-4" }
+                                        }
+                                    }
+
+                                    div { class: "grid grid-cols-2 gap-3 text-xs bg-muted/20 p-3 rounded-md border border-border/50",
+                                        div { class: "flex flex-col gap-0.5",
+                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Recipient Name" }
+                                            span { class: "font-semibold text-foreground", "{r.employee_name}" }
+                                        }
+                                        div { class: "flex flex-col gap-0.5",
+                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Employee Code" }
+                                            span { class: "font-mono font-semibold text-foreground", "{r.employee_code}" }
+                                        }
+                                        div { class: "flex flex-col gap-0.5",
+                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Status" }
+                                            span { class: "font-semibold text-foreground", "{r.status}" }
+                                        }
+                                        div { class: "flex flex-col gap-0.5",
+                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Scheduled Send Time" }
+                                            span { class: "font-mono font-medium text-foreground", "{r.send_at}" }
+                                        }
+                                        div { class: "flex flex-col gap-0.5",
+                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Created At" }
+                                            span { class: "font-mono font-medium text-foreground", "{r.created_at}" }
+                                        }
+                                        div { class: "flex flex-col gap-0.5",
+                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Recipient Email" }
+                                            span { class: "font-mono text-[11px] text-foreground truncate", "{r.email_address}" }
+                                        }
+                                    }
+
+                                    div { class: "flex justify-end pt-3 border-t border-border/50",
+                                        Button {
+                                            variant: "outline",
+                                            size: "sm",
+                                            onclick: move |_| inspect_item.set(None),
+                                            "Close"
                                         }
                                     }
                                 }
                             }
-
-                            // Attendees
-                            if !ev.attendees.is_empty() {
-                                div { class: "flex flex-col gap-1.5",
-                                    span { class: "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground",
-                                        "Participants ({ev.attendees.len()})"
-                                    }
-                                    div { class: "flex flex-wrap gap-1.5",
-                                        for person in ev.attendees.iter() {
-                                            div { key: "{person}",
-                                                class: "inline-flex items-center gap-1.5 rounded-sm border border-border/60 bg-card px-2 py-0.5 text-xs text-foreground",
-                                                span { class: "flex size-4 items-center justify-center rounded-xs bg-primary/15 text-[9px] font-bold text-primary",
-                                                    "{person.chars().next().unwrap_or('?')}"
-                                                }
-                                                span { "{person}" }
+                        },
+                            CalendarEntityData::Note(n) => {
+                                rsx! {
+                                    div { class: "flex flex-col gap-4",
+                                    div { class: "flex items-start justify-between border-b border-border/60 pb-3",
+                                        div { class: "flex flex-col gap-1",
+                                            span { class: "rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25 px-2 py-0.5 text-xs font-bold w-fit",
+                                                "Quick Note"
                                             }
+                                            h3 { class: "text-base font-bold text-foreground leading-snug mt-1", "Note #{n.id}" }
+                                        }
+                                        button {
+                                            r#type: "button",
+                                            class: "p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer",
+                                            onclick: move |_| inspect_item.set(None),
+                                            XIcon { class: "size-4" }
+                                        }
+                                    }
+
+                                    div { class: "grid grid-cols-2 gap-3 text-xs bg-muted/20 p-3 rounded-md border border-border/50",
+                                        div { class: "flex flex-col gap-0.5",
+                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Employee Code" }
+                                            span { class: "font-mono font-semibold text-foreground", "{n.emp_code}" }
+                                        }
+                                        div { class: "flex flex-col gap-0.5",
+                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Created At" }
+                                            span { class: "font-mono font-medium text-foreground", "{n.created_at}" }
+                                        }
+                                    }
+
+                                    div { class: "flex flex-col gap-1",
+                                        span { class: "text-[11px] font-bold uppercase tracking-wider text-muted-foreground", "Note Content" }
+                                        p { class: "text-xs text-foreground/90 bg-card border border-border/60 p-3 rounded-md leading-relaxed whitespace-pre-wrap",
+                                            "{n.content}"
+                                        }
+                                    }
+
+                                    div { class: "flex justify-end pt-3 border-t border-border/50",
+                                        Button {
+                                            variant: "outline",
+                                            size: "sm",
+                                            onclick: move |_| inspect_item.set(None),
+                                            "Close"
                                         }
                                     }
                                 }
                             }
-
-                            // Description
-                            if !ev.description.is_empty() {
-                                div { class: "flex flex-col gap-1",
-                                    span { class: "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground",
-                                        "Agenda & Notes"
-                                    }
-                                    p { class: "text-xs leading-relaxed text-foreground/90 rounded-md border border-border/40 bg-card p-3",
-                                        "{ev.description}"
-                                    }
-                                }
-                            }
-                        }
-
-                        // Modal Footer Actions
-                        div { class: "mt-5 flex items-center justify-between border-t border-border/50 pt-3.5",
-                            Button {
-                                variant: "destructive",
-                                size: "sm",
-                                class: "gap-1.5",
-                                onclick: {
-                                    let ev_id = ev.id;
-                                    move |_| {
-                                        events.write().retain(|e| e.id != ev_id);
-                                        detail_event.set(None);
-                                        toast.error("Event Deleted", "The event has been removed from your calendar.");
-                                    }
-                                },
-                                TrashIcon { class: "size-3.5" }
-                                span { "Delete Event" }
-                            }
-
-                            Button {
-                                variant: "outline",
-                                size: "sm",
-                                onclick: move |_| detail_event.set(None),
-                                "Close"
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ========================================================
-            // Create New Event Modal Dialog
-            // ========================================================
-            if *is_new_event_open.read() {
-                div { class: "fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in-0 duration-150",
-                    onclick: move |_| is_new_event_open.set(false),
-
-                    div {
-                        class: "relative w-full max-w-lg rounded-lg border border-border/80 bg-background p-5 shadow-2xl transition-all",
-                        onclick: move |e| e.stop_propagation(),
-
-                        div { class: "flex items-center justify-between border-b border-border/50 pb-3",
-                            div {
-                                h3 { class: "text-base font-bold text-foreground", "Create New Event" }
-                                p { class: "text-xs text-muted-foreground",
-                                    "Schedule a meeting, sprint review, or deployment window."
-                                }
-                            }
-                            button {
-                                r#type: "button",
-                                class: "rounded-sm p-1 text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer",
-                                onclick: move |_| is_new_event_open.set(false),
-                                XIcon { class: "size-4" }
-                            }
-                        }
-
-                        // Form Fields
-                        div { class: "mt-4 flex flex-col gap-3",
-                            // Title
-                            div { class: "flex flex-col gap-1",
-                                label { class: "text-xs font-semibold text-foreground", "Event Title *" }
-                                input {
-                                    r#type: "text",
-                                    placeholder: "e.g. Q4 Infrastructure Architecture Review",
-                                    class: "h-8 rounded-md border border-border/80 bg-card px-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none",
-                                    value: "{form_title}",
-                                    oninput: move |e| form_title.set(e.value()),
-                                }
-                            }
-
-                            // Category & Priority Row
-                            div { class: "grid grid-cols-2 gap-2.5",
-                                div { class: "flex flex-col gap-1",
-                                    label { class: "text-xs font-semibold text-foreground", "Category" }
-                                    select {
-                                        class: "h-8 rounded-md border border-border/80 bg-card px-2.5 text-xs text-foreground focus:border-primary focus:outline-none cursor-pointer",
-                                        value: "{form_category}",
-                                        onchange: move |e| form_category.set(e.value()),
-                                        option { value: "Engineering", "Engineering" }
-                                        option { value: "DevOps", "DevOps" }
-                                        option { value: "Design", "Design" }
-                                        option { value: "Client Demo", "Client Demo" }
-                                        option { value: "IT Operations", "IT Operations" }
-                                        option { value: "Release & QA", "Release & QA" }
-                                        option { value: "General", "General" }
-                                    }
-                                }
-
-                                div { class: "flex flex-col gap-1",
-                                    label { class: "text-xs font-semibold text-foreground", "Priority" }
-                                    select {
-                                        class: "h-8 rounded-md border border-border/80 bg-card px-2.5 text-xs text-foreground focus:border-primary focus:outline-none cursor-pointer",
-                                        value: "{form_priority}",
-                                        onchange: move |e| form_priority.set(e.value()),
-                                        option { value: "Medium", "Medium" }
-                                        option { value: "High", "High" }
-                                        option { value: "Urgent", "Urgent" }
-                                        option { value: "Low", "Low" }
-                                    }
-                                }
-                            }
-
-                            // Date & Time Row
-                            div { class: "grid grid-cols-3 gap-2.5",
-                                div { class: "flex flex-col gap-1",
-                                    label { class: "text-xs font-semibold text-foreground", "Day" }
-                                    input {
-                                        r#type: "number",
-                                        min: "1",
-                                        max: "31",
-                                        class: "h-8 rounded-md border border-border/80 bg-card px-2.5 font-mono text-xs text-foreground focus:border-primary focus:outline-none",
-                                        value: "{form_day}",
-                                        oninput: move |e| {
-                                            if let Ok(v) = e.value().parse::<u32>() {
-                                                form_day.set(v.clamp(1, 31));
-                                            }
-                                        },
-                                    }
-                                }
-
-                                div { class: "flex flex-col gap-1",
-                                    label { class: "text-xs font-semibold text-foreground", "Start Time" }
-                                    input {
-                                        r#type: "text",
-                                        placeholder: "10:00 AM",
-                                        class: "h-8 rounded-md border border-border/80 bg-card px-2.5 font-mono text-xs text-foreground focus:border-primary focus:outline-none",
-                                        value: "{form_time}",
-                                        oninput: move |e| form_time.set(e.value()),
-                                    }
-                                }
-
-                                div { class: "flex flex-col gap-1",
-                                    label { class: "text-xs font-semibold text-foreground", "End Time" }
-                                    input {
-                                        r#type: "text",
-                                        placeholder: "11:00 AM",
-                                        class: "h-8 rounded-md border border-border/80 bg-card px-2.5 font-mono text-xs text-foreground focus:border-primary focus:outline-none",
-                                        value: "{form_end_time}",
-                                        oninput: move |e| form_end_time.set(e.value()),
-                                    }
-                                }
-                            }
-
-                            // Location / Meeting URL
-                            div { class: "flex flex-col gap-1",
-                                label { class: "text-xs font-semibold text-foreground", "Location or Meeting URL" }
-                                input {
-                                    r#type: "text",
-                                    placeholder: "e.g. Google Meet · meet.google.com/xyz, Room 301",
-                                    class: "h-8 rounded-md border border-border/80 bg-card px-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none",
-                                    value: "{form_location}",
-                                    oninput: move |e| form_location.set(e.value()),
-                                }
-                            }
-
-                            // Attendees
-                            div { class: "flex flex-col gap-1",
-                                label { class: "text-xs font-semibold text-foreground", "Participants (comma-separated)" }
-                                input {
-                                    r#type: "text",
-                                    placeholder: "e.g. Employee Name, Code",
-                                    class: "h-8 rounded-md border border-border/80 bg-card px-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none",
-                                    value: "{form_attendees}",
-                                    oninput: move |e| form_attendees.set(e.value()),
-                                }
-                            }
-
-                            // Description
-                            div { class: "flex flex-col gap-1",
-                                label { class: "text-xs font-semibold text-foreground", "Agenda Description" }
-                                textarea {
-                                    rows: "3",
-                                    placeholder: "Meeting objectives, discussion topics, and preparation notes...",
-                                    class: "rounded-md border border-border/80 bg-card p-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none resize-none",
-                                    value: "{form_description}",
-                                    oninput: move |e| form_description.set(e.value()),
-                                }
-                            }
-                        }
-
-                        // Footer Buttons
-                        div { class: "mt-5 flex items-center justify-end gap-2 border-t border-border/50 pt-3.5",
-                            Button {
-                                variant: "outline",
-                                size: "sm",
-                                onclick: move |_| is_new_event_open.set(false),
-                                "Cancel"
-                            }
-
-                            Button {
-                                variant: "default",
-                                size: "sm",
-                                onclick: move |_| {
-                                    let title = form_title.read().trim().to_string();
-                                    if title.is_empty() {
-                                        toast.error("Title Required", "Please enter a title for the event.");
-                                        return;
-                                    }
-
-                                    let target_d = (cur_y, cur_m, *form_day.read());
-                                    let next_id = events.read().iter().map(|e| e.id).max().unwrap_or(0) + 1;
-                                    let attendees_list: Vec<String> = form_attendees.read()
-                                        .split(',')
-                                        .map(|s| s.trim().to_string())
-                                        .filter(|s| !s.is_empty())
-                                        .collect();
-
-                                    let new_ev = CalEvent {
-                                        id: next_id,
-                                        title: title.clone(),
-                                        date: target_d,
-                                        end_date: None,
-                                        time: Some(form_time.read().clone()),
-                                        end_time: Some(form_end_time.read().clone()),
-                                        color: match form_category.read().as_str() {
-                                            "Engineering" => EventColor::Blue,
-                                            "DevOps" => EventColor::Blue,
-                                            "Design" => EventColor::Purple,
-                                            "Client Demo" => EventColor::Green,
-                                            "Release & QA" => EventColor::Red,
-                                            _ => EventColor::Amber,
-                                        },
-                                        category: form_category.read().clone(),
-                                        description: form_description.read().clone(),
-                                        location: if form_location.read().trim().is_empty() {
-                                            None
-                                        } else {
-                                            Some(form_location.read().trim().to_string())
-                                        },
-                                        attendees: attendees_list,
-                                        priority: form_priority.read().clone(),
-                                    };
-
-                                    events.write().push(new_ev);
-                                    selected_date.set(Some(target_d));
-                                    is_new_event_open.set(false);
-                                    toast.success("Event Scheduled", format!("'{title}' added for {}-{:02}-{:02}", target_d.0, target_d.1, target_d.2));
-                                },
-                                "Schedule Event"
-                            }
+                        },
                         }
                     }
                 }
@@ -801,110 +1116,7 @@ pub fn CalendarPage() -> Element {
 }
 
 // ====================================================================
-// Reusable Event Context Menu
-// ====================================================================
-
-#[derive(Props, Clone, PartialEq)]
-struct EventContextMenuProps {
-    event: CalEvent,
-    children: Element,
-    on_open_event: EventHandler<CalEvent>,
-    on_change_priority: EventHandler<(u32, String)>,
-    on_change_category: EventHandler<(u32, String)>,
-    on_delete: EventHandler<u32>,
-}
-
-#[component]
-fn EventContextMenu(props: EventContextMenuProps) -> Element {
-    let ev = props.event;
-    let ev_id = ev.id;
-    let toast = use_context::<ToastState>();
-
-    rsx! {
-        ContextMenu {
-            ContextMenuTrigger {
-                class: "contents",
-                {props.children}
-            }
-            ContextMenuContent {
-                class: "w-52",
-                ContextMenuLabel {
-                    span { class: "font-semibold truncate block", "{ev.title}" }
-                }
-                ContextMenuSeparator {}
-                ContextMenuItem {
-                    on_select: {
-                        let ev_c = ev.clone();
-                        let handler = props.on_open_event;
-                        move |_| handler.call(ev_c.clone())
-                    },
-                    "View Full Details"
-                }
-                if let Some(loc) = &ev.location {
-                    {
-                        let loc_str = loc.clone();
-                        rsx! {
-                            ContextMenuItem {
-                                on_select: move |_| {
-                                    toast.info("Meeting Location", format!("Connect: {loc_str}"));
-                                },
-                                "Connect / Join Meeting"
-                            }
-                        }
-                    }
-                }
-                ContextMenuSub {
-                    ContextMenuSubTrigger { "Change Priority" }
-                    ContextMenuSubContent {
-                        for p in ["Urgent", "High", "Medium", "Low"] {
-                            {
-                                let p_str = p.to_string();
-                                let handler = props.on_change_priority;
-                                rsx! {
-                                    ContextMenuItem {
-                                        key: "{p}",
-                                        on_select: move |_| handler.call((ev_id, p_str.clone())),
-                                        "{p}"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                ContextMenuSub {
-                    ContextMenuSubTrigger { "Change Category" }
-                    ContextMenuSubContent {
-                        for c in ["Engineering", "DevOps", "Design", "Client Demo", "Release & QA", "General"] {
-                            {
-                                let c_str = c.to_string();
-                                let handler = props.on_change_category;
-                                rsx! {
-                                    ContextMenuItem {
-                                        key: "{c}",
-                                        on_select: move |_| handler.call((ev_id, c_str.clone())),
-                                        "{c}"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                ContextMenuSeparator {}
-                ContextMenuItem {
-                    destructive: true,
-                    on_select: {
-                        let handler = props.on_delete;
-                        move |_| handler.call(ev_id)
-                    },
-                    "Delete Event"
-                }
-            }
-        }
-    }
-}
-
-// ====================================================================
-// Subcomponent 1: Full Month Calendar Grid (Full Width, Crisp Geometry)
+// Month Calendar Grid View
 // ====================================================================
 
 #[derive(Props, Clone, PartialEq)]
@@ -912,27 +1124,25 @@ struct MonthGridProps {
     year: u32,
     month: u32,
     today: (u32, u32, u32),
-    selected_date: Signal<Option<(u32, u32, u32)>>,
-    filtered_events: Vec<CalEvent>,
-    on_select_day: EventHandler<(u32, u32, u32)>,
-    on_quick_add: EventHandler<(u32, u32, u32)>,
-    on_open_event: EventHandler<CalEvent>,
-    on_change_priority: EventHandler<(u32, String)>,
-    on_change_category: EventHandler<(u32, String)>,
-    on_delete_event: EventHandler<u32>,
-    on_switch_view: EventHandler<CalendarView>,
-    on_today: EventHandler<()>,
+    selected_date: (u32, u32, u32),
+    date_range: Option<DateRange>,
+    selection_mode: DateSelectionMode,
+    entries: Vec<CalendarEntry>,
+    on_day_click: EventHandler<(u32, u32, u32)>,
 }
 
 #[component]
-fn MonthCalendarGrid(props: MonthGridProps) -> Element {
+fn MonthCalendarView(props: MonthGridProps) -> Element {
     let year = props.year;
     let month = props.month;
     let today = props.today;
-    let selected = *props.selected_date.read();
+    let selected = props.selected_date;
+    let range = props.date_range;
+    let mode = props.selection_mode;
 
     let total_days = days_in_month(year, month);
     let start_sun = first_day_of_month(year, month);
+    // Convert Sunday=0 to Monday=0
     let start_col = if start_sun == 0 { 6 } else { start_sun - 1 };
 
     let prev_m = if month == 1 { 12 } else { month - 1 };
@@ -947,576 +1157,159 @@ fn MonthCalendarGrid(props: MonthGridProps) -> Element {
     let trailing_count = grid_cells - total_cells;
 
     rsx! {
-        div { class: "flex flex-col rounded-md border border-border/60 bg-card overflow-hidden",
+        div { class: "flex flex-col rounded-lg border border-border/70 bg-card overflow-hidden shadow-2xs select-none",
 
-            // Days of the week header (Mon - Sun)
-            div { class: "grid grid-cols-7 border-b border-border/50 bg-muted/30 text-center text-[11px] font-semibold text-muted-foreground",
+            // Day of Week Header (Mon - Sun)
+            div { class: "grid grid-cols-7 border-b border-border/60 bg-muted/40 text-center text-xs font-bold text-muted-foreground",
                 for day_name in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] {
-                    div { key: "{day_name}", class: "py-2 uppercase tracking-wider select-none",
+                    div { key: "{day_name}", class: "py-2.5 uppercase tracking-wider",
                         "{day_name}"
                     }
                 }
             }
 
-            // Month cells grid
-            div { class: "grid grid-cols-7 divide-x divide-border/40",
+            // Month Grid
+            div { class: "grid grid-cols-7 divide-x divide-y divide-border/40",
 
-                // Previous month padding days
+                // Previous month padding
                 for i in 0..start_col {
                     {
                         let day_num = prev_days_count - (start_col as u32 - 1) + (i as u32);
                         let day_date = (prev_y, prev_m, day_num);
-                        let on_select = props.on_select_day;
+                        let on_click = props.on_day_click;
                         rsx! {
                             div {
                                 key: "prev-{day_num}",
-                                class: "group relative min-h-[130px] p-2 bg-muted/10 opacity-35 hover:opacity-75 transition-opacity cursor-pointer flex flex-col justify-between",
-                                onclick: move |_| on_select.call(day_date),
+                                class: "min-h-[105px] p-2 bg-muted/15 opacity-40 hover:opacity-75 transition-opacity cursor-pointer flex flex-col justify-between",
+                                onclick: move |_| on_click.call(day_date),
                                 span { class: "text-xs font-mono text-muted-foreground", "{day_num}" }
                             }
                         }
                     }
                 }
 
-                // Current month active days
+                // Active days of current month
                 for day in 1..=total_days {
                     {
                         let day_date = (year, month, day);
                         let is_today = day_date == today;
-                        let is_sel = selected == Some(day_date);
+                        let on_click = props.on_day_click;
 
-                        let day_events: Vec<CalEvent> = props
-                            .filtered_events
-                            .iter()
-                            .filter(|e| is_event_on(e, day_date))
-                            .cloned()
-                            .collect();
+                        // Check range highlighting
+                        let (is_in_range, is_range_start, is_range_end) = match (mode, range) {
+                            (DateSelectionMode::DateRange, Some((s, e))) => {
+                                (day_date >= s && day_date <= e, day_date == s, day_date == e)
+                            }
+                            _ => (false, false, false),
+                        };
 
-                        let cell_bg = if is_sel {
-                            "bg-primary/[0.04] ring-1 ring-inset ring-primary/40"
+                        let is_single_selected = mode == DateSelectionMode::SingleDate && day_date == selected;
+
+                        // Cell styling
+                        let cell_cls = if is_range_start && is_range_end {
+                            "bg-primary/20 ring-2 ring-inset ring-primary"
+                        } else if is_range_start {
+                            "bg-primary/15 ring-2 ring-inset ring-primary rounded-l-md"
+                        } else if is_range_end {
+                            "bg-primary/15 ring-2 ring-inset ring-primary rounded-r-md"
+                        } else if is_in_range {
+                            "bg-primary/10"
+                        } else if is_single_selected {
+                            "bg-primary/10 ring-2 ring-inset ring-primary/80"
                         } else if is_today {
-                            "bg-primary/[0.02]"
+                            "bg-primary/[0.03]"
                         } else {
-                            "hover:bg-muted/20"
+                            "hover:bg-muted/30"
                         };
 
-                        let on_select = props.on_select_day;
-                        let on_add = props.on_quick_add;
-                        let on_open = props.on_open_event;
-                        let on_change_prio = props.on_change_priority;
-                        let on_change_cat = props.on_change_category;
-                        let on_delete = props.on_delete_event;
-                        let on_switch = props.on_switch_view;
-                        let on_today = props.on_today;
+                        // Count items created on this day
+                        let tickets_count = props.entries.iter().filter(|e| e.date == day_date && e.kind == CalendarItemKind::Ticket).count();
+                        let reminders_count = props.entries.iter().filter(|e| e.date == day_date && e.kind == CalendarItemKind::Reminder).count();
+                        let notes_count = props.entries.iter().filter(|e| e.date == day_date && e.kind == CalendarItemKind::Note).count();
 
                         rsx! {
-                            ContextMenu {
-                                key: "cur-ctx-{day}",
-                                ContextMenuTrigger {
-                                    class: "size-full",
-                                    div {
-                                        class: "group relative min-h-[135px] p-2 transition-colors cursor-pointer flex flex-col gap-1.5 {cell_bg}",
-                                        onclick: move |_| on_select.call(day_date),
+                            div {
+                                key: "cur-{day}",
+                                class: "relative min-h-[110px] p-2 flex flex-col justify-between transition-colors cursor-pointer {cell_cls}",
+                                onclick: move |_| on_click.call(day_date),
 
-                                        // Day Header
-                                        div { class: "flex items-center justify-between",
-                                            if is_today {
-                                                span { class: "flex size-6 items-center justify-center rounded-sm bg-primary font-bold text-xs text-primary-foreground shadow-xs",
-                                                    "{day}"
-                                                }
-                                            } else if is_sel {
-                                                span { class: "flex size-6 items-center justify-center rounded-sm border border-primary font-bold text-xs text-primary",
-                                                    "{day}"
-                                                }
-                                            } else {
-                                                span { class: "text-xs font-mono font-medium text-foreground/80 group-hover:text-foreground",
-                                                    "{day}"
-                                                }
-                                            }
-
-                                            // Quick Add "+" button on hover
-                                            button {
-                                                r#type: "button",
-                                                class: "opacity-0 group-hover:opacity-100 flex size-5 items-center justify-center rounded-xs hover:bg-muted text-muted-foreground hover:text-foreground text-xs font-medium transition-all cursor-pointer",
-                                                title: "Add event on this day",
-                                                onclick: move |e| {
-                                                    e.stop_propagation();
-                                                    on_add.call(day_date);
-                                                },
-                                                "+"
-                                            }
+                                // Day Header
+                                div { class: "flex items-center justify-between",
+                                    if is_today {
+                                        span { class: "flex size-6 items-center justify-center rounded-full bg-primary font-bold text-xs text-primary-foreground shadow-2xs",
+                                            "{day}"
                                         }
-
-                                        // Event chips stack
-                                        div { class: "flex flex-col gap-1 overflow-hidden",
-                                            for ev in day_events.iter().take(4) {
-                                                {
-                                                    let ev_clone = ev.clone();
-                                                    let (pill_bg, pill_text, pill_border) = ev.color.pill_classes();
-                                                    rsx! {
-                                                        EventContextMenu {
-                                                            key: "chip-ctx-{ev.id}",
-                                                            event: ev_clone.clone(),
-                                                            on_open_event: move |e| on_open.call(e),
-                                                            on_change_priority: move |p| on_change_prio.call(p),
-                                                            on_change_category: move |c| on_change_cat.call(c),
-                                                            on_delete: move |id| on_delete.call(id),
-
-                                                            div {
-                                                                class: "flex items-center gap-1.5 rounded-sm border {pill_border} {pill_bg} px-1.5 py-0.5 text-[11px] font-medium transition-colors hover:brightness-105 cursor-pointer truncate",
-                                                                onclick: move |e| {
-                                                                    e.stop_propagation();
-                                                                    on_open.call(ev_clone.clone());
-                                                                },
-                                                                span { class: "size-1.5 shrink-0 rounded-xs {ev.color.dot_class()}" }
-                                                                if let Some(t) = &ev.time {
-                                                                    span { class: "font-mono text-[9px] opacity-75 shrink-0", "{t}" }
-                                                                }
-                                                                span { class: "truncate font-semibold {pill_text}", "{ev.title}" }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            if day_events.len() > 4 {
-                                                span { class: "text-[10px] font-medium text-muted-foreground hover:text-foreground px-1 select-none",
-                                                    "+{day_events.len() - 4} more"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                ContextMenuContent {
-                                    class: "w-48",
-                                    ContextMenuLabel { "{format_date_pretty(year, month, day)}" }
-                                    ContextMenuSeparator {}
-                                    ContextMenuItem {
-                                        on_select: move |_| on_add.call(day_date),
-                                        "+ Schedule Event Here"
-                                    }
-                                    ContextMenuItem {
-                                        on_select: move |_| on_select.call(day_date),
-                                        "Select Date"
-                                    }
-                                    ContextMenuSeparator {}
-                                    ContextMenuItem {
-                                        on_select: move |_| {
-                                            on_select.call(day_date);
-                                            on_switch.call(CalendarView::Day);
-                                        },
-                                        "Open in Day Planner"
-                                    }
-                                    ContextMenuItem {
-                                        on_select: move |_| {
-                                            on_select.call(day_date);
-                                            on_switch.call(CalendarView::Week);
-                                        },
-                                        "Open in Week Planner"
-                                    }
-                                    ContextMenuSeparator {}
-                                    ContextMenuItem {
-                                        on_select: move |_| on_today.call(()),
-                                        "Jump to Today"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Next month trailing padding days
-                for next_d in 1..=trailing_count {
-                    {
-                        let day_date = (next_y, next_m, next_d);
-                        let on_select = props.on_select_day;
-                        rsx! {
-                            div {
-                                key: "next-{next_d}",
-                                class: "group relative min-h-[130px] p-2 bg-muted/10 opacity-35 hover:opacity-75 transition-opacity cursor-pointer flex flex-col justify-between",
-                                onclick: move |_| on_select.call(day_date),
-                                span { class: "text-xs font-mono text-muted-foreground", "{next_d}" }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ====================================================================
-// Subcomponent 2: Week Calendar Grid (7-Day Column Timeline)
-// ====================================================================
-
-#[derive(Props, Clone, PartialEq)]
-struct WeekGridProps {
-    selected_date: (u32, u32, u32),
-    today: (u32, u32, u32),
-    filtered_events: Vec<CalEvent>,
-    on_select_day: EventHandler<(u32, u32, u32)>,
-    on_quick_add: EventHandler<(u32, u32, u32)>,
-    on_open_event: EventHandler<CalEvent>,
-    on_change_priority: EventHandler<(u32, String)>,
-    on_change_category: EventHandler<(u32, String)>,
-    on_delete_event: EventHandler<u32>,
-}
-
-#[component]
-fn WeekCalendarGrid(props: WeekGridProps) -> Element {
-    let (sel_y, sel_m, sel_d) = props.selected_date;
-    let today = props.today;
-
-    // Determine the Monday of the week containing sel_date
-    let dow = day_of_week(sel_y, sel_m, sel_d);
-    let offset_from_mon = if dow == 0 { 6 } else { dow - 1 };
-
-    let mut week_days: Vec<(u32, u32, u32)> = Vec::new();
-    let max_days = days_in_month(sel_y, sel_m);
-
-    for i in 0..7 {
-        let diff = i - offset_from_mon as i32;
-        let d = sel_d as i32 + diff;
-        if d >= 1 && d <= max_days as i32 {
-            week_days.push((sel_y, sel_m, d as u32));
-        } else if d < 1 {
-            let pm = if sel_m == 1 { 12 } else { sel_m - 1 };
-            let py = if sel_m == 1 { sel_y - 1 } else { sel_y };
-            let pmax = days_in_month(py, pm);
-            week_days.push((py, pm, (pmax as i32 + d) as u32));
-        } else {
-            let nm = if sel_m == 12 { 1 } else { sel_m + 1 };
-            let ny = if sel_m == 12 { sel_y + 1 } else { sel_y };
-            week_days.push((ny, nm, (d - max_days as i32) as u32));
-        }
-    }
-
-    let time_slots = [
-        "08:00 AM", "09:00 AM", "10:00 AM", "11:00 AM", "12:00 PM", "01:00 PM", "02:00 PM",
-        "03:00 PM", "04:00 PM", "05:00 PM", "06:00 PM", "07:00 PM",
-    ];
-
-    rsx! {
-        div { class: "flex flex-col rounded-md border border-border/60 bg-card overflow-hidden",
-
-            // 7 Columns header with Day + Date
-            div { class: "grid grid-cols-[64px_repeat(7,1fr)] border-b border-border/50 bg-muted/30 divide-x divide-border/40",
-                div { class: "p-2 text-center text-xs font-semibold text-muted-foreground", "Time" }
-                for (idx, day_date) in week_days.iter().enumerate() {
-                    {
-                        let is_today = *day_date == today;
-                        let is_sel = *day_date == props.selected_date;
-                        let dow_name = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][idx];
-                        let on_sel = props.on_select_day;
-                        let date_copy = *day_date;
-
-                        let header_bg = if is_today {
-                            "bg-primary/10 text-primary"
-                        } else if is_sel {
-                            "bg-accent/40 text-foreground"
-                        } else {
-                            "text-muted-foreground hover:bg-muted/40"
-                        };
-
-                        rsx! {
-                            div {
-                                key: "{day_date.0}-{day_date.1}-{day_date.2}",
-                                class: "flex flex-col items-center justify-center py-2 px-1 cursor-pointer transition-colors {header_bg}",
-                                onclick: move |_| on_sel.call(date_copy),
-                                span { class: "text-[11px] font-semibold uppercase tracking-wider", "{dow_name}" }
-                                span { class: "font-mono text-sm font-bold", "{day_date.2}" }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Time Slots Rows
-            div { class: "divide-y divide-border/30 max-h-[640px] overflow-y-auto",
-                for slot in time_slots.iter() {
-                    {
-                        let slot_hour = slot[0..2].parse::<u32>().unwrap_or(0);
-                        let is_pm = slot.ends_with("PM");
-                        let norm_hour = if is_pm && slot_hour != 12 { slot_hour + 12 } else if !is_pm && slot_hour == 12 { 0 } else { slot_hour };
-
-                        rsx! {
-                            div {
-                                key: "{slot}",
-                                class: "grid grid-cols-[64px_repeat(7,1fr)] divide-x divide-border/30 min-h-[56px]",
-
-                                // Time Label
-                                div { class: "p-2 text-right font-mono text-[10px] text-muted-foreground/75 select-none",
-                                    "{slot}"
-                                }
-
-                                // 7 day cells for this hour slot
-                                for day_date in week_days.iter() {
-                                    {
-                                        let date_copy = *day_date;
-                                        let events_in_slot: Vec<CalEvent> = props
-                                            .filtered_events
-                                            .iter()
-                                            .filter(|e| {
-                                                if !is_event_on(e, date_copy) {
-                                                    return false;
-                                                }
-                                                if let Some(t) = &e.time {
-                                                    let t_pm = t.contains("PM");
-                                                    let t_hour = t[0..2].trim().parse::<u32>().unwrap_or(0);
-                                                    let h = if t_pm && t_hour != 12 { t_hour + 12 } else if !t_pm && t_hour == 12 { 0 } else { t_hour };
-                                                    h == norm_hour
-                                                } else {
-                                                    norm_hour == 9
-                                                }
-                                            })
-                                            .cloned()
-                                            .collect();
-
-                                        let on_open = props.on_open_event;
-                                        let on_add = props.on_quick_add;
-                                        let on_change_prio = props.on_change_priority;
-                                        let on_change_cat = props.on_change_category;
-                                        let on_delete = props.on_delete_event;
-
-                                        rsx! {
-                                            div {
-                                                key: "{date_copy.0}-{date_copy.1}-{date_copy.2}-{slot}",
-                                                class: "group relative p-1 hover:bg-muted/15 transition-colors flex flex-col gap-1",
-
-                                                for ev in events_in_slot.iter() {
-                                                    {
-                                                        let ev_clone = ev.clone();
-                                                        let (pill_bg, pill_text, pill_border) = ev.color.pill_classes();
-                                                        rsx! {
-                                                            EventContextMenu {
-                                                                key: "week-ev-ctx-{ev.id}",
-                                                                event: ev_clone.clone(),
-                                                                on_open_event: move |e| on_open.call(e),
-                                                                on_change_priority: move |p| on_change_prio.call(p),
-                                                                on_change_category: move |c| on_change_cat.call(c),
-                                                                on_delete: move |id| on_delete.call(id),
-
-                                                                div {
-                                                                    class: "flex flex-col gap-0.5 rounded-sm border {pill_border} {pill_bg} p-1.5 transition-colors hover:brightness-105 cursor-pointer",
-                                                                    onclick: move |e| {
-                                                                        e.stop_propagation();
-                                                                        on_open.call(ev_clone.clone());
-                                                                    },
-                                                                    span { class: "text-[11px] font-semibold {pill_text} truncate", "{ev.title}" }
-                                                                    span { class: "font-mono text-[9px] text-muted-foreground", "{ev.time_display()}" }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-
-                                                if events_in_slot.is_empty() {
-                                                    button {
-                                                        r#type: "button",
-                                                        class: "opacity-0 group-hover:opacity-100 size-full flex items-center justify-center text-muted-foreground/60 hover:text-primary transition-all text-xs cursor-pointer",
-                                                        title: "Quick schedule",
-                                                        onclick: move |_| on_add.call(date_copy),
-                                                        "+"
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ====================================================================
-// Subcomponent 3: Day Planner View (Detailed Hourly Breakdown)
-// ====================================================================
-
-#[derive(Props, Clone, PartialEq)]
-struct DayPlannerProps {
-    selected_date: (u32, u32, u32),
-    today: (u32, u32, u32),
-    filtered_events: Vec<CalEvent>,
-    on_quick_add: EventHandler<(u32, u32, u32)>,
-    on_open_event: EventHandler<CalEvent>,
-    on_change_priority: EventHandler<(u32, String)>,
-    on_change_category: EventHandler<(u32, String)>,
-    on_delete_event: EventHandler<u32>,
-}
-
-#[component]
-fn DayPlannerView(props: DayPlannerProps) -> Element {
-    let date = props.selected_date;
-    let is_today = date == props.today;
-    let date_label = format_date_pretty(date.0, date.1, date.2);
-
-    let day_events: Vec<CalEvent> = props
-        .filtered_events
-        .iter()
-        .filter(|e| is_event_on(e, date))
-        .cloned()
-        .collect();
-
-    let hours = [
-        ("08:00 AM", 8),
-        ("09:00 AM", 9),
-        ("10:00 AM", 10),
-        ("11:00 AM", 11),
-        ("12:00 PM", 12),
-        ("01:00 PM", 13),
-        ("02:00 PM", 14),
-        ("03:00 PM", 15),
-        ("04:00 PM", 16),
-        ("05:00 PM", 17),
-        ("06:00 PM", 18),
-        ("07:00 PM", 19),
-    ];
-
-    let on_add = props.on_quick_add;
-
-    rsx! {
-        div { class: "flex flex-col gap-4 rounded-md border border-border/60 bg-card p-5",
-
-            // Day Header Banner
-            div { class: "flex flex-wrap items-center justify-between gap-3 border-b border-border/50 pb-3.5",
-                div {
-                    div { class: "flex items-center gap-2",
-                        h3 { class: "text-lg font-bold text-foreground", "{date_label}" }
-                        if is_today {
-                            span { class: "rounded-sm bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary",
-                                "TODAY"
-                            }
-                        }
-                    }
-                    p { class: "text-xs text-muted-foreground",
-                        "{day_events.len()} events scheduled"
-                    }
-                }
-
-                button {
-                    r#type: "button",
-                    class: "inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer shadow-xs",
-                    onclick: move |_| on_add.call(date),
-                    PlusIcon { class: "size-3.5" }
-                    span { "Add Event for this Day" }
-                }
-            }
-
-            // Hourly Planner
-            div { class: "flex flex-col divide-y divide-border/30",
-                for (hour_label, hour_num) in hours.iter() {
-                    {
-                        let h_num = *hour_num;
-                        let events_at_hour: Vec<CalEvent> = day_events
-                            .iter()
-                            .filter(|e| {
-                                if let Some(t) = &e.time {
-                                    let t_pm = t.contains("PM");
-                                    let t_hour = t[0..2].trim().parse::<u32>().unwrap_or(0);
-                                    let h = if t_pm && t_hour != 12 { t_hour + 12 } else if !t_pm && t_hour == 12 { 0 } else { t_hour };
-                                    h == h_num
-                                } else {
-                                    h_num == 9
-                                }
-                            })
-                            .cloned()
-                            .collect();
-
-                        let on_open = props.on_open_event;
-                        let on_change_prio = props.on_change_priority;
-                        let on_change_cat = props.on_change_category;
-                        let on_delete = props.on_delete_event;
-
-                        rsx! {
-                            div {
-                                key: "{hour_label}",
-                                class: "group grid grid-cols-[80px_1fr] gap-4 py-2.5 min-h-[58px] items-start hover:bg-muted/10 transition-colors rounded-xs px-2",
-
-                                // Left Time Label
-                                span { class: "font-mono text-xs font-semibold text-muted-foreground pt-1 select-none",
-                                    "{hour_label}"
-                                }
-
-                                // Center Content
-                                div { class: "flex flex-col gap-2",
-                                    if events_at_hour.is_empty() {
-                                        div { class: "flex items-center justify-between rounded-xs border border-transparent group-hover:border-dashed group-hover:border-border/50 p-1.5 transition-all",
-                                            span { class: "text-xs text-muted-foreground/40 italic", "No events scheduled" }
-                                            button {
-                                                r#type: "button",
-                                                class: "opacity-0 group-hover:opacity-100 inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline cursor-pointer",
-                                                onclick: move |_| on_add.call(date),
-                                                PlusIcon { class: "size-3" }
-                                                span { "Schedule at {hour_label}" }
-                                            }
+                                    } else if is_single_selected || is_range_start || is_range_end {
+                                        span { class: "flex size-6 items-center justify-center rounded-full border-2 border-primary font-bold text-xs text-primary bg-background shadow-2xs",
+                                            "{day}"
                                         }
                                     } else {
-                                        for ev in events_at_hour.iter() {
-                                            {
-                                                let ev_clone = ev.clone();
-                                                let (pill_bg, pill_text, pill_border) = ev.color.pill_classes();
-                                                rsx! {
-                                                    EventContextMenu {
-                                                        key: "day-ev-ctx-{ev.id}",
-                                                        event: ev_clone.clone(),
-                                                        on_open_event: move |e| on_open.call(e),
-                                                        on_change_priority: move |p| on_change_prio.call(p),
-                                                        on_change_category: move |c| on_change_cat.call(c),
-                                                        on_delete: move |id| on_delete.call(id),
+                                        span { class: "text-xs font-mono font-medium text-foreground/80",
+                                            "{day}"
+                                        }
+                                    }
 
-                                                        div {
-                                                            class: "flex flex-col gap-2 rounded-sm border-l-3 {ev.color.border_accent_class()} border border-border/70 {pill_bg} p-3 transition-colors hover:brightness-105 cursor-pointer shadow-xs",
-                                                            onclick: move |_| on_open.call(ev_clone.clone()),
+                                    // Total created indicator
+                                    if tickets_count + reminders_count + notes_count > 0 {
+                                        span { class: "text-[10px] font-bold text-muted-foreground/70",
+                                            "{tickets_count + reminders_count + notes_count}"
+                                        }
+                                    }
+                                }
 
-                                                            div { class: "flex flex-wrap items-center justify-between gap-2",
-                                                                div { class: "flex items-center gap-2",
-                                                                    span { class: "text-sm font-semibold {pill_text}", "{ev.title}" }
-                                                                    span { class: "rounded-sm border {pill_border} px-1.5 py-0.2 text-[10px] font-bold {pill_text}",
-                                                                        "{ev.category}"
-                                                                    }
-                                                                }
-                                                                Badge {
-                                                                    variant: "{priority_badge_variant(&ev.priority)}",
-                                                                    class: "text-[10px]",
-                                                                    "{ev.priority}"
-                                                                }
-                                                            }
-
-                                                            div { class: "flex flex-wrap items-center gap-4 font-mono text-xs text-muted-foreground",
-                                                                div { class: "flex items-center gap-1.5",
-                                                                    ClockIcon { class: "size-3.5 text-primary" }
-                                                                    span { "{ev.time_display()}" }
-                                                                }
-                                                                if let Some(loc) = &ev.location {
-                                                                    div { class: "flex items-center gap-1.5 text-foreground/80",
-                                                                        MapPinIcon { class: "size-3.5 text-primary" }
-                                                                        span { "{loc}" }
-                                                                    }
-                                                                }
-                                                                if !ev.attendees.is_empty() {
-                                                                    div { class: "flex items-center gap-1.5",
-                                                                        UsersIcon { class: "size-3.5 text-primary" }
-                                                                        span { "{ev.attendees.join(\", \")}" }
-                                                                    }
-                                                                }
-                                                            }
-
-                                                            if !ev.description.is_empty() {
-                                                                p { class: "text-xs text-foreground/80 line-clamp-2 pt-1 border-t border-border/20",
-                                                                    "{ev.description}"
-                                                                }
-                                                            }
-                                                        }
-                                                    }
+                                // Badges stack for created items
+                                div { class: "flex flex-col gap-1 mt-1.5",
+                                    if tickets_count > 0 {
+                                        {
+                                            let s_suffix = if tickets_count > 1 { "s" } else { "" };
+                                            rsx! {
+                                                span { class: "inline-flex items-center gap-1 rounded bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/25 px-1.5 py-0.5 text-[10px] font-semibold truncate",
+                                                    TicketIcon { class: "size-2.5 shrink-0" }
+                                                    span { "{tickets_count} ticket{s_suffix}" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if reminders_count > 0 {
+                                        {
+                                            let s_suffix = if reminders_count > 1 { "s" } else { "" };
+                                            rsx! {
+                                                span { class: "inline-flex items-center gap-1 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/25 px-1.5 py-0.5 text-[10px] font-semibold truncate",
+                                                    BellIcon { class: "size-2.5 shrink-0" }
+                                                    span { "{reminders_count} reminder{s_suffix}" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if notes_count > 0 {
+                                        {
+                                            let s_suffix = if notes_count > 1 { "s" } else { "" };
+                                            rsx! {
+                                                span { class: "inline-flex items-center gap-1 rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25 px-1.5 py-0.5 text-[10px] font-semibold truncate",
+                                                    StickyNoteIcon { class: "size-2.5 shrink-0" }
+                                                    span { "{notes_count} note{s_suffix}" }
                                                 }
                                             }
                                         }
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+
+                // Next month trailing padding
+                for j in 0..trailing_count {
+                    {
+                        let day_num = j + 1;
+                        let day_date = (next_y, next_m, day_num);
+                        let on_click = props.on_day_click;
+                        rsx! {
+                            div {
+                                key: "next-{day_num}",
+                                class: "min-h-[105px] p-2 bg-muted/15 opacity-40 hover:opacity-75 transition-opacity cursor-pointer flex flex-col justify-between",
+                                onclick: move |_| on_click.call(day_date),
+                                span { class: "text-xs font-mono text-muted-foreground", "{day_num}" }
                             }
                         }
                     }
@@ -1527,150 +1320,95 @@ fn DayPlannerView(props: DayPlannerProps) -> Element {
 }
 
 // ====================================================================
-// Subcomponent 4: Schedule Timeline View (Chronological Feed)
+// Schedule Timeline / Agenda List View
 // ====================================================================
 
 #[derive(Props, Clone, PartialEq)]
 struct ScheduleProps {
+    year: u32,
+    month: u32,
     today: (u32, u32, u32),
-    filtered_events: Vec<CalEvent>,
-    on_open_event: EventHandler<CalEvent>,
-    on_quick_add: EventHandler<()>,
-    on_change_priority: EventHandler<(u32, String)>,
-    on_change_category: EventHandler<(u32, String)>,
-    on_delete_event: EventHandler<u32>,
+    selected_date: (u32, u32, u32),
+    date_range: Option<DateRange>,
+    selection_mode: DateSelectionMode,
+    entries: Vec<CalendarEntry>,
+    on_select_day: EventHandler<(u32, u32, u32)>,
+    on_open_item: EventHandler<CalendarEntityData>,
 }
 
 #[component]
-fn ScheduleTimelineView(props: ScheduleProps) -> Element {
-    let today = props.today;
-    let mut sorted_events = props.filtered_events.clone();
-    sorted_events.sort_by_key(|e| (e.date, e.time.clone()));
+fn ScheduleTimelineListView(props: ScheduleProps) -> Element {
+    let mode = props.selection_mode;
+    let range = props.date_range;
+    let selected = props.selected_date;
 
-    let on_add = props.on_quick_add;
-
-    rsx! {
-        div { class: "flex flex-col gap-4 rounded-md border border-border/60 bg-card p-5",
-
-            div { class: "flex items-center justify-between border-b border-border/50 pb-3.5",
-                div {
-                    h3 { class: "text-base font-bold text-foreground", "Schedule Feed" }
-                    p { class: "text-xs text-muted-foreground",
-                        "Chronological timeline of all upcoming milestones and reviews."
-                    }
-                }
-                button {
-                    r#type: "button",
-                    class: "inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer shadow-xs",
-                    onclick: move |_| on_add.call(()),
-                    PlusIcon { class: "size-3.5" }
-                    span { "New Event" }
+    // Filter entries based on range/date
+    let active_entries: Vec<CalendarEntry> = props
+        .entries
+        .iter()
+        .filter(|e| match mode {
+            DateSelectionMode::SingleDate => e.date == selected,
+            DateSelectionMode::DateRange => {
+                if let Some((s, end)) = range {
+                    e.date >= s && e.date <= end
+                } else {
+                    e.date == selected
                 }
             }
+        })
+        .cloned()
+        .collect();
 
-            if sorted_events.is_empty() {
-                div { class: "flex flex-col items-center justify-center gap-2 py-12 text-center",
-                    CalendarIcon { class: "size-8 text-muted-foreground/50" }
-                    p { class: "text-sm font-semibold text-foreground", "No events match your criteria" }
-                    p { class: "text-xs text-muted-foreground", "Try adjusting your search query or category filter." }
+    rsx! {
+        div { class: "flex flex-col gap-4 p-2",
+            if active_entries.is_empty() {
+                div { class: "flex flex-col items-center justify-center py-24 text-muted-foreground gap-2",
+                    CalendarIcon { class: "size-12 text-muted-foreground/30 stroke-1" }
+                    span { class: "text-sm font-bold text-foreground/80", "No activities recorded" }
+                    p { class: "text-xs text-muted-foreground", "No tickets, reminders, or notes found for this timeframe." }
                 }
             } else {
-                div { class: "flex flex-col gap-2.5",
-                    for ev in sorted_events.iter() {
-                        {
-                            let ev_clone = ev.clone();
-                            let is_today = ev.date == today;
-                            let (pill_bg, pill_text, pill_border) = ev.color.pill_classes();
-                            let on_open = props.on_open_event;
-                            let on_change_prio = props.on_change_priority;
-                            let on_change_cat = props.on_change_category;
-                            let on_delete = props.on_delete_event;
+                for item in active_entries.iter() {
+                    {
+                        let item_data = item.data.clone();
+                        let on_open = props.on_open_item;
+                        let (type_cls, type_label) = match item.kind {
+                            CalendarItemKind::Ticket => ("bg-blue-500/10 text-blue-600 border-blue-500/25", "Ticket"),
+                            CalendarItemKind::Reminder => ("bg-amber-500/10 text-amber-600 border-amber-500/25", "Reminder"),
+                            CalendarItemKind::Note => ("bg-emerald-500/10 text-emerald-600 border-emerald-500/25", "Note"),
+                        };
 
-                            rsx! {
-                                EventContextMenu {
-                                    key: "sched-ctx-{ev.id}",
-                                    event: ev_clone.clone(),
-                                    on_open_event: move |e| on_open.call(e),
-                                    on_change_priority: move |p| on_change_prio.call(p),
-                                    on_change_category: move |c| on_change_cat.call(c),
-                                    on_delete: move |id| on_delete.call(id),
+                        rsx! {
+                            div {
+                                key: "{item.key}",
+                                class: "flex items-start gap-4 p-3.5 rounded-lg border border-border/70 bg-card hover:border-primary/50 transition-all cursor-pointer shadow-2xs",
+                                onclick: move |_| on_open.call(item_data.clone()),
 
-                                    div {
-                                        class: "group flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-sm border border-border/60 bg-card p-3.5 hover:border-primary/50 hover:bg-muted/20 transition-all cursor-pointer shadow-xs",
-                                        onclick: move |_| on_open.call(ev_clone.clone()),
+                                // Date badge
+                                div { class: "flex flex-col items-center justify-center rounded-md border border-border bg-muted/30 px-3 py-2 shrink-0 min-w-[70px]",
+                                    span { class: "text-[10px] font-bold uppercase tracking-wider text-muted-foreground",
+                                        "{SHORT_MONTH_NAMES[(item.date.1 - 1) as usize]}"
+                                    }
+                                    span { class: "text-lg font-extrabold text-foreground",
+                                        "{item.date.2}"
+                                    }
+                                }
 
-                                        // Left: Date Badge + Title + Details
-                                        div { class: "flex items-start gap-3.5 min-w-0",
-                                            div { class: "flex size-12 shrink-0 flex-col items-center justify-center rounded-sm border border-border/70 bg-muted/30 font-mono select-none",
-                                                span { class: "text-[9px] font-bold uppercase text-primary leading-none",
-                                                    "{SHORT_MONTH_NAMES[(ev.date.1 - 1) as usize]}"
-                                                }
-                                                span { class: "text-base font-bold text-foreground leading-none mt-1",
-                                                    "{ev.date.2}"
-                                                }
-                                            }
-
-                                            div { class: "flex flex-col gap-1 min-w-0",
-                                                div { class: "flex flex-wrap items-center gap-2",
-                                                    span { class: "text-sm font-semibold text-foreground truncate", "{ev.title}" }
-                                                    span { class: "rounded-sm border {pill_border} {pill_bg} px-1.5 py-0.2 text-[10px] font-semibold {pill_text}",
-                                                        "{ev.category}"
-                                                    }
-                                                    Badge {
-                                                        variant: "{priority_badge_variant(&ev.priority)}",
-                                                        class: "text-[10px]",
-                                                        "{ev.priority}"
-                                                    }
-                                                    if is_today {
-                                                        span { class: "rounded-xs bg-primary/15 px-1.5 py-0.2 text-[9px] font-bold text-primary",
-                                                            "TODAY"
-                                                        }
-                                                    }
-                                                }
-
-                                                div { class: "flex flex-wrap items-center gap-3 font-mono text-xs text-muted-foreground",
-                                                    div { class: "flex items-center gap-1",
-                                                        ClockIcon { class: "size-3.5 text-primary" }
-                                                        span { "{ev.time_display()}" }
-                                                    }
-                                                    if let Some(loc) = &ev.location {
-                                                        div { class: "flex items-center gap-1 text-foreground/80 truncate max-w-64",
-                                                            MapPinIcon { class: "size-3.5 text-primary" }
-                                                            span { class: "truncate", "{loc}" }
-                                                        }
-                                                    }
-                                                    if !ev.attendees.is_empty() {
-                                                        div { class: "flex items-center gap-1",
-                                                            UsersIcon { class: "size-3.5 text-primary" }
-                                                            span { "{ev.attendees.len()} participants" }
-                                                        }
-                                                    }
-                                                }
-
-                                                if !ev.description.is_empty() {
-                                                    p { class: "text-xs text-muted-foreground line-clamp-1 pt-0.5",
-                                                        "{ev.description}"
-                                                    }
-                                                }
-                                            }
+                                // Details
+                                div { class: "flex flex-1 flex-col gap-1 min-w-0",
+                                    div { class: "flex items-center gap-2 flex-wrap",
+                                        span { class: "rounded px-1.5 py-0.5 text-[10px] font-bold border {type_cls}",
+                                            "{type_label}"
                                         }
-
-                                        // Right: Quick Action
-                                        div { class: "flex items-center gap-2 shrink-0 self-end sm:self-center",
-                                            button {
-                                                r#type: "button",
-                                                class: "rounded-sm border border-border/70 bg-muted/40 px-2.5 py-1 text-xs font-medium text-foreground hover:bg-accent transition-colors cursor-pointer",
-                                                onclick: {
-                                                    let ev_c = ev.clone();
-                                                    move |e| {
-                                                        e.stop_propagation();
-                                                        on_open.call(ev_c.clone());
-                                                    }
-                                                },
-                                                "Details"
-                                            }
+                                        if let Some(t) = &item.tag {
+                                            span { class: "font-mono text-[11px] text-muted-foreground", "{t}" }
+                                        }
+                                        if !item.time_str.is_empty() {
+                                            span { class: "text-[10px] text-muted-foreground font-mono ml-auto", "{item.time_str}" }
                                         }
                                     }
+                                    h4 { class: "text-sm font-bold text-foreground leading-snug truncate", "{item.title}" }
+                                    p { class: "text-xs text-muted-foreground line-clamp-2", "{item.details}" }
                                 }
                             }
                         }

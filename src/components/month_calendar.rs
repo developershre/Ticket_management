@@ -249,3 +249,80 @@ pub fn format_date_pretty(year: u32, month: u32, day: u32) -> String {
     };
     format!("{day_name}, {month_name} {day}, {year}")
 }
+
+/// Formats `(year, month, day)` as `YYYY-MM-DD` (ISO 8601).
+pub fn format_ymd(date: (u32, u32, u32)) -> String {
+    format!("{:04}-{:02}-{:02}", date.0, date.1, date.2)
+}
+
+/// Extracts `(year, month, day)` from common datetime strings:
+/// - "2026-11-04 15:30:00"
+/// - "2026-11-04T15:30:00.000Z"
+/// - "2026-11-04"
+/// - "04-11-2026"
+/// - "04/11/2026"
+/// - "11/04/2026"
+pub fn parse_date_ymd(s: &str) -> Option<(u32, u32, u32)> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let date_part = s.split([' ', 'T']).next()?;
+    if date_part.contains('-') {
+        let parts: Vec<&str> = date_part.split('-').collect();
+        if parts.len() == 3 {
+            if parts[0].len() == 4 {
+                let y = parts[0].parse::<u32>().ok()?;
+                let m = parts[1].parse::<u32>().ok()?;
+                let d = parts[2].parse::<u32>().ok()?;
+                if (1..=12).contains(&m) && (1..=31).contains(&d) {
+                    return Some((y, m, d));
+                }
+            } else if parts[2].len() == 4 {
+                let d = parts[0].parse::<u32>().ok()?;
+                let m = parts[1].parse::<u32>().ok()?;
+                let y = parts[2].parse::<u32>().ok()?;
+                if (1..=12).contains(&m) && (1..=31).contains(&d) {
+                    return Some((y, m, d));
+                }
+            }
+        }
+    } else if date_part.contains('/') {
+        let parts: Vec<&str> = date_part.split('/').collect();
+        if parts.len() == 3 {
+            if parts[2].len() == 4 {
+                let p0 = parts[0].parse::<u32>().ok()?;
+                let p1 = parts[1].parse::<u32>().ok()?;
+                let y = parts[2].parse::<u32>().ok()?;
+                if p0 > 12 && p1 <= 12 {
+                    return Some((y, p1, p0)); // DD/MM/YYYY
+                } else if p1 > 12 && p0 <= 12 {
+                    return Some((y, p0, p1)); // MM/DD/YYYY
+                } else if (1..=12).contains(&p1) && (1..=31).contains(&p0) {
+                    return Some((y, p1, p0)); // Default to DD/MM/YYYY
+                }
+            } else if parts[0].len() == 4 {
+                let y = parts[0].parse::<u32>().ok()?;
+                let m = parts[1].parse::<u32>().ok()?;
+                let d = parts[2].parse::<u32>().ok()?;
+                if (1..=12).contains(&m) && (1..=31).contains(&d) {
+                    return Some((y, m, d));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Extracts time portion from datetime string (e.g. "14:30:00" or "02:30 PM").
+pub fn extract_time_str(s: &str) -> String {
+    let s = s.trim();
+    if let Some(pos) = s.find([' ', 'T']) {
+        let rest = s[pos + 1..].trim();
+        let clean = rest.trim_end_matches('Z');
+        if !clean.is_empty() {
+            return clean.to_string();
+        }
+    }
+    String::new()
+}

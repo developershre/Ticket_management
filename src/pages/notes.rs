@@ -27,6 +27,7 @@ pub struct NoteItem {
     pub title: String,
     pub details: String,
     pub raw_content: String,
+    pub created_at: String,
 }
 
 impl NoteItem {
@@ -45,6 +46,7 @@ impl NoteItem {
             title,
             details,
             raw_content: n.content,
+            created_at: n.created_at,
         }
     }
 }

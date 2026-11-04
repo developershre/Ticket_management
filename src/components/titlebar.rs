@@ -8,7 +8,6 @@
 use dioxus::prelude::*;
 use futures_util::StreamExt;
 
-use crate::components::ui::sidebar::SidebarTrigger;
 use crate::components::ui::theme::ThemeToggle;
 use crate::icons::AppLogo;
 use crate::Route;
@@ -65,11 +64,7 @@ pub fn Titlebar(props: TitlebarProps) -> Element {
     rsx! {
         header {
             "data-slot": "titlebar",
-            class: "flex h-10 shrink-0 select-none items-center gap-1 border-b border-sidebar-border/60 bg-sidebar",
-
-            // Sidebar collapse/expand toggle
-            SidebarTrigger {}
-
+            class: "flex py-4 shrink-0 select-none items-center gap-1 border-b border-sidebar-border/60 bg-sidebar",
             // Branding + current page
             div { class: "flex min-w-0 items-center gap-2.5 pl-1.5 pr-2",
                 // Logo mark
@@ -96,26 +91,6 @@ pub fn Titlebar(props: TitlebarProps) -> Element {
                     let next = !*maximized.read();
                     maximized.set(next);
                 },
-                // Sleek quick search visual (Linear / Raycast aesthetic)
-                div {
-                    class: "hidden items-center gap-2 rounded-lg border border-sidebar-border/70 bg-background/50 px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/30 md:flex",
-                    onmousedown: move |e| e.stop_propagation(),
-                    svg {
-                        class: "size-3.5 text-muted-foreground/70",
-                        view_box: "0 0 24 24",
-                        fill: "none",
-                        stroke: "currentColor",
-                        stroke_width: "2",
-                        stroke_linecap: "round",
-                        stroke_linejoin: "round",
-                        circle { cx: "11", cy: "11", r: "8" }
-                        path { d: "m21 21-4.3-4.3" }
-                    }
-                    span { "Search tasks, reminders or events..." }
-                    kbd { class: "ml-4 rounded border border-border/80 bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground",
-                        "⌘K"
-                    }
-                }
             }
 
             // Theme toggle button

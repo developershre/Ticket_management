@@ -33,8 +33,8 @@ use crate::db::{self, SyncOp};
 
 /// Periodic sync interval (seconds).
 pub const CYCLE_SECS: u64 = 25;
-/// Debounce window: wait 1000ms after local changes to coalesce edits before syncing.
-pub const DEBOUNCE_MS: u64 = 1000;
+/// Debounce window: wait 60ms after local changes to coalesce edits before syncing.
+pub const DEBOUNCE_MS: u64 = 60;
 /// Pacing delay between consecutive write operations to prevent Google Apps Script lock collisions.
 const INTER_OP_DELAY_MS: u64 = 1200;
 /// Pacing delay between sync phases (push vs pull).

@@ -152,18 +152,30 @@ fn MultiActivitySelector(props: MultiActivitySelectorProps) -> Element {
                 {
                     let item_str = item.clone();
                     rsx! {
-                        span {
-                            key: "{item_str}",
+                        div {
                             class: "inline-flex items-center gap-1 rounded bg-primary/15 px-2 py-0.5 text-[11px] font-bold tracking-wide text-primary border border-primary/30 uppercase select-none shadow-2xs",
                             "{item_str}"
                             button {
                                 r#type: "button",
-                                class: "hover:text-destructive cursor-pointer ml-0.5 font-bold leading-none select-none text-xs",
                                 onclick: {
                                     let to_remove = item_str.clone();
                                     move |_| remove_activity(value, &to_remove)
                                 },
-                                "×"
+                                svg {
+        width: "24",
+        height: "24",
+        view_box: "0 0 24 24",
+        fill: "none",
+        class: "stroke-black hover:stroke-red-700 cursor-pointer font-bold leading-none select-none text-xs",
+        xmlns: "http://www.w3.org/2000/svg",
+
+        path {
+            d: "M16 16L12 12M12 12L8 8M12 12L16 8M12 12L8 16",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+        }
+    }
                             }
                         }
                     }
@@ -436,7 +448,9 @@ pub fn get_assignee_initials(name: &str) -> String {
     } else {
         let mut chars = clean.chars();
         match (chars.next(), chars.next()) {
-            (Some(c1), Some(c2)) => format!("{}{}", c1.to_ascii_uppercase(), c2.to_ascii_uppercase()),
+            (Some(c1), Some(c2)) => {
+                format!("{}{}", c1.to_ascii_uppercase(), c2.to_ascii_uppercase())
+            }
             (Some(c1), None) => c1.to_ascii_uppercase().to_string(),
             _ => "--".to_string(),
         }
@@ -472,7 +486,9 @@ pub fn assignee_color_classes(name: &str) -> &'static str {
         "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border-emerald-500/40 ring-1 ring-emerald-500/20",
     ];
 
-    let hash: usize = trimmed.bytes().fold(0usize, |acc, b| acc.wrapping_add(b as usize));
+    let hash: usize = trimmed
+        .bytes()
+        .fold(0usize, |acc, b| acc.wrapping_add(b as usize));
     PALETTE[hash % PALETTE.len()]
 }
 
