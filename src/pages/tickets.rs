@@ -422,6 +422,60 @@ impl TicketItem {
     }
 }
 
+/// Returns 1-2 uppercase initials for the assignee (e.g. "Shreyansh" -> "SH", "IT Support" -> "IT", "Kaveri" -> "KA").
+pub fn get_assignee_initials(name: &str) -> String {
+    let clean = name.trim();
+    if clean.is_empty() || clean.eq_ignore_ascii_case("unassigned") {
+        return "--".to_string();
+    }
+    let parts: Vec<&str> = clean.split_whitespace().collect();
+    if parts.len() >= 2 {
+        let c1 = parts[0].chars().next().unwrap_or('-');
+        let c2 = parts[1].chars().next().unwrap_or('-');
+        format!("{}{}", c1.to_ascii_uppercase(), c2.to_ascii_uppercase())
+    } else {
+        let mut chars = clean.chars();
+        match (chars.next(), chars.next()) {
+            (Some(c1), Some(c2)) => format!("{}{}", c1.to_ascii_uppercase(), c2.to_ascii_uppercase()),
+            (Some(c1), None) => c1.to_ascii_uppercase().to_string(),
+            _ => "--".to_string(),
+        }
+    }
+}
+
+/// Returns unique vibrant background, text, and border styling classes for an assignee.
+pub fn assignee_color_classes(name: &str) -> &'static str {
+    let trimmed = name.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("unassigned") {
+        return "bg-muted text-muted-foreground border-border/80";
+    }
+
+    let lower = trimmed.to_lowercase();
+    if lower.contains("shreyansh") {
+        return "bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 border-indigo-500/40 ring-1 ring-indigo-500/20";
+    } else if lower.contains("kaveri") {
+        return "bg-rose-500/20 text-rose-700 dark:text-rose-300 border-rose-500/40 ring-1 ring-rose-500/20";
+    } else if lower.contains("chaitram") {
+        return "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border-emerald-500/40 ring-1 ring-emerald-500/20";
+    } else if lower.contains("it support") {
+        return "bg-blue-500/20 text-blue-700 dark:text-blue-300 border-blue-500/40 ring-1 ring-blue-500/20";
+    }
+
+    const PALETTE: [&str; 8] = [
+        "bg-purple-500/20 text-purple-700 dark:text-purple-300 border-purple-500/40 ring-1 ring-purple-500/20",
+        "bg-amber-500/20 text-amber-700 dark:text-amber-300 border-amber-500/40 ring-1 ring-amber-500/20",
+        "bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 border-cyan-500/40 ring-1 ring-cyan-500/20",
+        "bg-teal-500/20 text-teal-700 dark:text-teal-300 border-teal-500/40 ring-1 ring-teal-500/20",
+        "bg-orange-500/20 text-orange-700 dark:text-orange-300 border-orange-500/40 ring-1 ring-orange-500/20",
+        "bg-fuchsia-500/20 text-fuchsia-700 dark:text-fuchsia-300 border-fuchsia-500/40 ring-1 ring-fuchsia-500/20",
+        "bg-blue-500/20 text-blue-700 dark:text-blue-300 border-blue-500/40 ring-1 ring-blue-500/20",
+        "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border-emerald-500/40 ring-1 ring-emerald-500/20",
+    ];
+
+    let hash: usize = trimmed.bytes().fold(0usize, |acc, b| acc.wrapping_add(b as usize));
+    PALETTE[hash % PALETTE.len()]
+}
+
 /// Global reactive state holder for viewing and modifying tickets
 #[derive(Clone, Copy, PartialEq)]
 pub struct TicketContextState {
@@ -1538,11 +1592,17 @@ fn render_priority_cell(t: &TicketItem) -> Element {
 
 fn render_assignee_cell(t: &TicketItem) -> Element {
     let assignee = t.assignee.clone();
+    let initials = get_assignee_initials(&assignee);
+    let color_cls = assignee_color_classes(&assignee);
+    let name = t.assignee_name();
     rsx! {
-        div { class: "flex items-center gap-1.5",
-            div { class: "flex size-6 items-center justify-center rounded-full bg-muted text-[10px] font-bold text-foreground border border-border/80",
-                "{assignee}"
+        div { class: "flex items-center gap-2",
+            div {
+                class: "flex size-6 shrink-0 items-center justify-center rounded-full text-[10px] font-extrabold uppercase border shadow-2xs {color_cls}",
+                title: "Assigned to: {name}",
+                "{initials}"
             }
+            span { class: "text-xs font-medium text-foreground truncate", "{name}" }
         }
     }
 }
@@ -2000,7 +2060,8 @@ pub fn Tickets() -> Element {
 
     // Save changes from Edit / Modify Ticket dialog
     let mut save_edit = move || {
-        if let Some(mut current) = editing_ticket.read().clone() {
+        let current_ticket = editing_ticket();
+        if let Some(mut current) = current_ticket {
             let subj_val = edit_subject.read().trim().to_string();
             if subj_val.is_empty() {
                 toast.error("Validation Error", "Ticket subject cannot be empty");
@@ -2336,22 +2397,6 @@ pub fn Tickets() -> Element {
                                             ("Pending", "Pending") | ("Open", "Pending") => true,
                                             ("Onhold", "Onhold") | ("On Hold", "Onhold") => true,
                                             ("Completed", "Completed")
-
-                                            // Column header
-
-                                            // Column cards container (acts as full drop target)
-
-                                            // Insertion indicator before card
-
-                                            // Inner card content
-                                            // Header: ID, Status badge, Priority badge, and direct View & Modify buttons!
-                                            // Direct View & Modify buttons on the Kanban card
-
-                                            // Requester identity: Name, Code & Email
-
-                                            // Footer with quick state transition buttons & assignee
-
-                                            // Drop zone at bottom of column
                                             | ("Resolved", "Completed")
                                             | ("Closed", "Completed") => true,
                                             (s, c) => s == c || s.eq_ignore_ascii_case(c),
@@ -2611,9 +2656,6 @@ pub fn Tickets() -> Element {
                                                                             div { class: "flex flex-col gap-0.5 text-[11px] pt-0.5",
                                                                                 div { class: "flex items-center justify-between gap-1.5 text-muted-foreground",
                                                                                     span { class: "font-medium text-foreground truncate", "{ticket.emp_name()}" }
-                                                                                    span { class: "font-mono text-[10px] text-muted-foreground shrink-0",
-                                                                                        "{ticket.emp_code_only()}"
-                                                                                    }
                                                                                 }
                                                                                 div { class: "flex items-center justify-between gap-1 text-[10px] text-muted-foreground/80",
                                                                                     span { class: "truncate", "{ticket.email_address}" }
@@ -2637,39 +2679,18 @@ pub fn Tickets() -> Element {
                                                                                 span { class: "rounded-md bg-muted/80 px-2 py-0.5 text-[10px] font-medium text-muted-foreground mr-1",
                                                                                     "{category}"
                                                                                 }
-                                                                                for & target_col in COLUMN_NAMES {
-                                                                                    if target_col != column {
-                                                                                        {
-                                                                                            let t_id = id.clone();
-                                                                                            let t_target = target_col.to_string();
-                                                                                            let short_label = match target_col {
-                                                                                                "Pending" => "Pend",
-                                                                                                "InProgress" => "InProg",
-                                                                                                "Onhold" => "Hold",
-                                                                                                _ => "Done",
-                                                                                            };
-                                                                                            let move_title = format!("Change stage to {}", column_display_label(target_col));
-                                                                                            rsx! {
-                                                                                                button {
-                                                                                                    r#type: "button",
-                                                                                                    key: "mv-{id}-{target_col}",
-                                                                                                    title: "{move_title}",
-                                                                                                    class: "cursor-pointer rounded px-1.5 py-0.5 text-[9px] font-semibold text-muted-foreground border border-border/60 hover:text-foreground hover:border-primary/50 hover:bg-primary/10 transition-colors",
-                                                                                                    onclick: move |e: MouseEvent| {
-                                                                                                        e.stop_propagation();
-                                                                                                        move_to_column_end(t_id.clone(), t_target.clone());
-                                                                                                    },
-                                                                                                    "→ {short_label}"
-                                                                                                }
-                                                                                            }
-                                                                                        }
+                                                                            }
+                                                                            {
+                                                                                let initials = get_assignee_initials(&assignee);
+                                                                                let color_cls = assignee_color_classes(&assignee);
+                                                                                let display_name = ticket.assignee_name();
+                                                                                rsx! {
+                                                                                    div {
+                                                                                        title: "Assigned to: {display_name}",
+                                                                                        class: "flex size-6 shrink-0 items-center justify-center rounded-full text-[10px] font-extrabold uppercase border shadow-2xs pointer-events-auto cursor-help transition-transform hover:scale-110 {color_cls}",
+                                                                                        "{initials}"
                                                                                     }
                                                                                 }
-                                                                            }
-                                                                            div {
-                                                                                title: "{ticket.assignee_name()} ({assignee})",
-                                                                                class: "flex size-5.5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold bg-muted text-foreground border border-border/80 pointer-events-auto cursor-help",
-                                                                                "{assignee}"
                                                                             }
                                                                         }
                                                                     }
@@ -2776,7 +2797,7 @@ pub fn Tickets() -> Element {
             // ============================================================
             Dialog { open: is_view_open,
                 DialogContent { class: "max-w-4xl sm:max-w-4xl w-full rounded-md border border-border/80 bg-card p-6 sm:p-7 shadow-2xl max-h-[88vh] overflow-y-auto",
-                    if let Some(ticket) = viewing_ticket.read().as_ref() {
+                    if let Some(ticket) = viewing_ticket() {
                         {
                             let t_for_edit = ticket.clone();
                             let status_lbl = column_display_label(&ticket.kanban_state);
@@ -2858,7 +2879,13 @@ pub fn Tickets() -> Element {
                                             span { class: "text-[9px] font-semibold text-muted-foreground uppercase tracking-wider",
                                                 "Assigned To"
                                             }
-                                            span { class: "font-semibold text-foreground text-xs truncate", "{ticket.assignee_name()}" }
+                                            div { class: "flex items-center gap-1.5 mt-0.5",
+                                                div {
+                                                    class: "flex size-5.5 shrink-0 items-center justify-center rounded-full text-[9px] font-extrabold uppercase border shadow-2xs {assignee_color_classes(&ticket.assigned_to)}",
+                                                    "{get_assignee_initials(&ticket.assigned_to)}"
+                                                }
+                                                span { class: "font-semibold text-foreground text-xs truncate", "{ticket.assignee_name()}" }
+                                            }
                                             span { class: "text-[10px] text-muted-foreground font-mono", "({ticket.assigned_to})" }
                                         }
                                         div { class: "flex flex-col gap-0.5 rounded-md bg-muted/20 p-2.5 border border-border/40",
@@ -3243,7 +3270,7 @@ pub fn Tickets() -> Element {
             // ============================================================
             Dialog { open: is_edit_open,
                 DialogContent { class: "max-w-4xl sm:max-w-4xl w-full rounded-md border border-border/80 bg-card p-6 sm:p-7 shadow-2xl max-h-[88vh] overflow-y-auto",
-                    if let Some(ticket) = editing_ticket.read().as_ref() {
+                    if let Some(ticket) = editing_ticket() {
                         {
                             let t_id = ticket.id.clone();
                             rsx! {
@@ -3633,7 +3660,7 @@ pub fn Tickets() -> Element {
             }
 
             if table_ctx_open() {
-                if let Some(ticket) = table_ctx_ticket.read().clone() {
+                if let Some(ticket) = table_ctx_ticket() {
                     TableFloatingContextMenu {
                         ticket,
                         open: table_ctx_open,

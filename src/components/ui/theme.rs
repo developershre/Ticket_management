@@ -6,7 +6,6 @@
 
 use dioxus::prelude::*;
 
-use crate::components::ui::tooltip::{Tooltip, TooltipContent, TooltipTrigger};
 use crate::icons::{MonitorIcon, MoonIcon, SunIcon};
 
 // ============================================================
@@ -375,9 +374,7 @@ pub fn ThemeToggle(props: ThemeToggleProps) -> Element {
     let tooltip_text = format!("Theme: {} (Click to switch)", mode.label());
 
     rsx! {
-        Tooltip {
-            TooltipTrigger {
-                button {
+                        button {
                     r#type: "button",
                     title: "{tooltip_text}",
                     class: "group relative inline-flex size-8 items-center justify-center rounded-md \
@@ -398,11 +395,6 @@ pub fn ThemeToggle(props: ThemeToggleProps) -> Element {
                         span { class: "ml-2 text-xs font-medium", "{mode.label()}" }
                     }
                 }
-            }
-            TooltipContent {
-                p { "{tooltip_text}" }
-            }
-        }
     }
 }
 
