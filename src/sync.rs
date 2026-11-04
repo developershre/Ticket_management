@@ -1256,11 +1256,14 @@ async fn execute_reminder_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutc
             }
             let sanitized = sanitize_reminder_create_payload(&op.payload);
             let remote = client.reminders_create(&sanitized).await?;
-            db::set_reminder_mapping(
-                op.local_ticket_id,
-                &remote.reminder_id,
-                &remote.last_updated_at,
-            )?;
+            if !remote.reminder_id.is_empty() {
+                db::set_reminder_mapping(
+                    op.local_ticket_id,
+                    &remote.reminder_id,
+                    &remote.last_updated_at,
+                )?;
+            }
+            let _ = db::deduplicate_reminders_db();
             Ok(ExecOutcome::Synced)
         }
         "UPDATE" => {
@@ -1414,12 +1417,19 @@ async fn pull_reminders(client: &ApiClient) -> Result<usize, ApiError> {
             }
             None => {
                 if !r.status.eq_ignore_ascii_case("cancelled") && !db::server_id_has_active_delete(server_id) {
-                    db::insert_server_reminder(r)?;
-                    changed += 1;
+                    if let Some(matched_local_id) = db::find_unmapped_or_duplicate_reminder(r) {
+                        db::set_reminder_mapping(matched_local_id, server_id, &r.last_updated_at)?;
+                        db::apply_server_reminder(matched_local_id, r)?;
+                        changed += 1;
+                    } else {
+                        db::insert_server_reminder(r)?;
+                        changed += 1;
+                    }
                 }
             }
         }
     }
+    let _ = db::deduplicate_reminders_db();
     Ok(changed)
 }
 

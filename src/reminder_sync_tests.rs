@@ -442,4 +442,60 @@ mod tests {
         assert_eq!(filter_code.len(), 1);
         assert_eq!(filter_code[0].emp_name, "Chaitram Sahu");
     }
+
+    /// Test 10: Reminder deduplication - matches unmapped row with pulled server row and merges duplicates
+    #[test]
+    fn test_reminder_deduplication_and_unmapped_matching() {
+        let (_path, _lock) = setup_test_db();
+
+        let input = NewReminderInput {
+            employee_code: "11135".to_string(),
+            employee_name: "Shreyansh Awadhiya".to_string(),
+            email_address: "it@bhagwatipower.com".to_string(),
+            service_category: "Software".to_string(),
+            reminder_message: "testing: testing mail".to_string(),
+            send_at: "2026-11-04 23:55:00".to_string(),
+            status: "Pending".to_string(),
+            email_sent_at: "Not sent yet".to_string(),
+            ticket_id: String::new(),
+            cc_emails: String::new(),
+            repeat_frequency: "once".to_string(),
+        };
+
+        let local_id = db::create_reminder_full(&input).expect("create local unmapped reminder");
+
+        let server_r = crate::api::ServerReminder {
+            reminder_id: "REM-20261104235243-86307EC2".to_string(),
+            employee_code: "11135".to_string(),
+            employee_name: "Shreyansh Awadhiya".to_string(),
+            email_address: "it@bhagwatipower.com".to_string(),
+            service_category: "Software".to_string(),
+            reminder_message: "testing: testing mail".to_string(),
+            send_at: "2026-11-04T18:25:00.000Z".to_string(),
+            status: "Pending".to_string(),
+            email_sent_at: "2026-11-04T18:24:26.846Z".to_string(),
+            ticket_id: String::new(),
+            created_at: "2026-11-04T18:22:43.542Z".to_string(),
+            last_updated_at: "2026-11-04T18:24:26.846Z".to_string(),
+            cc_emails: String::new(),
+            repeat_frequency: "once".to_string(),
+        };
+
+        // 1. Matching should find the local unmapped row
+        let matched = db::find_unmapped_or_duplicate_reminder(&server_r);
+        assert_eq!(matched, Some(local_id));
+
+        // 2. If a duplicate was inserted, deduplicate_reminders_db merges them into one
+        let dup_id = db::insert_server_reminder(&server_r).expect("insert duplicate");
+        assert_ne!(dup_id, local_id);
+        assert_eq!(db::get_all_reminders().len(), 2);
+
+        let merged_count = db::deduplicate_reminders_db().expect("deduplicate");
+        assert_eq!(merged_count, 1);
+
+        let all = db::get_all_reminders();
+        assert_eq!(all.len(), 1, "Only one reminder must remain after deduplication");
+        assert_eq!(all[0].reminder_id, local_id);
+        assert_eq!(all[0].server_reminder_id, "REM-20261104235243-86307EC2");
+    }
 }

@@ -1266,6 +1266,15 @@ fn parse_employee(data: Value) -> Result<Employee, ApiError> {
 }
 
 fn parse_reminder(data: Value) -> Result<ServerReminder, ApiError> {
-    serde_json::from_value(data)
+    let target = if let Some(sub) = data.get("reminder") {
+        if sub.is_object() {
+            sub.clone()
+        } else {
+            data
+        }
+    } else {
+        data
+    };
+    serde_json::from_value(target)
         .map_err(|e| ApiError::Decode(format!("invalid reminder payload: {e}")))
 }
