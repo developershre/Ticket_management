@@ -115,6 +115,8 @@ pub fn Fab() -> Element {
     let mut reminder_cc_emails = use_signal(String::new);
     let mut reminder_category = use_signal(|| "Select category".to_string());
     let mut reminder_priority = use_signal(|| "Low".to_string());
+    let mut reminder_repeat_frequency = use_signal(|| "daily".to_string());
+    let mut reminder_send_at = use_signal(String::new);
     let mut reminder_subject = use_signal(String::new);
     let mut reminder_problem_description = use_signal(String::new);
 
@@ -143,6 +145,8 @@ pub fn Fab() -> Element {
                 reminder_cc_emails.write().clear();
                 reminder_category.set("Select category".to_string());
                 reminder_priority.set("Low".to_string());
+                reminder_repeat_frequency.set("daily".to_string());
+                reminder_send_at.write().clear();
                 reminder_subject.write().clear();
                 reminder_problem_description.write().clear();
             }
@@ -292,8 +296,16 @@ pub fn Fab() -> Element {
         }
 
         let reminder_msg = format!("{subj_val}: {desc_val}");
-        let now_str = crate::state::format_utc(crate::sync::now_epoch());
         let cc_val = reminder_cc_emails.read().trim().to_string();
+        let send_at_val = reminder_send_at.read().trim().to_string();
+        let final_send_at = if send_at_val.is_empty() {
+            let now_str = crate::state::format_utc(crate::sync::now_epoch());
+            crate::sync::parse_to_iso8601(&now_str)
+        } else {
+            crate::sync::parse_to_iso8601(&send_at_val)
+        };
+        let freq_val = reminder_repeat_frequency.read().trim().to_lowercase();
+        let final_freq = if freq_val == "once" { "once" } else { "daily" };
 
         let input = crate::db::NewReminderInput {
             employee_code: emp_code,
@@ -301,11 +313,12 @@ pub fn Fab() -> Element {
             email_address: email_val,
             service_category: cat_val,
             reminder_message: reminder_msg,
-            send_at: crate::sync::parse_to_iso8601(&now_str),
+            send_at: final_send_at,
             status: "Pending".to_string(),
             email_sent_at: "Not sent yet".to_string(),
             ticket_id: String::new(),
             cc_emails: cc_val,
+            repeat_frequency: final_freq.to_string(),
         };
 
         match crate::db::create_reminder_full(&input) {
@@ -717,6 +730,33 @@ pub fn Fab() -> Element {
                                             ("High".to_string(), "High".to_string()),
                                             ("Critical".to_string(), "Critical".to_string()),
                                         ],
+                                    }
+                                }
+                            }
+
+                            // Row 3.5: Repeat Frequency & Scheduled Send At
+                            div { class: "grid grid-cols-1 sm:grid-cols-2 gap-4",
+                                div { class: "flex flex-col gap-1.5",
+                                    label { class: "text-xs font-semibold text-foreground", "Repeat Frequency" }
+                                    SimpleSelect {
+                                        value: reminder_repeat_frequency,
+                                        placeholder: "Select frequency...".to_string(),
+                                        options: vec![
+                                            ("daily".to_string(), "Daily (every 24h)".to_string()),
+                                            ("once".to_string(), "Once (one-time send)".to_string()),
+                                        ],
+                                    }
+                                }
+                                div { class: "flex flex-col gap-1.5",
+                                    label { class: "text-xs font-semibold text-foreground flex items-center justify-between",
+                                        span { "Schedule Date & Time" }
+                                        span { class: "text-[10px] text-muted-foreground font-normal", "(Leave empty for now)" }
+                                    }
+                                    Input {
+                                        class: "h-10 text-sm rounded-md border border-input bg-card px-3 focus:border-primary focus:ring-1 focus:ring-primary/20",
+                                        placeholder: "e.g. 2026-11-06T10:30:00+05:30".to_string(),
+                                        value: reminder_send_at.read().clone(),
+                                        oninput: move |e: FormEvent| reminder_send_at.set(e.value()),
                                     }
                                 }
                             }

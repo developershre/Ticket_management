@@ -1168,6 +1168,14 @@ pub fn sanitize_reminder_create_payload(payload: &Value) -> Value {
             out.insert("reminder_message".to_string(), v.clone());
         }
         out.insert("send_at".to_string(), ensure_iso8601(obj.get("send_at")));
+        let freq = obj
+            .get("repeat_frequency")
+            .and_then(|v| v.as_str())
+            .unwrap_or("daily")
+            .trim()
+            .to_ascii_lowercase();
+        let freq_val = if freq == "once" { "once" } else { "daily" };
+        out.insert("repeat_frequency".to_string(), json!(freq_val));
         // Omitted when empty: a create without `cc_emails` means "no CC".
         if let Some(Value::String(cc)) = cc_field(obj) {
             if !cc.is_empty() {
@@ -1205,7 +1213,7 @@ fn cc_field(obj: &serde_json::Map<String, Value>) -> Option<Value> {
 }
 
 /// `reminders.update` only accepts: `employee_code`, `service_category`,
-/// `reminder_message`, `send_at`, `status`, `cc_emails`.
+/// `reminder_message`, `send_at`, `status`, `repeat_frequency`, `cc_emails`.
 pub fn sanitize_reminder_update_payload(payload: &Value) -> Value {
     let mut out = serde_json::Map::new();
     if let Some(obj) = payload.as_object() {
@@ -1223,6 +1231,11 @@ pub fn sanitize_reminder_update_payload(payload: &Value) -> Value {
         }
         if let Some(v) = obj.get("status") {
             out.insert("status".to_string(), v.clone());
+        }
+        if let Some(v) = obj.get("repeat_frequency").and_then(|v| v.as_str()) {
+            let clean = v.trim().to_ascii_lowercase();
+            let freq_val = if clean == "once" { "once" } else { "daily" };
+            out.insert("repeat_frequency".to_string(), json!(freq_val));
         }
         // Forwarded even when empty: `"cc_emails": ""` is how the API clears
         // recipients. Absent key means "leave unchanged".

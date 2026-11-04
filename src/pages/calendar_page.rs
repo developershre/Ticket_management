@@ -1040,12 +1040,22 @@ pub fn CalendarPage() -> Element {
                                             span { class: "font-mono font-medium text-foreground", "{r.send_at}" }
                                         }
                                         div { class: "flex flex-col gap-0.5",
+                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Repeat Frequency" }
+                                            span { class: "font-mono font-semibold text-foreground uppercase", "{r.repeat_frequency}" }
+                                        }
+                                        div { class: "flex flex-col gap-0.5",
                                             span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Created At" }
                                             span { class: "font-mono font-medium text-foreground", "{r.created_at}" }
                                         }
                                         div { class: "flex flex-col gap-0.5",
                                             span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Recipient Email" }
                                             span { class: "font-mono text-[11px] text-foreground truncate", "{r.email_address}" }
+                                        }
+                                        if !r.cc_emails.is_empty() {
+                                            div { class: "col-span-2 flex flex-col gap-0.5 pt-1 border-t border-border/30",
+                                                span { class: "text-muted-foreground text-[10px] uppercase font-bold", "CC Recipients" }
+                                                span { class: "font-mono text-[11px] text-foreground truncate", "{r.cc_emails}" }
+                                            }
                                         }
                                     }
 

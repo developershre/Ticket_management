@@ -18,8 +18,8 @@ use crate::components::ui::select::SimpleSelect;
 use crate::components::ui::separator::Separator;
 use crate::components::ui::toast::ToastState;
 use crate::icons::{
-    ArrowDownIcon, ArrowUpIcon, BellIcon, CheckIcon, ClockIcon, CopyIcon, FilterIcon,
-    GripVerticalIcon, PlusIcon, SearchIcon, TicketIcon, TrashIcon,
+    ArrowDownIcon, ArrowUpIcon, BellIcon, CheckIcon, ClockIcon, CopyIcon, EyeIcon, FilterIcon,
+    GripVerticalIcon, PencilIcon, PlusIcon, SearchIcon, TicketIcon, TrashIcon,
 };
 
 /// Reminder item model stored in reactive state with all 12 fields.
@@ -41,6 +41,7 @@ pub struct ReminderItem {
     pub server_reminder_id: String,
     pub server_last_updated: String,
     pub cc_emails: String,
+    pub repeat_frequency: String,
     pub done: bool,
 }
 
@@ -124,6 +125,7 @@ fn initial_reminders() -> Vec<ReminderItem> {
                 server_reminder_id: r.server_reminder_id,
                 server_last_updated: r.server_last_updated,
                 cc_emails: r.cc_emails,
+                repeat_frequency: r.repeat_frequency,
                 done,
             }
         })
@@ -140,6 +142,7 @@ struct ReminderContextMenuProps {
     rank: usize,
     total_count: usize,
     children: Element,
+    on_inspect: EventHandler<ReminderItem>,
     on_toggle_done: EventHandler<String>,
     on_move_top: EventHandler<String>,
     on_move_relative: EventHandler<(String, i32)>,
@@ -175,6 +178,16 @@ fn ReminderContextMenu(props: ReminderContextMenuProps) -> Element {
                     span { class: "text-[11px] text-muted-foreground truncate block font-normal mt-0.5", "{r.reminder_message}" }
                 }
                 ContextMenuSeparator {}
+
+                ContextMenuItem {
+                    on_select: {
+                        let r_c = r.clone();
+                        let handler = props.on_inspect;
+                        move |_| handler.call(r_c.clone())
+                    },
+                    EyeIcon { class: "size-3.5 text-muted-foreground" }
+                    "View & Edit Details"
+                }
 
                 if !is_done {
                     ContextMenuItem {
@@ -457,7 +470,7 @@ pub fn Reminders() -> Element {
     let mut is_detail_open = use_signal(|| false);
     let mut active_reminder = use_signal(|| Option::<ReminderItem>::None);
 
-    // Form inputs for Create Reminder dialog (matching the exact Create Support Ticket form)
+    // Form inputs for Create Reminder dialog
     let mut new_employee_code = use_signal(String::new);
     let mut new_email_address = use_signal(String::new);
     let mut new_employee_name = use_signal(String::new);
@@ -466,9 +479,35 @@ pub fn Reminders() -> Element {
     let mut new_subject = use_signal(String::new);
     let mut new_problem_description = use_signal(String::new);
     let mut new_cc_emails = use_signal(String::new);
-    let directory_employees = crate::db::get_all_employees();
+    let mut new_repeat_frequency = use_signal(|| "daily".to_string());
+    let mut new_send_at = use_signal(String::new);
 
+    // Edit Reminder modal state
+    let mut is_editing = use_signal(|| false);
+    let mut edit_message = use_signal(String::new);
+    let mut edit_category = use_signal(|| "General".to_string());
+    let mut edit_send_at = use_signal(String::new);
+    let mut edit_repeat_frequency = use_signal(|| "daily".to_string());
+    let mut edit_cc_emails = use_signal(String::new);
+
+    let directory_employees = crate::db::get_all_employees();
     let toast = use_context::<ToastState>();
+
+    let mut open_detail = move |r: ReminderItem| {
+        edit_message.set(r.reminder_message.clone());
+        edit_category.set(r.service_category.clone());
+        edit_send_at.set(r.send_at.clone());
+        let freq = if r.repeat_frequency.trim().is_empty() {
+            "daily".to_string()
+        } else {
+            r.repeat_frequency.clone()
+        };
+        edit_repeat_frequency.set(freq);
+        edit_cc_emails.set(r.cc_emails.clone());
+        is_editing.set(false);
+        active_reminder.set(Some(r));
+        is_detail_open.set(true);
+    };
 
     let q = query.read().to_lowercase();
     let cat = category_filter.read().clone();
@@ -482,10 +521,13 @@ pub fn Reminders() -> Element {
         new_priority.set("Low".to_string());
         new_subject.write().clear();
         new_problem_description.write().clear();
+        new_cc_emails.write().clear();
+        new_repeat_frequency.set("daily".to_string());
+        new_send_at.write().clear();
         is_create_open.set(true);
     };
 
-    // Save newly created reminder / ticket
+    // Save newly created reminder
     let mut save_new_reminder = move || {
         let emp_code = new_employee_code.read().trim().to_string();
         if emp_code.is_empty() {
@@ -527,20 +569,29 @@ pub fn Reminders() -> Element {
         }
 
         let reminder_msg = format!("{subj_val}: {desc_val}");
-        let now_str = crate::state::format_utc(crate::sync::now_epoch());
-
         let cc_val = new_cc_emails.read().trim().to_string();
+        let send_at_val = new_send_at.read().trim().to_string();
+        let final_send_at = if send_at_val.is_empty() {
+            let now_str = crate::state::format_utc(crate::sync::now_epoch());
+            crate::sync::parse_to_iso8601(&now_str)
+        } else {
+            crate::sync::parse_to_iso8601(&send_at_val)
+        };
+        let freq_val = new_repeat_frequency.read().trim().to_lowercase();
+        let final_freq = if freq_val == "once" { "once" } else { "daily" };
+
         let input = crate::db::NewReminderInput {
             employee_code: emp_code.clone(),
             employee_name: emp_name.clone(),
             email_address: email_val.clone(),
             service_category: cat_val.clone(),
             reminder_message: reminder_msg,
-            send_at: crate::sync::parse_to_iso8601(&now_str),
+            send_at: final_send_at,
             status: "Pending".to_string(),
             email_sent_at: "Not sent yet".to_string(),
             ticket_id: String::new(),
             cc_emails: cc_val.clone(),
+            repeat_frequency: final_freq.to_string(),
         };
 
         match crate::db::create_reminder_full(&input) {
@@ -563,6 +614,7 @@ pub fn Reminders() -> Element {
                     server_reminder_id: String::new(),
                     server_last_updated: String::new(),
                     cc_emails: cc_val,
+                    repeat_frequency: input.repeat_frequency,
                     done: false,
                 };
                 reminders.write().insert(0, item);
@@ -570,8 +622,8 @@ pub fn Reminders() -> Element {
                     sync.with_mut(|r| r.0 += 1);
                 }
                 toast.success(
-                    "Ticket Submitted",
-                    format!("Ticket for {emp_name} ({emp_code}) submitted successfully"),
+                    "Reminder Scheduled",
+                    format!("Reminder for {emp_name} ({emp_code}) created successfully"),
                 );
                 is_create_open.set(false);
             }
@@ -582,6 +634,72 @@ pub fn Reminders() -> Element {
                 );
             }
         }
+    };
+
+    // Save modifications to existing reminder
+    let mut save_reminder_edits = move || {
+        let Some(curr) = active_reminder.read().clone() else { return; };
+        let rem_id = curr.reminder_id;
+        let msg = edit_message.read().trim().to_string();
+        if msg.is_empty() {
+            toast.error("Validation Error", "Reminder message cannot be empty");
+            return;
+        }
+        let cat = edit_category.read().trim().to_string();
+        let send_at = edit_send_at.read().trim().to_string();
+        let final_send_at = if send_at.is_empty() { curr.send_at.clone() } else { send_at };
+        let freq = edit_repeat_frequency.read().trim().to_lowercase();
+        let final_freq = if freq == "once" { "once" } else { "daily" };
+        let cc = edit_cc_emails.read().trim().to_string();
+
+        let updated_input = crate::db::NewReminderInput {
+            employee_code: curr.employee_code.clone(),
+            employee_name: curr.employee_name.clone(),
+            email_address: curr.email_address.clone(),
+            service_category: cat.clone(),
+            reminder_message: msg.clone(),
+            send_at: final_send_at.clone(),
+            status: curr.status.clone(),
+            email_sent_at: curr.email_sent_at.clone(),
+            ticket_id: curr.ticket_id.clone(),
+            cc_emails: cc.clone(),
+            repeat_frequency: final_freq.to_string(),
+        };
+
+        if let Err(e) = crate::db::update_reminder_full(rem_id, &updated_input) {
+            toast.error("Update Failed", format!("Failed to update reminder: {e}"));
+            return;
+        }
+
+        let patch = serde_json::json!({
+            "service_category": cat,
+            "reminder_message": msg,
+            "send_at": crate::sync::parse_to_iso8601(&final_send_at),
+            "repeat_frequency": final_freq,
+            "cc_emails": cc,
+        });
+        crate::sync::enqueue_reminder_update(rem_id, patch);
+
+        let mut updated_item = curr.clone();
+        updated_item.service_category = updated_input.service_category;
+        updated_item.reminder_message = updated_input.reminder_message;
+        updated_item.send_at = updated_input.send_at;
+        updated_item.repeat_frequency = updated_input.repeat_frequency;
+        updated_item.cc_emails = updated_input.cc_emails;
+        let now_str = crate::state::format_utc(crate::sync::now_epoch());
+        updated_item.last_updated_at = now_str;
+
+        // Update in-memory reminders list
+        let mut list = reminders.write();
+        if let Some(pos) = list.iter().position(|r| r.reminder_id == rem_id) {
+            list[pos] = updated_item.clone();
+        }
+        active_reminder.set(Some(updated_item));
+        is_editing.set(false);
+        if let Some(mut sync) = db_sync {
+            sync.with_mut(|r| r.0 += 1);
+        }
+        toast.success("Reminder Updated", "Changes saved and queued for sync");
     };
 
     // Reorder reminder from source position to before target card
@@ -628,7 +746,7 @@ pub fn Reminders() -> Element {
     };
 
     // Immediate send now (calls reminders.sendNow API)
-    let send_now = move |item: ReminderItem| {
+    let send_now = move |item: ReminderItem, force: bool| {
         let server_id = item.server_reminder_id.clone();
         let rem_id = item.reminder_id;
         let title = item.reminder_message.clone();
@@ -646,7 +764,7 @@ pub fn Reminders() -> Element {
         spawn(async move {
             // The API call happens first; the local "sent" marker is only
             // written after the server confirms (never before).
-            match crate::sync::send_reminder_now_immediate(&server_id, false).await {
+            match crate::sync::send_reminder_now_immediate(&server_id, force).await {
                 Ok(_) => {
                     let now_str = crate::state::format_utc(crate::sync::now_epoch());
                     let _ = crate::db::set_reminder_sent(rem_id, &now_str);
@@ -659,10 +777,16 @@ pub fn Reminders() -> Element {
                     );
                 }
                 Err(e) => {
-                    if e.to_string().contains("SCHEMA_MISMATCH") {
+                    let err_str = e.to_string();
+                    if err_str.contains("SCHEMA_MISMATCH") {
                         toast.error(
                             "Send Failed",
-                            "The Google Sheet 'Reminders' tab headers must match the 13-column layout in TMS_SHEET_HEADERS_README.md (the 'CC Emails' column was missing in older sheets).",
+                            "The Google Sheet 'Reminders' tab headers must match the layout with 'CC Emails' and 'Repeat Frequency'.",
+                        );
+                    } else if err_str.contains("already sent today") || err_str.contains("once-per-day") {
+                        toast.warning(
+                            "Already Sent Today",
+                            "An email was already sent today for this reminder. Use 'Force Resend' to bypass the daily guard.",
                         );
                     } else {
                         toast.error("Send Failed", format!("Failed to send reminder email: {e}"));
@@ -1031,7 +1155,8 @@ pub fn Reminders() -> Element {
                                             on_change_category: move |(id, cat)| change_category((id, cat)),
                                             on_change_timing: move |(id, timing)| change_timing((id, timing)),
                                             on_delete: move |id| delete_reminder(id),
-                                            on_send_now: move |r| send_now(r),
+                                            on_inspect: move |r| open_detail(r),
+                                            on_send_now: move |r| send_now(r, false),
 
                                             div {
                                                 draggable: "true",
@@ -1047,8 +1172,7 @@ pub fn Reminders() -> Element {
                                                 onclick: {
                                                     let r_view = reminder_c.clone();
                                                     move |_| {
-                                                        active_reminder.set(Some(r_view.clone()));
-                                                        is_detail_open.set(true);
+                                                        open_detail(r_view.clone());
                                                     }
                                                 },
 
@@ -1117,6 +1241,10 @@ pub fn Reminders() -> Element {
                                                             class: "text-[10px]",
                                                             "{reminder.status}"
                                                         }
+                                                        span {
+                                                            class: "rounded px-1.5 py-0.5 text-[9px] font-semibold border bg-muted/60 text-muted-foreground uppercase",
+                                                            "{reminder.repeat_frequency}"
+                                                        }
                                                         if !reminder.ticket_id.is_empty() {
                                                             span { class: "inline-flex items-center gap-1 rounded bg-muted/70 px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground",
                                                                 TicketIcon { class: "size-3 text-primary" }
@@ -1163,7 +1291,7 @@ pub fn Reminders() -> Element {
                                                                 let r_send = reminder_c.clone();
                                                                 move |e: MouseEvent| {
                                                                     e.stop_propagation();
-                                                                    send_now(r_send.clone());
+                                                                    send_now(r_send.clone(), false);
                                                                 }
                                                             },
                                                             svg {
@@ -1382,6 +1510,33 @@ pub fn Reminders() -> Element {
                             }
                         }
 
+                        // Row 3.5: Repeat Frequency & Scheduled Send At
+                        div { class: "grid grid-cols-1 sm:grid-cols-2 gap-4",
+                            div { class: "flex flex-col gap-1.5",
+                                label { class: "text-xs font-semibold text-foreground", "Repeat Frequency" }
+                                SimpleSelect {
+                                    value: new_repeat_frequency,
+                                    placeholder: "Select frequency...".to_string(),
+                                    options: vec![
+                                        ("daily".to_string(), "Daily (every 24h)".to_string()),
+                                        ("once".to_string(), "Once (one-time send)".to_string()),
+                                    ],
+                                }
+                            }
+                            div { class: "flex flex-col gap-1.5",
+                                label { class: "text-xs font-semibold text-foreground flex items-center justify-between",
+                                    span { "Schedule Date & Time" }
+                                    span { class: "text-[10px] text-muted-foreground font-normal", "(Leave empty for now)" }
+                                }
+                                Input {
+                                    class: "h-10 text-sm rounded-md border border-input bg-card px-3 focus:border-primary focus:ring-1 focus:ring-primary/20",
+                                    placeholder: "e.g. 2026-11-06T10:30:00+05:30".to_string(),
+                                    value: new_send_at.read().clone(),
+                                    oninput: move |e: FormEvent| new_send_at.set(e.value()),
+                                }
+                            }
+                        }
+
                         // Row 4: Subject *
                         div { class: "flex flex-col gap-1.5",
                             label { class: "text-xs font-semibold text-foreground flex items-center gap-0.5",
@@ -1417,7 +1572,7 @@ pub fn Reminders() -> Element {
                             r#type: "button",
                             class: "inline-flex items-center justify-center rounded-md bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-2.5 text-sm shadow-xs transition-colors cursor-pointer",
                             onclick: move |_| save_new_reminder(),
-                            "Submit Ticket"
+                            "Create Reminder"
                         }
                         button {
                             r#type: "button",
@@ -1453,118 +1608,233 @@ pub fn Reminders() -> Element {
                                 div { class: "flex items-center gap-1.5",
                                     Badge { variant: "{category_badge_variant(&r.service_category)}", "{r.service_category}" }
                                     Badge { variant: "{status_badge_variant(&r.status)}", "{r.status}" }
+                                    if r.status.eq_ignore_ascii_case("pending") {
+                                        Button {
+                                            variant: if is_editing() { "secondary" } else { "outline" },
+                                            class: "h-7 text-xs px-2.5 ml-1",
+                                            onclick: move |_| is_editing.toggle(),
+                                            if is_editing() { "Cancel Editing" } else { "Edit" }
+                                        }
+                                    }
                                 }
                             }
                         }
 
-                        div { class: "flex flex-col gap-3 py-2 text-xs",
-                            // Message
-                            div { class: "p-3 rounded-md bg-card border border-border/80",
-                                span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1", "Reminder Message" }
-                                p { class: "text-sm font-semibold text-foreground leading-relaxed", "{r.reminder_message}" }
+                        if is_editing() {
+                            div { class: "flex flex-col gap-3.5 py-2 text-xs",
+                                div { class: "flex flex-col gap-1.5",
+                                    label { class: "text-xs font-semibold text-foreground", "Reminder Message" }
+                                    textarea {
+                                        class: "min-h-[100px] rounded-md border border-input bg-card p-2.5 text-xs text-foreground focus:border-primary focus:ring-1 focus:ring-primary/20 focus:outline-none resize-y",
+                                        value: "{edit_message}",
+                                        oninput: move |e: FormEvent| edit_message.set(e.value()),
+                                    }
+                                }
+                                div { class: "grid grid-cols-1 sm:grid-cols-2 gap-3",
+                                    div { class: "flex flex-col gap-1.5",
+                                        label { class: "text-xs font-semibold text-foreground", "Service Category" }
+                                        SimpleSelect {
+                                            value: edit_category,
+                                            placeholder: "Select category...".to_string(),
+                                            options: vec![
+                                                ("IT Support".to_string(), "IT Support".to_string()),
+                                                ("Hardware".to_string(), "Hardware".to_string()),
+                                                ("Software".to_string(), "Software".to_string()),
+                                                ("Network".to_string(), "Network".to_string()),
+                                                ("Access & Accounts".to_string(), "Access & Accounts".to_string()),
+                                                ("Security".to_string(), "Security".to_string()),
+                                                ("Infrastructure".to_string(), "Infrastructure".to_string()),
+                                                ("General".to_string(), "General".to_string()),
+                                                ("Other".to_string(), "Other".to_string()),
+                                            ],
+                                        }
+                                    }
+                                    div { class: "flex flex-col gap-1.5",
+                                        label { class: "text-xs font-semibold text-foreground", "Repeat Frequency" }
+                                        SimpleSelect {
+                                            value: edit_repeat_frequency,
+                                            placeholder: "Select frequency...".to_string(),
+                                            options: vec![
+                                                ("daily".to_string(), "Daily (every 24h)".to_string()),
+                                                ("once".to_string(), "Once (one-time send)".to_string()),
+                                            ],
+                                        }
+                                    }
+                                }
+                                div { class: "flex flex-col gap-1.5",
+                                    label { class: "text-xs font-semibold text-foreground flex items-center justify-between",
+                                        span { "Scheduled Send At" }
+                                        span { class: "text-[10px] text-muted-foreground", "e.g. 2026-11-06T10:30:00+05:30" }
+                                    }
+                                    Input {
+                                        class: "h-9 text-xs rounded-md border border-input bg-card px-3 focus:border-primary",
+                                        value: edit_send_at.read().clone(),
+                                        oninput: move |e: FormEvent| edit_send_at.set(e.value()),
+                                    }
+                                }
+                                div { class: "flex flex-col gap-1.5",
+                                    label { class: "text-xs font-semibold text-foreground flex items-center justify-between",
+                                        span { "CC Recipients (Optional)" }
+                                        span { class: "text-[10px] text-muted-foreground", "Comma-separated emails" }
+                                    }
+                                    Input {
+                                        class: "h-9 text-xs rounded-md border border-input bg-card px-3 focus:border-primary",
+                                        placeholder: "e.g. it.manager@example.com, lead@example.com".to_string(),
+                                        value: edit_cc_emails.read().clone(),
+                                        oninput: move |e: FormEvent| edit_cc_emails.set(e.value()),
+                                    }
+                                }
                             }
 
-                            if !r.cc_emails.is_empty() {
-                                div { class: "p-3 rounded-md bg-card border border-border/80 flex flex-col gap-1.5",
-                                    span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider", "CC Recipients" }
-                                    div { class: "flex flex-wrap gap-1.5",
-                                        for email in r.cc_emails.split([',', ';']) {
-                                            {
-                                                let email_t = email.trim();
-                                                if !email_t.is_empty() {
-                                                    rsx! {
-                                                        span { class: "font-mono text-xs px-2 py-0.5 rounded-md bg-muted text-foreground border border-border/60", "{email_t}" }
+                            DialogFooter {
+                                Button {
+                                    variant: "outline",
+                                    onclick: move |_| is_editing.set(false),
+                                    "Cancel"
+                                }
+                                Button {
+                                    variant: "default",
+                                    onclick: move |_| save_reminder_edits(),
+                                    "Save Changes"
+                                }
+                            }
+                        } else {
+                            div { class: "flex flex-col gap-3 py-2 text-xs",
+                                // Message
+                                div { class: "p-3 rounded-md bg-card border border-border/80",
+                                    span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1", "Reminder Message" }
+                                    p { class: "text-sm font-semibold text-foreground leading-relaxed", "{r.reminder_message}" }
+                                }
+
+                                if !r.cc_emails.is_empty() {
+                                    div { class: "p-3 rounded-md bg-card border border-border/80 flex flex-col gap-1.5",
+                                        span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider", "CC Recipients" }
+                                        div { class: "flex flex-wrap gap-1.5",
+                                            for email in r.cc_emails.split([',', ';']) {
+                                                {
+                                                    let email_t = email.trim();
+                                                    if !email_t.is_empty() {
+                                                        rsx! {
+                                                            span { class: "font-mono text-xs px-2 py-0.5 rounded-md bg-muted text-foreground border border-border/60", "{email_t}" }
+                                                        }
+                                                    } else {
+                                                        rsx! {}
                                                     }
-                                                } else {
-                                                    rsx! {}
                                                 }
                                             }
                                         }
                                     }
                                 }
-                            }
 
-                            // Recipient & Ticket
-                            div { class: "grid grid-cols-1 sm:grid-cols-2 gap-2.5",
-                                div { class: "p-3 rounded-md bg-muted/20 border border-border/60 flex flex-col gap-1.5",
-                                    span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider", "Recipient" }
-                                    span { class: "font-semibold text-foreground text-xs", "{r.display_name()}" }
-                                    span { class: "font-mono text-muted-foreground text-[11px]", "Code: {r.employee_code}" }
-                                    span { class: "text-muted-foreground text-[11px]", "Email: {r.email_address}" }
-                                }
-                                div { class: "p-3 rounded-md bg-muted/20 border border-border/60 flex flex-col gap-1.5",
-                                    span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider", "Associated Ticket" }
-                                    if r.ticket_id.is_empty() {
-                                        span { class: "text-muted-foreground italic text-xs", "No ticket linked (Standalone Reminder)" }
-                                    } else {
-                                        div { class: "flex items-center gap-2 mt-1",
-                                            TicketIcon { class: "size-4 text-primary" }
-                                            span { class: "font-mono font-bold text-foreground text-xs", "{r.ticket_id}" }
+                                // Recipient & Ticket
+                                div { class: "grid grid-cols-1 sm:grid-cols-2 gap-2.5",
+                                    div { class: "p-3 rounded-md bg-muted/20 border border-border/60 flex flex-col gap-1.5",
+                                        span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider", "Recipient" }
+                                        span { class: "font-semibold text-foreground text-xs", "{r.display_name()}" }
+                                        span { class: "font-mono text-muted-foreground text-[11px]", "Code: {r.employee_code}" }
+                                        span { class: "text-muted-foreground text-[11px]", "Email: {r.email_address}" }
+                                    }
+                                    div { class: "p-3 rounded-md bg-muted/20 border border-border/60 flex flex-col gap-1.5",
+                                        span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider", "Associated Ticket" }
+                                        if r.ticket_id.is_empty() {
+                                            span { class: "text-muted-foreground italic text-xs", "No ticket linked (Standalone Reminder)" }
+                                        } else {
+                                            div { class: "flex items-center gap-2 mt-1",
+                                                TicketIcon { class: "size-4 text-primary" }
+                                                span { class: "font-mono font-bold text-foreground text-xs", "{r.ticket_id}" }
+                                            }
                                         }
                                     }
                                 }
+
+                                // Delivery & Timestamps & Repeat Frequency
+                                div { class: "grid grid-cols-2 sm:grid-cols-5 gap-2.5 p-3 rounded-md bg-muted/20 border border-border/60",
+                                    div { class: "flex flex-col gap-0.5",
+                                        span { class: "text-[10px] text-muted-foreground uppercase tracking-wider font-semibold", "Send At" }
+                                        span { class: "font-semibold text-foreground", "{r.send_at}" }
+                                    }
+                                    div { class: "flex flex-col gap-0.5",
+                                        span { class: "text-[10px] text-muted-foreground uppercase tracking-wider font-semibold", "Frequency" }
+                                        span { class: "font-semibold text-foreground uppercase text-[11px]", "{r.repeat_frequency}" }
+                                    }
+                                    div { class: "flex flex-col gap-0.5",
+                                        span { class: "text-[10px] text-muted-foreground uppercase tracking-wider font-semibold", "Email Sent At" }
+                                        span { class: "text-foreground font-mono text-[11px]", "{r.email_sent_at}" }
+                                    }
+                                    div { class: "flex flex-col gap-0.5",
+                                        span { class: "text-[10px] text-muted-foreground uppercase tracking-wider font-semibold", "Created At" }
+                                        span { class: "text-muted-foreground font-mono text-[11px]", "{r.created_at}" }
+                                    }
+                                    div { class: "flex flex-col gap-0.5",
+                                        span { class: "text-[10px] text-muted-foreground uppercase tracking-wider font-semibold", "Last Updated" }
+                                        span { class: "text-muted-foreground font-mono text-[11px]", "{r.last_updated_at}" }
+                                    }
+                                }
                             }
 
-                            // Delivery & Timestamps
-                            div { class: "grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-3 rounded-md bg-muted/20 border border-border/60",
-                                div { class: "flex flex-col gap-0.5",
-                                    span { class: "text-[10px] text-muted-foreground uppercase tracking-wider font-semibold", "Send At" }
-                                    span { class: "font-semibold text-foreground", "{r.send_at}" }
+                            DialogFooter {
+                                Button {
+                                    variant: "destructive",
+                                    onclick: {
+                                        let id_del = r.id.clone();
+                                        move |_| {
+                                            delete_reminder(id_del.clone());
+                                            is_detail_open.set(false);
+                                        }
+                                    },
+                                    TrashIcon { class: "size-3.5 mr-1.5" }
+                                    "Delete"
                                 }
-                                div { class: "flex flex-col gap-0.5",
-                                    span { class: "text-[10px] text-muted-foreground uppercase tracking-wider font-semibold", "Email Sent At" }
-                                    span { class: "text-foreground font-mono text-[11px]", "{r.email_sent_at}" }
-                                }
-                                div { class: "flex flex-col gap-0.5",
-                                    span { class: "text-[10px] text-muted-foreground uppercase tracking-wider font-semibold", "Created At" }
-                                    span { class: "text-muted-foreground font-mono text-[11px]", "{r.created_at}" }
-                                }
-                                div { class: "flex flex-col gap-0.5",
-                                    span { class: "text-[10px] text-muted-foreground uppercase tracking-wider font-semibold", "Last Updated" }
-                                    span { class: "text-muted-foreground font-mono text-[11px]", "{r.last_updated_at}" }
-                                }
-                            }
-                        }
-
-                        DialogFooter {
-                            Button {
-                                variant: "destructive",
-                                onclick: {
-                                    let id_del = r.id.clone();
-                                    move |_| {
-                                        delete_reminder(id_del.clone());
-                                        is_detail_open.set(false);
+                                if r.status.eq_ignore_ascii_case("pending") {
+                                    Button {
+                                        variant: "secondary",
+                                        onclick: move |_| is_editing.set(true),
+                                        PencilIcon { class: "size-3.5 mr-1.5" }
+                                        "Edit Details"
                                     }
-                                },
-                                TrashIcon { class: "size-3.5 mr-1.5" }
-                                "Delete Reminder"
-                            }
-                            Button {
-                                variant: "outline",
-                                onclick: move |_| is_detail_open.set(false),
-                                "Close"
-                            }
-                            Button {
-                                variant: "default",
-                                onclick: {
-                                    let r_send = r.clone();
-                                    move |_| {
-                                        send_now(r_send.clone());
-                                        is_detail_open.set(false);
-                                    }
-                                },
-                                svg {
-                                    class: "size-3.5 mr-1.5",
-                                    view_box: "0 0 24 24",
-                                    fill: "none",
-                                    stroke: "currentColor",
-                                    stroke_width: "2",
-                                    stroke_linecap: "round",
-                                    stroke_linejoin: "round",
-                                    line { x1: "22", y1: "2", x2: "11", y2: "13" }
-                                    polygon { points: "22 2 15 22 11 13 2 9 22 2" }
                                 }
-                                "Send Email Now"
+                                Button {
+                                    variant: "outline",
+                                    onclick: move |_| is_detail_open.set(false),
+                                    "Close"
+                                }
+                                Button {
+                                    variant: "default",
+                                    onclick: {
+                                        let r_send = r.clone();
+                                        move |_| {
+                                            send_now(r_send.clone(), false);
+                                            is_detail_open.set(false);
+                                        }
+                                    },
+                                    svg {
+                                        class: "size-3.5 mr-1.5",
+                                        view_box: "0 0 24 24",
+                                        fill: "none",
+                                        stroke: "currentColor",
+                                        stroke_width: "2",
+                                        stroke_linecap: "round",
+                                        stroke_linejoin: "round",
+                                        line { x1: "22", y1: "2", x2: "11", y2: "13" }
+                                        polygon { points: "22 2 15 22 11 13 2 9 22 2" }
+                                    }
+                                    "Send Email Now"
+                                }
+                                if !r.email_sent_at.is_empty() && r.email_sent_at != "Not sent yet" && r.email_sent_at != "Not sent" {
+                                    Button {
+                                        variant: "outline",
+                                        title: "Bypasses once-per-calendar-day guard to re-send reminder email",
+                                        class: "text-amber-600 border-amber-500/30 hover:bg-amber-500/10",
+                                        onclick: {
+                                            let r_send = r.clone();
+                                            move |_| {
+                                                send_now(r_send.clone(), true);
+                                                is_detail_open.set(false);
+                                            }
+                                        },
+                                        "Force Resend"
+                                    }
+                                }
                             }
                         }
                     }

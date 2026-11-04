@@ -41,6 +41,7 @@ mod tests {
             email_sent_at: "Not sent".to_string(),
             ticket_id: "IT-101".to_string(),
             cc_emails: "".to_string(),
+            repeat_frequency: "daily".to_string(),
         };
 
         let local_id = db::create_reminder_full(&input).expect("create reminder");
@@ -85,6 +86,7 @@ mod tests {
             email_sent_at: "2026-11-04 10:00:00".to_string(),
             ticket_id: "IT-200".to_string(),
             cc_emails: "".to_string(),
+            repeat_frequency: "daily".to_string(),
         };
 
         let local_id = db::create_reminder_full(&input).expect("create reminder");
@@ -113,6 +115,7 @@ mod tests {
             email_sent_at: "Not sent".to_string(),
             ticket_id: "IT-300".to_string(),
             cc_emails: "".to_string(),
+            repeat_frequency: "daily".to_string(),
         };
 
         let local_id = db::create_reminder_full(&input).expect("create reminder");
@@ -159,6 +162,7 @@ mod tests {
             email_sent_at: "Not sent".to_string(),
             ticket_id: "IT-400".to_string(),
             cc_emails: "".to_string(),
+            repeat_frequency: "daily".to_string(),
         };
 
         let local_id = db::create_reminder_full(&input).expect("create reminder");
@@ -203,6 +207,7 @@ mod tests {
             email_sent_at: "Not sent".to_string(),
             ticket_id: "IT-500".to_string(),
             cc_emails: "".to_string(),
+            repeat_frequency: "daily".to_string(),
         };
 
         let local_id = db::create_reminder_full(&input).expect("create reminder");
@@ -235,6 +240,7 @@ mod tests {
             email_sent_at: "Not sent".to_string(),
             ticket_id: "IT-600".to_string(),
             cc_emails: "".to_string(),
+            repeat_frequency: "daily".to_string(),
         };
 
         let local_id = db::create_reminder_full(&input).expect("create reminder");
@@ -278,6 +284,7 @@ mod tests {
             email_sent_at: "Not sent".to_string(),
             ticket_id: "IT-700".to_string(),
             cc_emails: "".to_string(),
+            repeat_frequency: "daily".to_string(),
         };
 
         let local_id = db::create_reminder_full(&input).expect("create reminder");
@@ -364,12 +371,13 @@ mod tests {
             );
         }
 
-        // 2. Reminders sheet headers (13 columns + local sync mapping columns)
+        // 2. Reminders sheet headers (14 columns + local sync mapping columns)
         let reminder_cols = get_cols("reminders");
         for expected in &[
             "employee_code", "employee_name", "email_address", "service_category",
             "reminder_message", "send_at", "status", "email_sent_at", "ticket_id",
-            "created_at", "last_updated_at", "cc_emails", "server_reminder_id", "server_last_updated"
+            "created_at", "last_updated_at", "cc_emails", "repeat_frequency",
+            "server_reminder_id", "server_last_updated"
         ] {
             assert!(
                 reminder_cols.iter().any(|c| c == expected),

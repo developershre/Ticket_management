@@ -382,6 +382,23 @@ where
     deserializer.deserialize_any(V)
 }
 
+fn default_daily_frequency() -> String {
+    "daily".to_string()
+}
+
+fn flex_frequency_str<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = flex_str(deserializer)?;
+    let clean = s.trim().to_ascii_lowercase();
+    if clean == "once" {
+        Ok("once".to_string())
+    } else {
+        Ok("daily".to_string())
+    }
+}
+
 fn flex_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -799,6 +816,16 @@ pub struct ServerReminder {
         alias = "cc"
     )]
     pub cc_emails: String,
+    /// Sheet column N (`Repeat Frequency`): "daily" or "once". Treated as "daily" when blank.
+    #[serde(
+        default = "default_daily_frequency",
+        deserialize_with = "flex_frequency_str",
+        alias = "Repeat Frequency",
+        alias = "repeat_frequency",
+        alias = "Frequency",
+        alias = "frequency"
+    )]
+    pub repeat_frequency: String,
 }
 
 /// One page of `reminders.list`.
