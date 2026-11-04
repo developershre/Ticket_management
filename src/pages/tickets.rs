@@ -368,6 +368,17 @@ impl TicketItem {
     }
 
     pub fn emp_name(&self) -> String {
+        if !self.customer.trim().is_empty() {
+            return self.customer.trim().to_string();
+        }
+        let code = self.emp_code_only();
+        if !code.is_empty() {
+            if let Some(emp) = crate::db::find_employee_by_code(code) {
+                if !emp.emp_name.trim().is_empty() {
+                    return emp.emp_name;
+                }
+            }
+        }
         if let (Some(start), Some(end)) =
             (self.employee_code.find('('), self.employee_code.rfind(')'))
         {
@@ -393,7 +404,10 @@ impl TicketItem {
                 return parts.join(" ");
             }
         }
-        self.employee_code.clone()
+        if !self.employee_code.trim().is_empty() {
+            return self.employee_code.clone();
+        }
+        "Unknown".to_string()
     }
 
     pub fn assignee_name(&self) -> &str {
@@ -1675,12 +1689,12 @@ pub fn Tickets() -> Element {
     let mut create_emp_name = use_signal(String::new);
     let mut create_employee_code = use_signal(String::new);
     let mut create_email_address = use_signal(String::new);
-    let mut create_category = use_signal(|| "Select category".to_string());
+    let create_category = use_signal(|| "Select category".to_string());
     let mut create_subject = use_signal(String::new);
     let mut create_problem_description = use_signal(String::new);
     let create_attachment_name = use_signal(String::new);
     let create_attachment_url = use_signal(String::new);
-    let mut create_priority = use_signal(|| "Low".to_string());
+    let create_priority = use_signal(|| "Low".to_string());
     let create_assigned_to = use_signal(|| "IT Support".to_string());
     let create_customer = use_signal(|| "Internal".to_string());
     let create_time_spent = use_signal(|| 0.0f64);
@@ -3076,29 +3090,11 @@ pub fn Tickets() -> Element {
                                     "{directory_employees.len()} employees loaded"
                                 }
                             }
-                            SimpleSelect {
-                                value: create_employee_code,
-                                placeholder: "-- Choose an Employee (auto-fills code & details) --".to_string(),
-                                onchange: move |val: String| {
-                                    let trimmed = val.trim().to_string();
-                                    if !trimmed.is_empty() {
-                                        if let Some(emp) = crate::db::find_employee_by_code(&trimmed) {
-                                            create_emp_name.set(emp.emp_name);
-                                            if !emp.emp_email.is_empty() {
-                                                create_email_address.set(emp.emp_email);
-                                            }
-                                        }
-                                    }
-                                },
-                                options: directory_employees
-                                    .iter()
-                                    .map(|emp| {
-                                        (
-                                            emp.emp_code.clone(),
-                                            format!("{} - {} ({})", emp.emp_code, emp.emp_name, emp.department),
-                                        )
-                                    })
-                                    .collect(),
+                            crate::components::employee_search::EmployeeSearchInput {
+                                employee_code: create_employee_code,
+                                employee_name: create_emp_name,
+                                email_address: create_email_address,
+                                placeholder: "Type code (e.g. 11061) or name (e.g. Chaitram)...".to_string(),
                             }
                         }
 
@@ -3297,33 +3293,14 @@ pub fn Tickets() -> Element {
                                                 "Created By (Requester)"
                                             }
                                             span { class: "text-[10px] text-muted-foreground",
-                                                "Select employee to auto-fill"
+                                                "{directory_employees.len()} employees loaded"
                                             }
                                         }
-                                        select {
-                                            class: "h-8 rounded-md border border-border/80 bg-card px-2 text-xs text-foreground focus:border-primary focus:outline-none cursor-pointer",
-                                            value: "{edit_employee_code}",
-                                            onchange: move |e: FormEvent| {
-                                                let val = e.value();
-                                                edit_employee_code.set(val.clone());
-                                                let trimmed = val.trim();
-                                                if !trimmed.is_empty() {
-                                                    if let Some(emp) = crate::db::find_employee_by_code(trimmed) {
-                                                        edit_emp_name.set(emp.emp_name);
-                                                        if !emp.emp_email.is_empty() {
-                                                            edit_email_address.set(emp.emp_email);
-                                                        }
-                                                    }
-                                                }
-                                            },
-                                            option { value: "", "-- Choose from Employee Directory (auto-fills) --" }
-                                            for emp in directory_employees.iter() {
-                                                option {
-                                                    key: "{emp.emp_id}",
-                                                    value: "{emp.emp_code}",
-                                                    "{emp.emp_code} - {emp.emp_name} ({emp.department})"
-                                                }
-                                            }
+                                        crate::components::employee_search::EmployeeSearchInput {
+                                            employee_code: edit_employee_code,
+                                            employee_name: edit_emp_name,
+                                            email_address: edit_email_address,
+                                            placeholder: "Type code (e.g. 11061) or name (e.g. Chaitram)...".to_string(),
                                         }
                                         div { class: "grid grid-cols-1 sm:grid-cols-3 gap-2.5",
                                             div { class: "flex flex-col gap-1",
@@ -3465,7 +3442,7 @@ pub fn Tickets() -> Element {
                                                         class: "hidden",
                                                         onchange: move |e: FormEvent| {
                                                             let raw = e.value();
-                                                            let clean = raw.split(['/', '\\']).last().unwrap_or(&raw).to_string();
+                                                            let clean = raw.split(['/', '\\']).next_back().unwrap_or(&raw).to_string();
                                                             if !clean.is_empty() {
                                                                 edit_attachment_name.set(clean.clone());
                                                                 edit_attachment_url.set(format!("/attachments/{}", clean));

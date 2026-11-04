@@ -10,6 +10,7 @@ use futures_util::StreamExt;
 
 use crate::components::ui::sidebar::SidebarTrigger;
 use crate::components::ui::theme::ThemeToggle;
+use crate::icons::AppLogo;
 use crate::Route;
 
 // ============================================================
@@ -72,17 +73,8 @@ pub fn Titlebar(props: TitlebarProps) -> Element {
             // Branding + current page
             div { class: "flex min-w-0 items-center gap-2.5 pl-1.5 pr-2",
                 // Logo mark
-                div { class: "flex size-6 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground",
-                    svg {
-                        class: "size-3.5",
-                        view_box: "0 0 24 24",
-                        fill: "none",
-                        stroke: "currentColor",
-                        stroke_width: "2.5",
-                        stroke_linecap: "round",
-                        stroke_linejoin: "round",
-                        path { d: "M20 6 9 17l-5-5" }
-                    }
+                div { class: "flex size-6 shrink-0 items-center justify-center rounded-lg bg-white p-0.5 border border-sidebar-border/60 shadow-xs",
+                    AppLogo { class: "size-4" }
                 }
                 span { class: "truncate text-sm font-bold tracking-tight text-sidebar-foreground",
                     "{props.app_name}"

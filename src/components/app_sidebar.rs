@@ -6,7 +6,7 @@ use dioxus::prelude::*;
 
 use crate::components::ui::sidebar::{
     Sidebar, SidebarCollapsible, SidebarContent, SidebarGroup, SidebarGroupContent,
-    SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuBadge, SidebarMenuButton,
+    SidebarGroupLabel, SidebarMenu, SidebarMenuBadge, SidebarMenuButton,
     SidebarMenuItem, SidebarRail,
 };
 use crate::Route;
@@ -43,34 +43,6 @@ pub fn AppSidebar() -> Element {
     rsx! {
         Sidebar {
             collapsible: SidebarCollapsible::Icon,
-
-            SidebarHeader {
-                div { class: "flex min-w-0 items-center justify-between gap-2 rounded-lg p-1 transition-colors hover:bg-sidebar-accent/50 cursor-pointer",
-                    div { class: "flex min-w-0 items-center gap-2.5",
-                        div { class: "flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground",
-                            svg {
-                                class: "size-4",
-                                view_box: "0 0 24 24",
-                                fill: "none",
-                                stroke: "currentColor",
-                                stroke_width: "2.5",
-                                stroke_linecap: "round",
-                                stroke_linejoin: "round",
-                                path { d: "M20 6 9 17l-5-5" }
-                            }
-                        }
-                        div { class: "sidebar-text flex min-w-0 flex-col",
-                            span { class: "truncate text-xs font-bold leading-none text-sidebar-foreground",
-                                "BPSL IT Support"
-                            }
-                            span { class: "mt-0.5 truncate text-[10px] text-sidebar-foreground/60",
-                                "IT Support System"
-                            }
-                        }
-                    }
-                }
-            }
-
             SidebarContent {
                 SidebarGroup {
                     SidebarGroupLabel { "Overview" }

@@ -213,6 +213,9 @@ pub fn NotesPage() -> Element {
                                 let title_str = note.title.clone();
                                 let details_str = note.details.clone();
                                 let emp_code_str = note.emp_code.clone();
+                                let emp_display_name = crate::db::find_employee_by_code(&emp_code_str)
+                                    .map(|e| e.emp_name)
+                                    .unwrap_or_else(|| emp_code_str.clone());
                                 let copy_title = note.title.clone();
                                 let edit_title_c = note.title.clone();
                                 let edit_details_c = note.details.clone();
@@ -252,8 +255,8 @@ pub fn NotesPage() -> Element {
                                                         span { class: "font-mono text-[10px] font-bold text-muted-foreground bg-muted/60 px-2 py-0.5 rounded border border-border/70",
                                                             "#{n_id}"
                                                         }
-                                                        span { class: "text-[10px] font-semibold text-muted-foreground bg-muted/40 px-2 py-0.5 rounded border border-border/50",
-                                                            "{emp_code_str}"
+                                                        span { class: "text-[10px] font-semibold text-muted-foreground bg-muted/40 px-2 py-0.5 rounded border border-border/50 truncate max-w-[140px]",
+                                                            "{emp_display_name}"
                                                         }
                                                         crate::components::ui::badge::Badge {
                                                             variant: "{tag_variant}",

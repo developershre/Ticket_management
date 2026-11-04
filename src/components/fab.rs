@@ -318,7 +318,7 @@ pub fn Fab() -> Element {
                                             class: "hidden",
                                             onchange: move |e: FormEvent| {
                                                 let raw = e.value();
-                                                let clean = raw.split(['/', '\\']).last().unwrap_or(&raw).to_string();
+                                                let clean = raw.split(['/', '\\']).next_back().unwrap_or(&raw).to_string();
                                                 if !clean.is_empty() {
                                                     ticket_attachment_name.set(clean.clone());
                                                     ticket_attachment_url.set(format!("/attachments/{}", clean));
@@ -557,6 +557,7 @@ pub fn Fab() -> Element {
                                         status: reminder_status.read().clone(),
                                         email_sent_at: reminder_email_sent_at.read().clone(),
                                         ticket_id: reminder_ticket_id.read().clone(),
+                                        cc_emails: String::new(),
                                     };
                                     match crate::db::create_reminder_full(&input) {
                                         Ok(new_id) => {

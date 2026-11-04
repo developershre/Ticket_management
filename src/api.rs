@@ -852,85 +852,124 @@ impl ApiClient {
 
     /// Posts one envelope and unwraps the response envelope. Note the API
     /// answers with HTTP 200 even for failures â€” `success`/`error` live in
-    /// the body.
+/// Posts one envelope and unwraps the response envelope. Note the API
+    /// answers with HTTP 200 even for failures â€” success/error live in
+    /// the body. Automatically retries transient LOCK_TIMEOUT and busy errors.
     async fn post(&self, action: &str, data: Value) -> Result<Value, ApiError> {
-        let envelope = RequestEnvelope {
-            version: "v1",
-            action,
-            auth: Auth {
-                api_key: &self.cfg.api_key,
-            },
-            request_id: self.request_id(),
-            data,
-        };
+        let mut attempts = 0usize;
+        const MAX_LOCK_ATTEMPTS: usize = 3;
 
-        let resp = self
-            .http
-            .post(&self.cfg.base_url)
-            .json(&envelope)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    ApiError::Timeout
-                } else {
-                    ApiError::Network(e.to_string())
+        loop {
+            attempts += 1;
+            let envelope = RequestEnvelope {
+                version: "v1",
+                action,
+                auth: Auth {
+                    api_key: &self.cfg.api_key,
+                },
+                request_id: self.request_id(),
+                data: data.clone(),
+            };
+
+            let resp = self
+                .http
+                .post(&self.cfg.base_url)
+                .json(&envelope)
+                .send()
+                .await
+                .map_err(|e| {
+                    if e.is_timeout() {
+                        ApiError::Timeout
+                    } else {
+                        ApiError::Network(e.to_string())
+                    }
+                })?;
+
+            let status = resp.status();
+            let retry_after = resp
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(parse_retry_after);
+
+            let text = resp
+                .text()
+                .await
+                .map_err(|e| ApiError::Network(format!("failed to read response: {e}")))?;
+
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
+                if attempts < MAX_LOCK_ATTEMPTS {
+                    let delay = retry_after.unwrap_or(2 * attempts as u64);
+                    tokio::time::sleep(Duration::from_secs(delay)).await;
+                    continue;
                 }
-            })?;
+                return Err(ApiError::Http {
+                    status: status.as_u16(),
+                    retryable: true,
+                    retry_after,
+                    body: text.chars().take(300).collect(),
+                });
+            }
+            if status.is_client_error() {
+                return Err(ApiError::Http {
+                    status: status.as_u16(),
+                    retryable: false,
+                    retry_after,
+                    body: text.chars().take(300).collect(),
+                });
+            }
 
-        let status = resp.status();
-        let retry_after = resp
-            .headers()
-            .get(reqwest::header::RETRY_AFTER)
-            .and_then(|v| v.to_str().ok())
-            .and_then(parse_retry_after);
+            let envelope: ResponseEnvelope = serde_json::from_str(&text)
+                .map_err(|e| ApiError::Decode(format!("invalid JSON response: {e}")))?;
 
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| ApiError::Network(format!("failed to read response: {e}")))?;
+            if envelope.success {
+                return Ok(envelope.data.unwrap_or(Value::Null));
+            }
 
-        if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
-            return Err(ApiError::Http {
-                status: status.as_u16(),
-                retryable: true,
-                retry_after,
-                body: text.chars().take(300).collect(),
-            });
-        }
-        if status.is_client_error() {
-            return Err(ApiError::Http {
-                status: status.as_u16(),
-                retryable: false,
-                retry_after,
-                body: text.chars().take(300).collect(),
-            });
-        }
-
-        let envelope: ResponseEnvelope = serde_json::from_str(&text)
-            .map_err(|e| ApiError::Decode(format!("invalid JSON response: {e}")))?;
-
-        if envelope.success {
-            return Ok(envelope.data.unwrap_or(Value::Null));
-        }
-
-        // Destructure `error` once (it is moved by the first access).
-        let (code, body_retryable) = match envelope.error {
-            Some(err) => (
-                err.code.unwrap_or_else(|| "UNKNOWN".to_string()),
-                err.retryable.unwrap_or(false),
-            ),
-            None => ("UNKNOWN".to_string(), false),
-        };
-
-        Err(ApiError::Api {
-            code,
-            message: envelope
+            let message = envelope
                 .message
-                .unwrap_or_else(|| "request failed".to_string()),
-            retryable: body_retryable,
-            retry_after,
-        })
+                .unwrap_or_else(|| "request failed".to_string());
+
+            let (code, mut body_retryable) = match envelope.error {
+                Some(err) => (
+                    err.code.unwrap_or_else(|| "UNKNOWN".to_string()),
+                    err.retryable.unwrap_or(false),
+                ),
+                None => ("UNKNOWN".to_string(), false),
+            };
+
+            // Detect transient Google Apps Script LockService/busy conditions
+            let is_lock_or_busy = code == "LOCK_TIMEOUT"
+                || code == "RATE_LIMIT"
+                || code == "RATE_LIMITED"
+                || code == "BUSY"
+                || code == "CONCURRENT_ACCESS"
+                || code == "SERVICE_UNAVAILABLE"
+                || message.to_lowercase().contains("busy")
+                || message.to_lowercase().contains("retry")
+                || message.to_lowercase().contains("lock");
+
+            if is_lock_or_busy {
+                body_retryable = true;
+                if attempts < MAX_LOCK_ATTEMPTS {
+                    // Script locks in GAS are typically released within 1-2 seconds.
+                    // Pause briefly before retrying so the call succeeds transparently.
+                    let delay = match attempts {
+                        1 => Duration::from_millis(1500),
+                        _ => Duration::from_millis(3000),
+                    };
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+            }
+
+            return Err(ApiError::Api {
+                code,
+                message,
+                retryable: body_retryable,
+                retry_after,
+            });
+        }
     }
 
     // ---- actions (TMS_API.postman_collection.json) ----
@@ -1015,15 +1054,11 @@ impl ApiClient {
         };
 
         let mut items = Vec::new();
-        let arr = if let Some(arr) = data.get("items").and_then(|v| v.as_array()) {
-            Some(arr)
-        } else if let Some(arr) = data.as_array() {
-            Some(arr)
-        } else if let Some(arr) = data.get("employees").and_then(|v| v.as_array()) {
-            Some(arr)
-        } else {
-            None
-        };
+        let arr = data
+            .get("items")
+            .and_then(|v| v.as_array())
+            .or_else(|| data.as_array())
+            .or_else(|| data.get("employees").and_then(|v| v.as_array()));
 
         if let Some(arr) = arr {
             for value in arr {
@@ -1108,15 +1143,11 @@ impl ApiClient {
 
         let mut items = Vec::new();
         let mut invalid_items = 0usize;
-        let arr = if let Some(arr) = data.get("items").and_then(|v| v.as_array()) {
-            Some(arr)
-        } else if let Some(arr) = data.as_array() {
-            Some(arr)
-        } else if let Some(arr) = data.get("reminders").and_then(|v| v.as_array()) {
-            Some(arr)
-        } else {
-            None
-        };
+        let arr = data
+            .get("items")
+            .and_then(|v| v.as_array())
+            .or_else(|| data.as_array())
+            .or_else(|| data.get("reminders").and_then(|v| v.as_array()));
 
         if let Some(arr) = arr {
             for value in arr {
@@ -1177,6 +1208,19 @@ impl ApiClient {
                 .insert("force".to_string(), json!(true));
         }
         self.post("reminders.sendNow", payload).await
+    }
+
+    /// reminders.delete - permanently deletes the reminder row and revokes all tokens.
+    /// NOT_FOUND is treated as success so repeated calls are idempotent.
+    pub async fn reminders_delete(&self, reminder_id: &str) -> Result<Value, ApiError> {
+        self.post("reminders.delete", json!({ "reminder_id": reminder_id }))
+            .await
+            .or_else(|e| match e {
+                ApiError::Api { ref code, .. } if code == "NOT_FOUND" => {
+                    Ok(json!({ "reminder_id": reminder_id, "deleted": true }))
+                }
+                other => Err(other),
+            })
     }
 }
 

@@ -131,6 +131,7 @@ pub struct DbReminder {
     /// Sheet `Last Updated At` of the mapped row (pull comparison).
     /// Local-only bookkeeping — never part of an outbound API payload.
     pub server_last_updated: String,
+    pub cc_emails: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -144,6 +145,7 @@ pub struct NewReminderInput {
     pub status: String,
     pub email_sent_at: String,
     pub ticket_id: String,
+    pub cc_emails: String,
 }
 
 impl Default for NewReminderInput {
@@ -160,6 +162,7 @@ impl Default for NewReminderInput {
             status: "Pending".to_string(),
             email_sent_at: "Not sent".to_string(),
             ticket_id: String::new(),
+            cc_emails: String::new(),
         }
     }
 }
@@ -221,7 +224,10 @@ pub fn init_database() -> Result<()> {
             status TEXT DEFAULT 'Open',
 
             created_on DATETIME DEFAULT CURRENT_TIMESTAMP,
-            last_updated_on DATETIME DEFAULT CURRENT_TIMESTAMP
+            last_updated_on DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+            server_ticket_id TEXT,
+            server_last_updated TEXT
         );
 
         CREATE TABLE IF NOT EXISTS NOTES(
@@ -243,7 +249,9 @@ pub fn init_database() -> Result<()> {
             ticket_id TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             last_updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            cc_emails TEXT
+            cc_emails TEXT,
+            server_reminder_id TEXT,
+            server_last_updated TEXT
         );
         "#,
     )?;
@@ -261,6 +269,7 @@ pub fn init_database() -> Result<()> {
         r#"
         CREATE TABLE IF NOT EXISTS sync_queue (
             op_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL DEFAULT 'ticket',
             local_ticket_id INTEGER NOT NULL,
             server_ticket_id TEXT,
             op_type TEXT NOT NULL,
@@ -964,7 +973,8 @@ pub fn get_all_reminders() -> Vec<DbReminder> {
             COALESCE(created_at, CURRENT_TIMESTAMP),
             COALESCE(last_updated_at, CURRENT_TIMESTAMP),
             COALESCE(server_reminder_id, ''),
-            COALESCE(server_last_updated, '')
+            COALESCE(server_last_updated, ''),
+            COALESCE(cc_emails, '')
         FROM reminders
         WHERE COALESCE(status, '') != 'Cancelled'
         ORDER BY reminder_id ASC
@@ -990,6 +1000,7 @@ pub fn get_all_reminders() -> Vec<DbReminder> {
             last_updated_at: row.get(11)?,
             server_reminder_id: row.get(12)?,
             server_last_updated: row.get(13)?,
+            cc_emails: row.get(14)?,
         })
     });
 
@@ -1011,10 +1022,10 @@ pub fn create_reminder_full(input: &NewReminderInput) -> Result<i64> {
         r#"
         INSERT INTO reminders (
             employee_code, employee_name, email_address, service_category,
-            reminder_message, send_at, status, email_sent_at, ticket_id,
+            reminder_message, send_at, status, email_sent_at, ticket_id, cc_emails,
             created_at, last_updated_at
         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
         )
         "#,
         params![
@@ -1027,6 +1038,7 @@ pub fn create_reminder_full(input: &NewReminderInput) -> Result<i64> {
             input.status,
             input.email_sent_at,
             input.ticket_id,
+            input.cc_emails,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -1077,8 +1089,9 @@ pub fn update_reminder_full(reminder_id: i64, input: &NewReminderInput) -> Resul
             status = ?7,
             email_sent_at = ?8,
             ticket_id = ?9,
+            cc_emails = ?10,
             last_updated_at = CURRENT_TIMESTAMP
-        WHERE reminder_id = ?10
+        WHERE reminder_id = ?11
         "#,
         params![
             input.employee_code,
@@ -1090,8 +1103,18 @@ pub fn update_reminder_full(reminder_id: i64, input: &NewReminderInput) -> Resul
             input.status,
             input.email_sent_at,
             input.ticket_id,
+            input.cc_emails,
             reminder_id,
         ],
+    )?;
+    Ok(())
+}
+
+pub fn delete_server_reminder_db(server_reminder_id: &str) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "DELETE FROM reminders WHERE server_reminder_id = ?1",
+        params![server_reminder_id],
     )?;
     Ok(())
 }
@@ -1119,6 +1142,7 @@ pub fn delete_reminder_db(reminder_id: i64) -> Result<()> {
 
 /// Adds the ticket↔server mapping columns once (ALTER TABLE has no
 /// IF NOT EXISTS, so existing columns are checked first).
+#[allow(clippy::let_and_return)]
 fn ensure_ticket_sync_columns(conn: &Connection) -> Result<()> {
     let has_column = |name: &str| -> bool {
         let Ok(mut stmt) = conn.prepare("PRAGMA table_info(tickets)") else {
@@ -1144,6 +1168,7 @@ fn ensure_ticket_sync_columns(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::let_and_return)]
 fn ensure_reminder_sync_columns(conn: &Connection) -> Result<()> {
     let has_column = |name: &str| -> bool {
         let Ok(mut stmt) = conn.prepare("PRAGMA table_info(reminders)") else {
@@ -1177,7 +1202,20 @@ fn ensure_reminder_sync_columns(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::let_and_return)]
 fn ensure_sync_queue_columns(conn: &Connection) -> Result<()> {
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='sync_queue'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+    if !table_exists {
+        return Ok(());
+    }
+
     let has_column = |name: &str| -> bool {
         let Ok(mut stmt) = conn.prepare("PRAGMA table_info(sync_queue)") else {
             return false;
@@ -1205,6 +1243,7 @@ fn ensure_sync_queue_columns(conn: &Connection) -> Result<()> {
 /// which 293 have no email, 4 emails are shared by several people and one
 /// row has no code — so the old constraints reject the real data. The old
 /// table is rebuilt (copying any existing rows) and `division` is added.
+#[allow(clippy::let_and_return)]
 fn ensure_user_schema(conn: &Connection) -> Result<()> {
     let has_column = |name: &str| -> bool {
         let Ok(mut stmt) = conn.prepare("PRAGMA table_info(USERS)") else {
@@ -1310,7 +1349,7 @@ fn active_ops(conn: &Connection, local_ticket_id: i64) -> Result<Vec<SyncOp>> {
          ORDER BY op_id"
     ))?;
     let rows = stmt.query_map(params![local_ticket_id], row_to_op)?;
-    Ok(rows.collect::<Result<Vec<_>>>()?)
+    rows.collect::<Result<Vec<_>>>()
 }
 
 /// All non-terminal operations for a ticket (used for coalescing and tests).
@@ -1487,7 +1526,7 @@ pub fn due_ops(now_epoch: i64, limit: i64) -> Result<Vec<SyncOp>> {
          ORDER BY op_id ASC LIMIT ?2"
     ))?;
     let rows = stmt.query_map(params![now_epoch, limit], row_to_op)?;
-    Ok(rows.collect::<Result<Vec<_>>>()?)
+    rows.collect::<Result<Vec<_>>>()
 }
 
 pub fn mark_op_in_flight(op_id: i64) -> Result<()> {
@@ -1543,17 +1582,24 @@ pub fn cancel_queued_ops_for_entity(entity: &str, local_id: i64) -> Result<()> {
     let conn = get_connection()?;
     conn.execute(
         "UPDATE sync_queue SET status = 'superseded', next_attempt_at = NULL \
-         WHERE entity = ?1 AND local_ticket_id = ?2 AND status IN ('pending', 'failed')",
+         WHERE entity_type = ?1 AND local_ticket_id = ?2 AND status IN ('pending', 'failed')",
         params![entity, local_id],
     )?;
     Ok(())
 }
 
-/// Resets any previously failed operations in sync_queue to pending so they can retry.
+/// Resets retryable failed operations in sync_queue to pending so they can retry.
+/// Terminal failures (NOT_FOUND, CONFLICT, validation) are NEVER reset as transient errors.
 pub fn reset_failed_sync_ops() -> Result<()> {
     let conn = get_connection()?;
     conn.execute(
-        "UPDATE sync_queue SET status = 'pending', next_attempt_at = NULL, last_error = NULL WHERE status = 'failed'",
+        "UPDATE sync_queue SET status = 'pending', next_attempt_at = NULL \
+         WHERE status = 'failed' \
+           AND last_error NOT LIKE '%NOT_FOUND%' \
+           AND last_error NOT LIKE '%CONFLICT%' \
+           AND last_error NOT LIKE '%Completed reminders cannot be updated%' \
+           AND last_error NOT LIKE '%VALIDATION_ERROR%' \
+           AND last_error NOT LIKE '%SCHEMA_MISMATCH%'",
         [],
     )?;
     Ok(())
@@ -2097,6 +2143,62 @@ pub fn set_reminder_mapping(
          WHERE reminder_id = ?3",
         params![server_reminder_id, server_last_updated, local_reminder_id],
     )?;
+    conn.execute(
+        "UPDATE sync_queue SET server_ticket_id = ?1 \
+         WHERE entity_type = 'reminder' AND local_ticket_id = ?2 AND (server_ticket_id IS NULL OR server_ticket_id = '')",
+        params![server_reminder_id, local_reminder_id],
+    )?;
+    Ok(())
+}
+
+pub fn is_reminder_completed(reminder_id: i64) -> bool {
+    let Ok(conn) = get_connection() else {
+        return false;
+    };
+    conn.query_row(
+        "SELECT status FROM reminders WHERE reminder_id = ?1",
+        params![reminder_id],
+        |r| r.get::<_, String>(0),
+    )
+    .map(|s| s.eq_ignore_ascii_case("completed"))
+    .unwrap_or(false)
+}
+
+pub fn update_reminder_ticket_id(reminder_id: i64, ticket_id: &str) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE reminders SET ticket_id = ?1, last_updated_at = CURRENT_TIMESTAMP WHERE reminder_id = ?2",
+        params![ticket_id, reminder_id],
+    )?;
+    Ok(())
+}
+
+pub fn cancel_queued_updates_for_reminder(local_reminder_id: i64) -> Result<usize> {
+    let conn = get_connection()?;
+    let count = conn.execute(
+        "UPDATE sync_queue SET status = 'superseded', next_attempt_at = NULL, \
+         last_error = 'Reminder already completed on server' \
+         WHERE entity_type = 'reminder' AND local_ticket_id = ?1 AND op_type = 'UPDATE' \
+           AND status IN ('pending', 'in_flight', 'failed')",
+        params![local_reminder_id],
+    )?;
+    Ok(count)
+}
+
+pub fn mark_reminder_server_not_found(local_reminder_id: i64) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE reminders SET server_reminder_id = '', last_updated_at = CURRENT_TIMESTAMP \
+         WHERE reminder_id = ?1",
+        params![local_reminder_id],
+    )?;
+    conn.execute(
+        "UPDATE sync_queue SET status = 'superseded', next_attempt_at = NULL, \
+         last_error = 'Reminder not found on server' \
+         WHERE entity_type = 'reminder' AND local_ticket_id = ?1 \
+           AND status IN ('pending', 'in_flight', 'failed')",
+        params![local_reminder_id],
+    )?;
     Ok(())
 }
 
@@ -2283,6 +2385,23 @@ pub fn enqueue_reminder_send_now(
         Some(server_reminder_id),
         "SEND_NOW",
         &payload,
+        created_at,
+    )
+}
+
+pub fn enqueue_reminder_delete(
+    local_reminder_id: i64,
+    server_reminder_id: Option<String>,
+    created_at: &str,
+) -> Result<i64> {
+    let conn = get_connection()?;
+    insert_entity_op(
+        &conn,
+        "reminder",
+        local_reminder_id,
+        server_reminder_id.as_deref(),
+        "DELETE",
+        &json!({}),
         created_at,
     )
 }

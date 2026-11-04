@@ -40,6 +40,7 @@ pub struct ReminderItem {
     pub last_updated_at: String,
     pub server_reminder_id: String,
     pub server_last_updated: String,
+    pub cc_emails: String,
     pub done: bool,
 }
 
@@ -52,6 +53,21 @@ impl ReminderItem {
     }
     pub fn tag(&self) -> &str {
         &self.service_category
+    }
+    pub fn display_name(&self) -> String {
+        if !self.employee_name.trim().is_empty() {
+            return self.employee_name.trim().to_string();
+        }
+        let code = self.employee_code.trim();
+        if !code.is_empty() {
+            if let Some(emp) = crate::db::find_employee_by_code(code) {
+                if !emp.emp_name.trim().is_empty() {
+                    return emp.emp_name;
+                }
+            }
+            return code.to_string();
+        }
+        "Unknown".to_string()
     }
 }
 
@@ -107,6 +123,7 @@ fn initial_reminders() -> Vec<ReminderItem> {
                 last_updated_at: r.last_updated_at,
                 server_reminder_id: r.server_reminder_id,
                 server_last_updated: r.server_last_updated,
+                cc_emails: r.cc_emails,
                 done,
             }
         })
@@ -159,38 +176,38 @@ fn ReminderContextMenu(props: ReminderContextMenuProps) -> Element {
                 }
                 ContextMenuSeparator {}
 
-                ContextMenuItem {
-                    on_select: {
-                        let r_id_c = r_id.clone();
-                        let handler = props.on_toggle_done;
-                        move |_| handler.call(r_id_c.clone())
-                    },
-                    CheckIcon { class: "size-3.5 text-primary" }
-                    if is_done {
-                        "Mark as Incomplete"
-                    } else {
+                if !is_done {
+                    ContextMenuItem {
+                        on_select: {
+                            let r_id_c = r_id.clone();
+                            let handler = props.on_toggle_done;
+                            move |_| handler.call(r_id_c.clone())
+                        },
+                        CheckIcon { class: "size-3.5 text-primary" }
                         "Mark as Completed"
                     }
                 }
 
-                ContextMenuItem {
-                    on_select: {
-                        let r_c = r.clone();
-                        let handler = props.on_send_now;
-                        move |_| handler.call(r_c.clone())
-                    },
-                    svg {
-                        class: "size-3.5 text-primary",
-                        view_box: "0 0 24 24",
-                        fill: "none",
-                        stroke: "currentColor",
-                        stroke_width: "2",
-                        stroke_linecap: "round",
-                        stroke_linejoin: "round",
-                        line { x1: "22", y1: "2", x2: "11", y2: "13" }
-                        polygon { points: "22 2 15 22 11 13 2 9 22 2" }
+                if !is_done {
+                    ContextMenuItem {
+                        on_select: {
+                            let r_c = r.clone();
+                            let handler = props.on_send_now;
+                            move |_| handler.call(r_c.clone())
+                        },
+                        svg {
+                            class: "size-3.5 text-primary",
+                            view_box: "0 0 24 24",
+                            fill: "none",
+                            stroke: "currentColor",
+                            stroke_width: "2",
+                            stroke_linecap: "round",
+                            stroke_linejoin: "round",
+                            line { x1: "22", y1: "2", x2: "11", y2: "13" }
+                            polygon { points: "22 2 15 22 11 13 2 9 22 2" }
+                        }
+                        "Send Reminder Now (Email)"
                     }
-                    "Send Reminder Now (Email)"
                 }
 
                 ContextMenuItem {
@@ -252,60 +269,62 @@ fn ReminderContextMenu(props: ReminderContextMenuProps) -> Element {
                     }
                 }
 
-                ContextMenuSub {
-                    ContextMenuSubTrigger {
-                        "Change Category"
-                    }
-                    ContextMenuSubContent {
-                        for cat in ["Engineering", "Meetings", "Ops", "Planning", "Reporting"] {
-                            {
-                                let cat_str = cat.to_string();
-                                let is_current = r.service_category == cat_str;
-                                let r_id_c = r_id.clone();
-                                let handler = props.on_change_category;
-                                rsx! {
-                                    ContextMenuItem {
-                                        key: "{cat}",
-                                        disabled: is_current,
-                                        on_select: move |_| handler.call((r_id_c.clone(), cat_str.clone())),
-                                        if is_current {
-                                            span { class: "text-primary font-semibold flex items-center gap-1.5",
-                                                CheckIcon { class: "size-3.5 text-primary" }
-                                                "{cat}"
+                if !is_done {
+                    ContextMenuSub {
+                        ContextMenuSubTrigger {
+                            "Change Category"
+                        }
+                        ContextMenuSubContent {
+                            for cat in ["Engineering", "Meetings", "Ops", "Planning", "Reporting"] {
+                                {
+                                    let cat_str = cat.to_string();
+                                    let is_current = r.service_category == cat_str;
+                                    let r_id_c = r_id.clone();
+                                    let handler = props.on_change_category;
+                                    rsx! {
+                                        ContextMenuItem {
+                                            key: "{cat}",
+                                            disabled: is_current,
+                                            on_select: move |_| handler.call((r_id_c.clone(), cat_str.clone())),
+                                            if is_current {
+                                                span { class: "text-primary font-semibold flex items-center gap-1.5",
+                                                    CheckIcon { class: "size-3.5 text-primary" }
+                                                    "{cat}"
+                                                }
+                                            } else {
+                                                span { "{cat}" }
                                             }
-                                        } else {
-                                            span { "{cat}" }
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                }
 
-                ContextMenuSub {
-                    ContextMenuSubTrigger {
-                        "Set Due Timing"
-                    }
-                    ContextMenuSubContent {
-                        for timing in ["Today · 2:00 PM", "Today · 5:00 PM", "Tomorrow · 9:00 AM", "Tomorrow · 2:00 PM", "Next Week · Monday"] {
-                            {
-                                let timing_str = timing.to_string();
-                                let is_current = r.send_at == timing_str;
-                                let r_id_c = r_id.clone();
-                                let handler = props.on_change_timing;
-                                rsx! {
-                                    ContextMenuItem {
-                                        key: "{timing}",
-                                        disabled: is_current,
-                                        on_select: move |_| handler.call((r_id_c.clone(), timing_str.clone())),
-                                        if is_current {
-                                            span { class: "text-primary font-semibold flex items-center gap-1.5",
-                                                CheckIcon { class: "size-3.5 text-primary" }
-                                                "{timing}"
+                    ContextMenuSub {
+                        ContextMenuSubTrigger {
+                            "Set Due Timing"
+                        }
+                        ContextMenuSubContent {
+                            for timing in ["Today · 2:00 PM", "Today · 5:00 PM", "Tomorrow · 9:00 AM", "Tomorrow · 2:00 PM", "Next Week · Monday"] {
+                                {
+                                    let timing_str = timing.to_string();
+                                    let is_current = r.send_at == timing_str;
+                                    let r_id_c = r_id.clone();
+                                    let handler = props.on_change_timing;
+                                    rsx! {
+                                        ContextMenuItem {
+                                            key: "{timing}",
+                                            disabled: is_current,
+                                            on_select: move |_| handler.call((r_id_c.clone(), timing_str.clone())),
+                                            if is_current {
+                                                span { class: "text-primary font-semibold flex items-center gap-1.5",
+                                                    CheckIcon { class: "size-3.5 text-primary" }
+                                                    "{timing}"
+                                                }
+                                            } else {
+                                                span { "{timing}" }
                                             }
-                                        } else {
-                                            span { "{timing}" }
                                         }
                                     }
                                 }
@@ -446,6 +465,7 @@ pub fn Reminders() -> Element {
     let mut new_priority = use_signal(|| "Low".to_string());
     let mut new_subject = use_signal(String::new);
     let mut new_problem_description = use_signal(String::new);
+    let mut new_cc_emails = use_signal(String::new);
     let directory_employees = crate::db::get_all_employees();
 
     let toast = use_context::<ToastState>();
@@ -509,6 +529,7 @@ pub fn Reminders() -> Element {
         let reminder_msg = format!("{subj_val}: {desc_val}");
         let now_str = crate::state::format_utc(crate::sync::now_epoch());
 
+        let cc_val = new_cc_emails.read().trim().to_string();
         let input = crate::db::NewReminderInput {
             employee_code: emp_code.clone(),
             employee_name: emp_name.clone(),
@@ -519,6 +540,7 @@ pub fn Reminders() -> Element {
             status: "Pending".to_string(),
             email_sent_at: "Not sent yet".to_string(),
             ticket_id: String::new(),
+            cc_emails: cc_val.clone(),
         };
 
         match crate::db::create_reminder_full(&input) {
@@ -540,6 +562,7 @@ pub fn Reminders() -> Element {
                     last_updated_at: "Just now".to_string(),
                     server_reminder_id: String::new(),
                     server_last_updated: String::new(),
+                    cc_emails: cc_val,
                     done: false,
                 };
                 reminders.write().insert(0, item);
@@ -587,17 +610,17 @@ pub fn Reminders() -> Element {
     let mut toggle_done = move |id: String| {
         let mut list = reminders.write();
         if let Some(item) = list.iter_mut().find(|r| r.id == id) {
-            item.done = !item.done;
-            item.status = if item.done {
-                "Completed".to_string()
-            } else {
-                "Pending".to_string()
-            };
-            let status = item.status.clone();
+            if item.done || item.status.eq_ignore_ascii_case("completed") {
+                toast.warning("Finalized", "Completed reminders cannot be modified.");
+                return;
+            }
+            item.done = true;
+            item.status = "Completed".to_string();
             let rem_id = item.reminder_id;
-            let _ = crate::db::update_reminder_status(rem_id, &status);
-            crate::sync::enqueue_reminder_update(rem_id, serde_json::json!({ "status": status }));
-            toast.info("Status Changed", format!("Reminder marked {status}"));
+            let _ = crate::db::update_reminder_status(rem_id, "Completed");
+            let _ = crate::db::cancel_queued_updates_for_reminder(rem_id);
+            crate::sync::enqueue_reminder_update(rem_id, serde_json::json!({ "status": "Completed" }));
+            toast.info("Status Changed", "Reminder marked Completed");
             if let Some(mut sync) = db_sync {
                 sync.with_mut(|r| r.0 += 1);
             }
@@ -665,11 +688,8 @@ pub fn Reminders() -> Element {
             // scheduled email; the row itself stays in the sheet and will be
             // re-cached locally as Cancelled on the next pull.
             if !server_id.is_empty() {
-                let _ = crate::db::update_reminder_status(rem_id, "Cancelled");
-                crate::sync::enqueue_reminder_update(
-                    rem_id,
-                    serde_json::json!({ "status": "Cancelled" }),
-                );
+                crate::sync::enqueue_reminder_delete(rem_id);
+                let _ = crate::db::delete_reminder_db(rem_id);
             } else {
                 let _ = crate::db::cancel_queued_ops_for_entity("reminder", rem_id);
                 let _ = crate::db::delete_reminder_db(rem_id);
@@ -688,6 +708,10 @@ pub fn Reminders() -> Element {
     let mut change_category = move |(id, new_tag): (String, String)| {
         let mut list = reminders.write();
         if let Some(item) = list.iter_mut().find(|r| r.id == id) {
+            if item.done || item.status.eq_ignore_ascii_case("completed") {
+                toast.warning("Finalized", "Completed reminders cannot be updated.");
+                return;
+            }
             item.service_category = new_tag.clone();
             let rem_id = item.reminder_id;
             let _ = crate::db::update_reminder_category(rem_id, &new_tag);
@@ -709,6 +733,10 @@ pub fn Reminders() -> Element {
     let mut change_timing = move |(id, new_when): (String, String)| {
         let mut list = reminders.write();
         if let Some(item) = list.iter_mut().find(|r| r.id == id) {
+            if item.done || item.status.eq_ignore_ascii_case("completed") {
+                toast.warning("Finalized", "Completed reminders cannot be updated.");
+                return;
+            }
             item.send_at = new_when.clone();
             let rem_id = item.reminder_id;
             let _ = crate::db::update_reminder_send_at(rem_id, &new_when);
@@ -774,17 +802,8 @@ pub fn Reminders() -> Element {
             );
             return;
         }
-        for (_id, rem_id, server_id) in &completed_ids {
-            if !server_id.is_empty() {
-                let _ = crate::db::update_reminder_status(*rem_id, "Cancelled");
-                crate::sync::enqueue_reminder_update(
-                    *rem_id,
-                    serde_json::json!({ "status": "Cancelled" }),
-                );
-            } else {
-                let _ = crate::db::cancel_queued_ops_for_entity("reminder", *rem_id);
-                let _ = crate::db::delete_reminder_db(*rem_id);
-            }
+        for (_id, rem_id, _server_id) in &completed_ids {
+            let _ = crate::db::cancel_queued_updates_for_reminder(*rem_id);
         }
         list.retain(|r| !r.done);
         toast.success(
@@ -1114,18 +1133,25 @@ pub fn Reminders() -> Element {
                                                             ClockIcon { class: "size-3.5 text-muted-foreground" }
                                                             span { "{when}" }
                                                         }
-                                                        span { class: "font-mono text-[11px] text-muted-foreground truncate max-w-[130px]",
-                                                            "{reminder.employee_code}"
+                                                        span { class: "text-[11px] font-medium text-foreground truncate max-w-[140px]",
+                                                            "{reminder.display_name()}"
                                                         }
                                                     }
                                                 }
 
                                                 div { class: "flex items-center justify-between border-t border-border/40 pt-2.5 mt-1",
-                                                    span { class: "text-[11px] text-muted-foreground truncate max-w-[140px]",
-                                                        if is_done {
-                                                            "Completed"
-                                                        } else {
-                                                            "{reminder.employee_name}"
+                                                    div { class: "flex items-center gap-1.5 truncate max-w-[150px]",
+                                                        span { class: "text-[11px] text-muted-foreground truncate",
+                                                            if is_done {
+                                                                "Completed"
+                                                            } else {
+                                                                "{reminder.display_name()}"
+                                                            }
+                                                        }
+                                                        if !reminder.employee_code.is_empty() {
+                                                            span { class: "font-mono text-[10px] text-muted-foreground/60",
+                                                                "#{reminder.employee_code}"
+                                                            }
                                                         }
                                                     }
                                                     div { class: "flex items-center gap-1.5",
@@ -1155,11 +1181,14 @@ pub fn Reminders() -> Element {
                                                         }
                                                         button {
                                                             r#type: "button",
-                                                            title: if is_done { "Mark incomplete" } else { "Mark complete" },
-                                                            class: "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors cursor-pointer {check_btn_cls}",
+                                                            disabled: is_done,
+                                                            title: if is_done { "Completed (finalized)" } else { "Mark complete" },
+                                                            class: format!("flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors {check_btn_cls} {}", if is_done { "opacity-75 cursor-default" } else { "cursor-pointer" }),
                                                             onclick: move |e: MouseEvent| {
                                                                 e.stop_propagation();
-                                                                toggle_done(id_for_toggle.clone());
+                                                                if !is_done {
+                                                                    toggle_done(id_for_toggle.clone());
+                                                                }
                                                             },
                                                             if is_done {
                                                                 svg {
@@ -1236,29 +1265,11 @@ pub fn Reminders() -> Element {
                                     "{directory_employees.len()} employees loaded"
                                 }
                             }
-                            SimpleSelect {
-                                value: new_employee_code,
-                                placeholder: "-- Choose an Employee (auto-fills code & details) --".to_string(),
-                                onchange: move |val: String| {
-                                    let trimmed = val.trim().to_string();
-                                    if !trimmed.is_empty() {
-                                        if let Some(emp) = crate::db::find_employee_by_code(&trimmed) {
-                                            new_employee_name.set(emp.emp_name);
-                                            if !emp.emp_email.is_empty() {
-                                                new_email_address.set(emp.emp_email);
-                                            }
-                                        }
-                                    }
-                                },
-                                options: directory_employees
-                                    .iter()
-                                    .map(|emp| {
-                                        (
-                                            emp.emp_code.clone(),
-                                            format!("{} - {} ({})", emp.emp_code, emp.emp_name, emp.department),
-                                        )
-                                    })
-                                    .collect(),
+                            crate::components::employee_search::EmployeeSearchInput {
+                                employee_code: new_employee_code,
+                                employee_name: new_employee_name,
+                                email_address: new_email_address,
+                                placeholder: "Type code (e.g. 11061) or name (e.g. Chaitram)...".to_string(),
                             }
                         }
 
@@ -1312,6 +1323,22 @@ pub fn Reminders() -> Element {
                                 placeholder: "Automatically filled from Employee sheet".to_string(),
                                 value: new_employee_name.read().clone(),
                                 oninput: move |e: FormEvent| new_employee_name.set(e.value()),
+                            }
+                        }
+
+                        // Row 2.5: CC Recipients (Optional, synced to CC Emails column)
+                        div { class: "flex flex-col gap-1.5",
+                            label { class: "text-xs font-semibold text-foreground flex items-center justify-between",
+                                span { "CC Recipients (Optional)" }
+                                span { class: "text-[10px] text-muted-foreground font-normal",
+                                    "Comma-separated emails (e.g. manager@example.com)"
+                                }
+                            }
+                            Input {
+                                class: "h-10 text-sm rounded-md border border-input bg-card px-3 focus:border-primary focus:ring-1 focus:ring-primary/20",
+                                placeholder: "e.g. it.manager@example.com, lead@example.com".to_string(),
+                                value: new_cc_emails.read().clone(),
+                                oninput: move |e: FormEvent| new_cc_emails.set(e.value()),
                             }
                         }
 
@@ -1437,11 +1464,31 @@ pub fn Reminders() -> Element {
                                 p { class: "text-sm font-semibold text-foreground leading-relaxed", "{r.reminder_message}" }
                             }
 
+                            if !r.cc_emails.is_empty() {
+                                div { class: "p-3 rounded-md bg-card border border-border/80 flex flex-col gap-1.5",
+                                    span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider", "CC Recipients" }
+                                    div { class: "flex flex-wrap gap-1.5",
+                                        for email in r.cc_emails.split([',', ';']) {
+                                            {
+                                                let email_t = email.trim();
+                                                if !email_t.is_empty() {
+                                                    rsx! {
+                                                        span { class: "font-mono text-xs px-2 py-0.5 rounded-md bg-muted text-foreground border border-border/60", "{email_t}" }
+                                                    }
+                                                } else {
+                                                    rsx! {}
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             // Recipient & Ticket
                             div { class: "grid grid-cols-1 sm:grid-cols-2 gap-2.5",
                                 div { class: "p-3 rounded-md bg-muted/20 border border-border/60 flex flex-col gap-1.5",
                                     span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider", "Recipient" }
-                                    span { class: "font-semibold text-foreground text-xs", "{r.employee_name}" }
+                                    span { class: "font-semibold text-foreground text-xs", "{r.display_name()}" }
                                     span { class: "font-mono text-muted-foreground text-[11px]", "Code: {r.employee_code}" }
                                     span { class: "text-muted-foreground text-[11px]", "Email: {r.email_address}" }
                                 }

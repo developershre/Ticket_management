@@ -50,6 +50,10 @@ impl ToastState {
         self.push(ToastVariant::Info, title.into(), Some(description.into()));
     }
 
+    pub fn warning(&self, title: impl Into<String>, description: impl Into<String>) {
+        self.push(ToastVariant::Info, title.into(), Some(description.into()));
+    }
+
     fn push(&self, variant: ToastVariant, title: String, description: Option<String>) {
         let mut toasts = self.toasts;
         let id = {

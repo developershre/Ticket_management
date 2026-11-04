@@ -31,13 +31,20 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::api::{ApiClient, ApiConfig, ApiError, ServerReminder, ServerTicket};
 use crate::db::{self, SyncOp};
 
-/// Periodic sync interval (seconds). Reduced to 20s for high-responsiveness.
-pub const CYCLE_SECS: u64 = 20;
-/// Debounce window: wait 60ms after a local change before updating all data in Google Sheets.
-pub const DEBOUNCE_MS: u64 = 60;
-/// Minimum gap between two pull phases (local edits trigger extra cycles;
-/// pulls are rate-limited so rapid edits don't spam `tickets.list`).
-const MIN_PULL_GAP_SECS: i64 = 5;
+/// Periodic sync interval (seconds).
+pub const CYCLE_SECS: u64 = 25;
+/// Debounce window: wait 1000ms after local changes to coalesce edits before syncing.
+pub const DEBOUNCE_MS: u64 = 1000;
+/// Pacing delay between consecutive write operations to prevent Google Apps Script lock collisions.
+const INTER_OP_DELAY_MS: u64 = 1200;
+/// Pacing delay between sync phases (push vs pull).
+const PHASE_DELAY_MS: u64 = 800;
+/// Minimum gap between two pull phases (rate limited so rapid edits don't spam tickets.list).
+const MIN_PULL_GAP_SECS: i64 = 15;
+/// Minimum gap between employee directory pulls (directory changes infrequently).
+const EMPLOYEE_PULL_GAP_SECS: i64 = 120;
+/// Minimum gap between reminder pulls.
+const REMINDER_PULL_GAP_SECS: i64 = 60;
 /// Maximum operations executed per cycle.
 const OPS_PER_CYCLE: i64 = 50;
 /// `tickets.list` page size (API max is 200).
@@ -298,6 +305,8 @@ pub async fn run_cycle() {
         s.detail = "Syncing with Google Sheets…".to_string();
     });
 
+    let _ = db::reset_failed_sync_ops();
+
     let mut cycle_error: Option<String> = None;
 
     // ---- Push: confirm local changes with the API ----
@@ -311,7 +320,8 @@ pub async fn run_cycle() {
         if merged.is_empty() {
             break;
         }
-        for op in merged {
+        let op_count = merged.len();
+        for (idx, op) in merged.into_iter().enumerate() {
             let _ = db::mark_op_in_flight(op.op_id);
             match execute_op(client, &op).await {
                 Ok(ExecOutcome::Synced) => {
@@ -323,7 +333,9 @@ pub async fn run_cycle() {
                 Err(e) => {
                     let is_schema_mismatch =
                         matches!(&e, ApiError::Api { code, .. } if code == "SCHEMA_MISMATCH");
-                    if !is_schema_mismatch || op.retry_count == 0 {
+                    let is_lock_timeout =
+                        matches!(&e, ApiError::Api { code, .. } if code == "LOCK_TIMEOUT");
+                    if (!is_schema_mismatch && !is_lock_timeout) || op.retry_count == 0 {
                         eprintln!(
                             "[sync execute_op ERROR] op={:?} entity={:?} err={}",
                             op.op_type, op.entity_type, e
@@ -331,17 +343,25 @@ pub async fn run_cycle() {
                     }
                     let next = next_attempt_at(&op, &e);
                     let _ = db::mark_op_error(op.op_id, &e.short(), e.is_retryable(), next);
-                    // Don't let a reminder schema error block ticket syncing in the same cycle
-                    if op.entity_type != "reminder" {
+                    // Don't let a reminder schema error or lock timeout block ticket syncing in the same cycle
+                    if op.entity_type != "reminder" && !is_lock_timeout {
                         cycle_error.get_or_insert_with(|| e.short());
                     }
                 }
+            }
+
+            // Pacing delay between consecutive write operations to prevent Google Apps Script lock collisions
+            if idx + 1 < op_count {
+                tokio::time::sleep(Duration::from_millis(INTER_OP_DELAY_MS)).await;
             }
         }
         if cycle_error.is_some() {
             break;
         }
     }
+
+    // Pacing delay after push before initiating pulls
+    tokio::time::sleep(Duration::from_millis(PHASE_DELAY_MS)).await;
 
     // ---- Pull: refresh SQLite from the API (source of truth) ----
     let mut pull_error: Option<String> = None;
@@ -361,8 +381,7 @@ pub async fn run_cycle() {
         }
     }
 
-    // ---- Employee directory: real-time sync with Google Sheets ----
-    const EMPLOYEE_PULL_GAP_SECS: i64 = 10;
+    // ---- Employee directory: sync with Google Sheets ----
     let last_emp_pull: i64 = db::sync_meta_get("last_employee_pull_at")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
@@ -386,7 +405,6 @@ pub async fn run_cycle() {
     }
 
     // ---- Reminders: pulled every 60s ----
-    const REMINDER_PULL_GAP_SECS: i64 = 60;
     let last_rem_pull: i64 = db::sync_meta_get("last_reminder_pull_at")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
@@ -454,7 +472,7 @@ fn merge_due_ops(ops: Vec<SyncOp>) -> Vec<SyncOp> {
     for op in ops {
         let Some(pos) = merged
             .iter()
-            .position(|m| m.local_ticket_id == op.local_ticket_id)
+            .position(|m| m.local_ticket_id == op.local_ticket_id && m.entity_type == op.entity_type)
         else {
             merged.push(op);
             continue;
@@ -1218,6 +1236,11 @@ pub fn sanitize_reminder_update_payload(payload: &Value) -> Value {
 async fn execute_reminder_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutcome, ApiError> {
     match op.op_type.as_str() {
         "CREATE" => {
+            if let Some(existing_srv) = db::server_reminder_id(op.local_ticket_id) {
+                if !existing_srv.is_empty() {
+                    return Ok(ExecOutcome::Synced);
+                }
+            }
             let sanitized = sanitize_reminder_create_payload(&op.payload);
             let remote = client.reminders_create(&sanitized).await?;
             db::set_reminder_mapping(
@@ -1248,13 +1271,33 @@ async fn execute_reminder_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutc
             };
 
             let sanitized = sanitize_reminder_update_payload(&op.payload);
-            let remote = client.reminders_update(&server_id, &sanitized).await?;
-            db::set_reminder_mapping(
-                op.local_ticket_id,
-                &remote.reminder_id,
-                &remote.last_updated_at,
-            )?;
-            Ok(ExecOutcome::Synced)
+            match client.reminders_update(&server_id, &sanitized).await {
+                Ok(remote) => {
+                    db::set_reminder_mapping(
+                        op.local_ticket_id,
+                        &remote.reminder_id,
+                        &remote.last_updated_at,
+                    )?;
+                    Ok(ExecOutcome::Synced)
+                }
+                Err(e) if e.is_not_found() => {
+                    // Requirement 3 & 8: Reconcile with server by clearing server_reminder_id and
+                    // stopping retries while strictly preserving local reminder row and ticket history.
+                    let _ = db::mark_reminder_server_not_found(op.local_ticket_id);
+                    Ok(ExecOutcome::Superseded)
+                }
+                Err(ApiError::Api { ref code, ref message, .. })
+                    if code == "CONFLICT" || message.contains("Completed reminders") =>
+                {
+                    // Requirement 3 & 4: Completed reminders cannot be updated on Google Sheets.
+                    // Update local cache to Completed, cancel obsolete queued updates,
+                    // and preserve associated ticket ID.
+                    let _ = db::update_reminder_status(op.local_ticket_id, "Completed");
+                    let _ = db::cancel_queued_updates_for_reminder(op.local_ticket_id);
+                    Ok(ExecOutcome::Superseded)
+                }
+                Err(e) => Err(e),
+            }
         }
         "SEND_NOW" => {
             let server_id = op
@@ -1268,9 +1311,22 @@ async fn execute_reminder_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutc
                     .get("force")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                client.reminders_send_now(&server_id, force).await?;
-                let now_str = crate::state::format_utc(now_epoch());
-                let _ = db::set_reminder_sent(op.local_ticket_id, &now_str);
+                match client.reminders_send_now(&server_id, force).await {
+                    Ok(_) => {
+                        let now_str = crate::state::format_utc(now_epoch());
+                        let _ = db::set_reminder_sent(op.local_ticket_id, &now_str);
+                    }
+                    Err(e) if e.is_not_found() => {
+                        let _ = db::mark_reminder_server_not_found(op.local_ticket_id);
+                    }
+                    Err(ApiError::Api { ref code, ref message, .. })
+                        if code == "CONFLICT" || message.contains("Completed") =>
+                    {
+                        let _ = db::update_reminder_status(op.local_ticket_id, "Completed");
+                        let _ = db::cancel_queued_updates_for_reminder(op.local_ticket_id);
+                    }
+                    Err(e) => return Err(e),
+                }
             }
             Ok(ExecOutcome::Synced)
         }
@@ -1280,9 +1336,16 @@ async fn execute_reminder_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutc
                 .clone()
                 .or_else(|| db::server_reminder_id(op.local_ticket_id));
             if let Some(server_id) = server_id {
-                let mut patch = serde_json::Map::new();
-                patch.insert("status".to_string(), serde_json::Value::String("Cancelled".to_string()));
-                let _ = client.reminders_update(&server_id, &serde_json::Value::Object(patch)).await;
+                match client.reminders_delete(&server_id).await {
+                    Ok(_) => {}
+                    Err(e) if e.is_not_found() => {}
+                    Err(ApiError::Api { ref code, .. }) if code == "UNKNOWN_ACTION" => {
+                        let mut patch = serde_json::Map::new();
+                        patch.insert("status".to_string(), serde_json::Value::String("Cancelled".to_string()));
+                        let _ = client.reminders_update(&server_id, &serde_json::Value::Object(patch)).await;
+                    }
+                    Err(e) => return Err(e),
+                }
             }
             Ok(ExecOutcome::Synced)
         }
@@ -1331,9 +1394,13 @@ async fn pull_reminders(client: &ApiClient) -> Result<usize, ApiError> {
                     db::apply_server_reminder(local_id, r)?;
                     changed += 1;
                 }
+                // When remote is Completed, cancel obsolete queued updates to avoid future CONFLICT
+                if r.status.eq_ignore_ascii_case("completed") {
+                    let _ = db::cancel_queued_updates_for_reminder(local_id);
+                }
             }
             None => {
-                if !r.status.eq_ignore_ascii_case("cancelled") {
+                if !r.status.eq_ignore_ascii_case("cancelled") && !db::server_id_has_active_delete(server_id) {
                     db::insert_server_reminder(r)?;
                     changed += 1;
                 }
@@ -1358,12 +1425,34 @@ pub fn enqueue_reminder_create(local_reminder_id: i64) {
 
 /// Queue an UPDATE for a reminder.
 pub fn enqueue_reminder_update(local_reminder_id: i64, fields: Value) {
+    if db::is_reminder_completed(local_reminder_id) {
+        eprintln!("[sync] enqueue_reminder_update ignored: reminder {local_reminder_id} is Completed");
+        return;
+    }
     let server_id = db::server_reminder_id(local_reminder_id);
     if let Err(e) = db::enqueue_reminder_update(local_reminder_id, server_id, &fields, &now_str()) {
         eprintln!("[sync] enqueue_reminder_update failed: {e}");
         return;
     }
     kick();
+}
+
+/// Queue a DELETE for a reminder.
+pub fn enqueue_reminder_delete(local_reminder_id: i64) {
+    let server_id = db::server_reminder_id(local_reminder_id);
+    if let Err(e) = db::enqueue_reminder_delete(local_reminder_id, server_id, &now_str()) {
+        eprintln!("[sync] enqueue_reminder_delete failed: {e}");
+        return;
+    }
+    kick();
+}
+
+/// Immediate execution of reminders.delete
+pub async fn delete_reminder_immediate(reminder_id: &str) -> Result<(), ApiError> {
+    let client = ensure_client().map_err(ApiError::Network)?;
+    client.reminders_delete(reminder_id).await?;
+    let _ = db::delete_server_reminder_db(reminder_id);
+    Ok(())
 }
 
 /// Queue immediate sending of a reminder.

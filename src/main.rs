@@ -10,6 +10,8 @@ mod pages;
 mod state;
 pub mod sync;
 mod sync_test;
+#[cfg(test)]
+mod reminder_sync_tests;
 
 use components::app_sidebar::AppSidebar;
 use components::fab::Fab;
