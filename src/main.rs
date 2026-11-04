@@ -163,6 +163,12 @@ use components::ui::theme::{use_theme, ThemeProvider};
 #[component]
 fn App() -> Element {
     rsx! {
+        document::Link { rel: "preconnect", href: "https://fonts.googleapis.com" }
+        document::Link { rel: "preconnect", href: "https://fonts.gstatic.com" }
+        document::Link {
+            rel: "stylesheet",
+            href: "https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100..900;1,100..900&family=Roboto+Mono:ital,wght@0,100..700;1,100..700&display=swap",
+        }
         document::Link { rel: "icon", href: FAVICON }
         document::Link { rel: "stylesheet", href: MAIN_CSS }
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
