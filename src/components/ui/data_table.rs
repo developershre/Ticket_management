@@ -3,8 +3,8 @@
 use dioxus::prelude::*;
 
 use crate::components::ui::{
-    DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger, Input, Select,
-    SelectContent, SelectItem, SelectTrigger, SelectValue,
+    DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger, Input,
+    Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 };
 use crate::icons::{ChevronLeftIcon, ChevronRightIcon, SearchIcon};
 
@@ -91,7 +91,11 @@ impl<T: Clone + PartialEq + 'static> DataTableColumn<T> {
     }
 
     /// A non-sortable column (e.g. an actions column).
-    pub fn actions(id: impl Into<String>, header: impl Into<String>, cell: fn(&T) -> Element) -> Self {
+    pub fn actions(
+        id: impl Into<String>,
+        header: impl Into<String>,
+        cell: fn(&T) -> Element,
+    ) -> Self {
         Self {
             id: id.into(),
             header: header.into(),
@@ -223,11 +227,7 @@ impl<T: Clone + PartialEq + 'static> PartialEq for DataTableProps<T> {
 // ============================================================
 
 #[component]
-fn SelectionCheckbox(
-    checked: bool,
-    indeterminate: bool,
-    on_toggle: EventHandler<()>,
-) -> Element {
+fn SelectionCheckbox(checked: bool, indeterminate: bool, on_toggle: EventHandler<()>) -> Element {
     let state_class = if checked || indeterminate {
         "border-primary bg-primary text-primary-foreground"
     } else {
@@ -291,7 +291,11 @@ fn SortIcon(active: bool, asc: bool) -> Element {
             }
         };
     }
-    let dir_path = if asc { "m18 15-6-6-6 6" } else { "m6 9 6 6 6-6" };
+    let dir_path = if asc {
+        "m18 15-6-6-6 6"
+    } else {
+        "m6 9 6 6 6-6"
+    };
 
     rsx! {
         svg {
@@ -403,7 +407,11 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
             let sv = col.sort_value;
             rows.sort_by(|a, b| {
                 let ord = sv(a).cmp(&sv(b));
-                if *asc { ord } else { ord.reverse() }
+                if *asc {
+                    ord
+                } else {
+                    ord.reverse()
+                }
             });
         }
     }
@@ -425,7 +433,10 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
     let selected_ids = selected.read().clone();
     let selected_count = selected_ids.len();
     let page_ids: Vec<String> = page_rows.iter().map(row_id).collect();
-    let page_selected_count = page_ids.iter().filter(|id| selected_ids.contains(id)).count();
+    let page_selected_count = page_ids
+        .iter()
+        .filter(|id| selected_ids.contains(id))
+        .count();
     let all_page_selected = !page_ids.is_empty() && page_selected_count == page_ids.len();
     let some_page_selected = page_selected_count > 0 && !all_page_selected;
 
@@ -448,8 +459,14 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
     let showing_to = end;
     let filter_options = props.filter.clone();
     let filter2_options = props.filter2.clone();
-    let filter_placeholder = props.filter_label.clone().unwrap_or_else(|| "Status".to_string());
-    let filter2_placeholder = props.filter2_label.clone().unwrap_or_else(|| "Priority".to_string());
+    let filter_placeholder = props
+        .filter_label
+        .clone()
+        .unwrap_or_else(|| "Status".to_string());
+    let filter2_placeholder = props
+        .filter2_label
+        .clone()
+        .unwrap_or_else(|| "Priority".to_string());
     let search_placeholder = props
         .search_placeholder
         .clone()

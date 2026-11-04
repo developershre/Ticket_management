@@ -18,7 +18,7 @@ use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::api::{ApiConfig, ApiClient, ApiError};
+use crate::api::{ApiClient, ApiConfig, ApiError};
 use crate::db::{self, SyncOp};
 use crate::sync;
 
@@ -227,14 +227,23 @@ fn test_offline() -> i32 {
 
     // 1. The operation is retained with its payload and a retry count.
     let ops = active_ops(local_id);
-    check!(ops.len() == 1, format!("exactly one queued op (got {})", ops.len()));
+    check!(
+        ops.len() == 1,
+        format!("exactly one queued op (got {})", ops.len())
+    );
     let op = &ops[0];
-    check!(op.op_type == "CREATE", format!("op type is CREATE ({})", op.op_type));
+    check!(
+        op.op_type == "CREATE",
+        format!("op type is CREATE ({})", op.op_type)
+    );
     check!(
         op.status == "pending" || op.status == "failed",
         format!("op retained, not lost (status {})", op.status)
     );
-    check!(op.retry_count >= 1, format!("retry_count >= 1 ({})", op.retry_count));
+    check!(
+        op.retry_count >= 1,
+        format!("retry_count >= 1 ({})", op.retry_count)
+    );
     check!(
         op.payload.get("subject").and_then(Value::as_str) == Some(OFFLINE_SUBJECT),
         format!("payload intact: {}", op.payload)
@@ -246,8 +255,14 @@ fn test_offline() -> i32 {
 
     // 2. Status surfaced to the UI.
     let status = sync::snapshot();
-    check!(status.state == sync::SyncState::Error, format!("state is Error ({:?})", status.state));
-    check!(status.pending_ops >= 1, format!("pending_ops >= 1 ({})", status.pending_ops));
+    check!(
+        status.state == sync::SyncState::Error,
+        format!("state is Error ({:?})", status.state)
+    );
+    check!(
+        status.pending_ops >= 1,
+        format!("pending_ops >= 1 ({})", status.pending_ops)
+    );
 
     // 3. Simulated crash mid-operation: an `in_flight` op must return to
     //    `pending` on restart (init_database runs at every app start).
@@ -273,7 +288,10 @@ fn test_offline() -> i32 {
     }
     let ops = active_ops(local_id);
     check!(ops.len() == 1, "op still present after simulated restart");
-    check!(ops[0].status == "pending", format!("in_flight recovered to pending ({})", ops[0].status));
+    check!(
+        ops[0].status == "pending",
+        format!("in_flight recovered to pending ({})", ops[0].status)
+    );
 
     println!("PASS offline: queued op retained with payload, backoff, and restart recovery");
     0
@@ -336,7 +354,10 @@ fn test_resume() -> i32 {
             return 1;
         }
     };
-    check!(remote.subject == OFFLINE_SUBJECT, format!("server row matches ({})", remote.subject));
+    check!(
+        remote.subject == OFFLINE_SUBJECT,
+        format!("server row matches ({})", remote.subject)
+    );
 
     // 4. Cleanup: local delete is pushed, server row disappears.
     sync::enqueue_delete(local_id);
@@ -409,14 +430,20 @@ fn test_online() -> i32 {
     db::update_ticket_priority(local_a, "Critical").ok();
     sync::enqueue_update(local_a, json!({ "priority": "Critical" }));
     let ops = active_ops(local_a);
-    check!(ops.len() == 1, format!("two edits → one queued op (got {})", ops.len()));
+    check!(
+        ops.len() == 1,
+        format!("two edits → one queued op (got {})", ops.len())
+    );
     check!(
         ops[0].payload.get("priority").and_then(Value::as_str) == Some("Critical"),
         "coalesced payload holds the newest value"
     );
     cycle();
     let remote_a = block_on(client.tickets_get(&server_a)).expect("tickets.get");
-    check!(remote_a.priority == "Critical", format!("update confirmed ({})", remote_a.priority));
+    check!(
+        remote_a.priority == "Critical",
+        format!("update confirmed ({})", remote_a.priority)
+    );
 
     // ---- 2. server → local pull (remote create, then remote update) ----
     let remote_b = match remote_create(&client, "SYNC-TEST-REMOTE", "Medium") {
@@ -448,7 +475,10 @@ fn test_online() -> i32 {
     cycle();
     check!(
         local_field(local_b, "priority").as_deref() == Some("High"),
-        format!("remote change applied locally ({:?})", local_field(local_b, "priority"))
+        format!(
+            "remote change applied locally ({:?})",
+            local_field(local_b, "priority")
+        )
     );
 
     // ---- 3. local delete → pushed ----
@@ -563,11 +593,17 @@ fn test_online() -> i32 {
     }
     check!(
         resolved,
-        format!("conflict auto-resolved ({} left)", db::unresolved_conflict_count())
+        format!(
+            "conflict auto-resolved ({} left)",
+            db::unresolved_conflict_count()
+        )
     );
     check!(
         local_field(local_c, "subject").as_deref() == Some("SYNC-TEST-CONFLICT-REMOTE"),
-        format!("remote change applied ({:?})", local_field(local_c, "subject"))
+        format!(
+            "remote change applied ({:?})",
+            local_field(local_c, "subject")
+        )
     );
     let server_c = block_on(client.tickets_get(&remote_c)).expect("tickets.get");
     check!(

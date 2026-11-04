@@ -63,7 +63,7 @@ pub mod select;
 #[allow(unused_imports)]
 pub use select::{
     Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger,
-    SelectValue,
+    SelectValue, SimpleSelect,
 };
 
 pub mod item;
@@ -104,10 +104,10 @@ pub use tabs::{Tabs, TabsContent, TabsList, TabsTrigger};
 pub mod context_menu;
 #[allow(unused_imports)]
 pub use context_menu::{
-    ContextMenu, ContextMenuCheckboxItem, ContextMenuContent, ContextMenuGroup,
-    ContextMenuItem, ContextMenuLabel, ContextMenuPortal, ContextMenuRadioGroup,
-    ContextMenuRadioItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuSub,
-    ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger,
+    ContextMenu, ContextMenuCheckboxItem, ContextMenuContent, ContextMenuGroup, ContextMenuItem,
+    ContextMenuLabel, ContextMenuPortal, ContextMenuRadioGroup, ContextMenuRadioItem,
+    ContextMenuSeparator, ContextMenuShortcut, ContextMenuSub, ContextMenuSubContent,
+    ContextMenuSubTrigger, ContextMenuTrigger,
 };
 
 pub mod toast;

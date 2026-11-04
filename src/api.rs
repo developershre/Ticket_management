@@ -41,7 +41,7 @@ struct CollectionVariable {
 pub const DEFAULT_BASE_URL: &str =
     "https://script.google.com/macros/s/AKfycbzx_5xVNedTPoIiT6WJ68zxKKaaaH-YahglFcL81LnD206RqnhonLqqBkYgyMSbBhDaoA/exec";
 pub const DEFAULT_API_KEY: &str =
-    "902038705cda4e6cacd685e401f000da38edaa46cd644e29934b1e8f01e73f957469e7d33a384a01b2b2a7d361e6f106";
+    "227bca5c1d4a4da8af0df1e8d46b8e6659df068e5d5949a8a8054764193cde944b16920be76943dcb1a7a54fb108699c";
 
 impl ApiConfig {
     /// Resolution order:
@@ -160,7 +160,7 @@ fn non_empty_env(key: &str) -> Option<String> {
 /// the sync worker's exponential backoff decisions.
 #[derive(Clone, Debug)]
 pub enum ApiError {
-    /// Transport-level failure (DNS, connection refused, TLS …).
+    /// Transport-level failure (DNS, connection refused, TLS â€¦).
     Network(String),
     Timeout,
     /// Non-2xx HTTP status.
@@ -180,7 +180,7 @@ pub enum ApiError {
     /// Response body was not the expected JSON envelope.
     Decode(String),
     /// Local SQLite failure while recording sync bookkeeping (busy/locked
-    /// database) — transient, retried next cycle.
+    /// database) â€” transient, retried next cycle.
     Db(String),
 }
 
@@ -203,7 +203,7 @@ impl ApiError {
         }
     }
 
-    /// True when the API reported "ticket not found" — an idempotent
+    /// True when the API reported "ticket not found" â€” an idempotent
     /// success for DELETE, a recorded conflict for UPDATE.
     pub fn is_not_found(&self) -> bool {
         matches!(self, ApiError::Api { code, .. } if code == "NOT_FOUND")
@@ -247,7 +247,7 @@ impl From<rusqlite::Error> for ApiError {
 }
 
 /// Parses the integer-seconds form of `Retry-After` (HTTP-date form is
-/// ignored — the fallback backoff applies instead).
+/// ignored â€” the fallback backoff applies instead).
 fn parse_retry_after(v: &str) -> Option<u64> {
     v.trim().parse::<u64>().ok().map(|s| s.min(MAX_RETRY_AFTER))
 }
@@ -425,7 +425,7 @@ where
 ///
 /// `activities_text` is the server-side name of the local `activities`
 /// field; `time_spent` arrives as a number or a string depending on how
-/// the sheet cell was written — both are normalized here.
+/// the sheet cell was written â€” both are normalized here.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ServerTicket {
     #[serde(
@@ -611,7 +611,7 @@ pub struct ServerTicket {
 /// One page of `tickets.list`.
 pub struct TicketListPage {
     pub items: Vec<ServerTicket>,
-    /// Rows that failed validation (missing `ticket_id` etc.) — skipped,
+    /// Rows that failed validation (missing `ticket_id` etc.) â€” skipped,
     /// never fatal for the whole page.
     pub invalid_items: usize,
     pub has_more: bool,
@@ -851,7 +851,7 @@ impl ApiClient {
     }
 
     /// Posts one envelope and unwraps the response envelope. Note the API
-    /// answers with HTTP 200 even for failures — `success`/`error` live in
+    /// answers with HTTP 200 even for failures â€” `success`/`error` live in
     /// the body.
     async fn post(&self, action: &str, data: Value) -> Result<Value, ApiError> {
         let envelope = RequestEnvelope {
@@ -940,7 +940,7 @@ impl ApiClient {
         self.post("health.check", json!({})).await
     }
 
-    /// `tickets.list` — optional filters are omitted to fetch every row;
+    /// `tickets.list` â€” optional filters are omitted to fetch every row;
     /// `limit` maxes out at 200 per the API documentation.
     pub async fn tickets_list(&self, offset: u64, limit: u64) -> Result<TicketListPage, ApiError> {
         let data = self
@@ -976,14 +976,14 @@ impl ApiClient {
         parse_ticket(data)
     }
 
-    /// `tickets.create` — `fields` must contain only real row fields (the
+    /// `tickets.create` â€” `fields` must contain only real row fields (the
     /// API rejects unknown fields with `UNKNOWN_FIELD`).
     pub async fn tickets_create(&self, fields: &Value) -> Result<ServerTicket, ApiError> {
         let data = self.post("tickets.create", fields.clone()).await?;
         parse_ticket(data)
     }
 
-    /// `tickets.update` — "send ticket_id and only the fields to update".
+    /// `tickets.update` â€” "send ticket_id and only the fields to update".
     pub async fn tickets_update(
         &self,
         ticket_id: &str,
@@ -995,7 +995,7 @@ impl ApiClient {
         parse_ticket(data)
     }
 
-    /// `tickets.delete` — hard delete; `NOT_FOUND` is treated as success
+    /// `tickets.delete` â€” hard delete; `NOT_FOUND` is treated as success
     /// by callers (already gone).
     pub async fn tickets_delete(&self, ticket_id: &str) -> Result<(), ApiError> {
         self.post("tickets.delete", json!({ "ticket_id": ticket_id }))
@@ -1003,7 +1003,7 @@ impl ApiClient {
         Ok(())
     }
 
-    /// `employees.listAll` — fetches all employee data at once.
+    /// `employees.listAll` â€” fetches all employee data at once.
     /// Falls back to `employees.list` if the server returns UNKNOWN_ACTION.
     pub async fn employees_list(&self) -> Result<Vec<Employee>, ApiError> {
         let data = match self.post("employees.listAll", json!({})).await {
@@ -1028,9 +1028,12 @@ impl ApiClient {
         if let Some(arr) = arr {
             for value in arr {
                 // Rows without a usable name/code are skipped, never fatal.
-                if let Ok(emp) = serde_json::from_value::<Employee>(value.clone()) {
+                if let Ok(mut emp) = serde_json::from_value::<Employee>(value.clone()) {
                     if !emp.employee_name.trim().is_empty() || !emp.employee_code.trim().is_empty()
                     {
+                        if !emp.email.contains('@') && emp.division.contains('@') {
+                            std::mem::swap(&mut emp.email, &mut emp.division);
+                        }
                         items.push(emp);
                     }
                 }
@@ -1178,16 +1181,18 @@ impl ApiClient {
 }
 
 fn parse_ticket(data: Value) -> Result<ServerTicket, ApiError> {
-    serde_json::from_value(data)
-        .map_err(|e| ApiError::Decode(format!("invalid ticket payload: {e}")))
+    serde_json::from_value(data).map_err(|e| ApiError::Decode(format!("invalid ticket payload: {e}")))
 }
 
 fn parse_employee(data: Value) -> Result<Employee, ApiError> {
-    serde_json::from_value(data)
-        .map_err(|e| ApiError::Decode(format!("invalid employee payload: {e}")))
+    let mut emp: Employee = serde_json::from_value(data)
+        .map_err(|e| ApiError::Decode(format!("invalid employee payload: {e}")))?;
+    if !emp.email.contains('@') && emp.division.contains('@') {
+        std::mem::swap(&mut emp.email, &mut emp.division);
+    }
+    Ok(emp)
 }
 
 fn parse_reminder(data: Value) -> Result<ServerReminder, ApiError> {
-    serde_json::from_value(data)
-        .map_err(|e| ApiError::Decode(format!("invalid reminder payload: {e}")))
+    serde_json::from_value(data).map_err(|e| ApiError::Decode(format!("invalid reminder payload: {e}")))
 }

@@ -11,6 +11,7 @@ pub struct SelectContext {
     pub display: Signal<String>,
     pub open: Signal<bool>,
     pub placeholder: Signal<String>,
+    pub onchange: Option<EventHandler<String>>,
 }
 
 // ============================================================
@@ -43,12 +44,14 @@ pub fn Select(props: SelectProps) -> Element {
     let open = use_signal(|| false);
     let placeholder_str = props.placeholder;
     let placeholder = use_signal(move || placeholder_str);
+    let onchange = props.onchange;
 
     use_context_provider(|| SelectContext {
         value,
         display,
         open,
         placeholder,
+        onchange,
     });
 
     rsx! {
@@ -78,14 +81,23 @@ pub struct SelectTriggerProps {
 #[component]
 pub fn SelectTrigger(props: SelectTriggerProps) -> Element {
     let mut ctx = use_context::<SelectContext>();
+    let is_open = *ctx.open.read();
 
     let class = format!(
-        "flex h-9 w-full items-center justify-between rounded-md border border-input \
-         bg-transparent px-3 py-2 text-sm outline-none \
-         focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50 \
-         cursor-pointer select-none transition-colors hover:bg-accent/40 {}",
+        "flex h-10 w-full items-center justify-between rounded-md border border-input \
+         bg-card px-3 py-2 text-sm text-foreground outline-none \
+         ring-offset-background transition-colors \
+         hover:bg-accent/40 focus:border-primary focus:ring-1 focus:ring-primary/20 \
+         disabled:cursor-not-allowed disabled:opacity-50 \
+         cursor-pointer select-none {}",
         props.class
     );
+
+    let chevron_class = if is_open {
+        "size-4 opacity-60 shrink-0 ml-2 transition-transform duration-200 rotate-180"
+    } else {
+        "size-4 opacity-60 shrink-0 ml-2 transition-transform duration-200"
+    };
 
     rsx! {
         button {
@@ -103,7 +115,7 @@ pub fn SelectTrigger(props: SelectTriggerProps) -> Element {
             },
             {props.children}
             svg {
-                class: "size-4 opacity-50 shrink-0 ml-2",
+                class: chevron_class,
                 view_box: "0 0 24 24",
                 fill: "none",
                 stroke: "currentColor",
@@ -146,7 +158,11 @@ pub fn SelectValue(props: SelectValueProps) -> Element {
         ctx.placeholder.read().clone()
     };
 
-    let color_class = if is_empty { "text-muted-foreground" } else { "text-foreground" };
+    let color_class = if is_empty {
+        "text-muted-foreground"
+    } else {
+        "text-foreground"
+    };
 
     rsx! {
         span {
@@ -246,10 +262,10 @@ pub fn SelectContent(props: SelectContentProps) -> Element {
     let close_btn_id = format!("__sel_close_{}", uid);
 
     let class = format!(
-        "w-full min-w-[8rem] max-h-60 \
-         overflow-y-auto overflow-x-hidden rounded-md border border-border \
-         bg-popover p-1 text-popover-foreground outline-none \
-         animate-in fade-in-0 zoom-in-95 {}",
+        "w-full min-w-[8rem] max-h-64 \
+         overflow-y-auto overflow-x-hidden rounded-md border border-border/80 \
+         bg-popover/95 backdrop-blur-md p-1.5 text-popover-foreground outline-none \
+         shadow-xl shadow-black/15 ring-1 ring-border/50 animate-in fade-in-0 zoom-in-95 duration-100 {}",
         props.class
     );
 
@@ -265,7 +281,7 @@ pub fn SelectContent(props: SelectContentProps) -> Element {
 
         div {
             "data-popup": uid,
-            class: "fixed left-0 top-0 z-50 invisible",
+            class: "fixed left-0 top-0 z-[100] invisible",
 
             div {
                 "data-slot": "select-content",
@@ -354,8 +370,10 @@ pub fn SelectItem(props: SelectItemProps) -> Element {
     let is_selected = *ctx.value.read() == props.value;
 
     let class = format!(
-        "relative flex w-full cursor-pointer select-none items-center rounded-sm py-1.5 pl-2 pr-8 \
-         text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground \
+        "relative flex w-full cursor-pointer select-none items-center rounded-sm py-2 pl-3 pr-8 \
+         text-sm outline-none transition-colors \
+         hover:bg-accent hover:text-accent-foreground \
+         data-[state=checked]:bg-primary/10 data-[state=checked]:text-primary data-[state=checked]:font-medium \
          disabled:pointer-events-none disabled:opacity-50 {}",
         props.class
     );
@@ -378,6 +396,9 @@ pub fn SelectItem(props: SelectItemProps) -> Element {
                     ctx.value.set(val.clone());
                     ctx.display.set(text_val.clone());
                     ctx.open.set(false);
+                    if let Some(h) = ctx.onchange {
+                        h.call(val.clone());
+                    }
                 }
             },
 
@@ -388,13 +409,13 @@ pub fn SelectItem(props: SelectItemProps) -> Element {
 
             if is_selected {
                 span {
-                    class: "absolute right-2 flex size-3.5 items-center justify-center",
+                    class: "absolute right-2.5 flex size-4 items-center justify-center text-primary",
                     svg {
                         class: "size-4",
                         view_box: "0 0 24 24",
                         fill: "none",
                         stroke: "currentColor",
-                        stroke_width: "2",
+                        stroke_width: "2.5",
                         stroke_linecap: "round",
                         stroke_linejoin: "round",
                         path { d: "M20 6L9 17L4 12" }
@@ -421,6 +442,53 @@ pub fn SelectSeparator(props: SelectSeparatorProps) -> Element {
         div {
             "data-slot": "select-separator",
             class: "-mx-1 my-1 h-px bg-muted {props.class}",
+        }
+    }
+}
+
+// ============================================================
+// Simple Select (Convenience Component for Forms)
+// ============================================================
+
+#[derive(Props, Clone, PartialEq)]
+pub struct SimpleSelectProps {
+    pub value: Signal<String>,
+    #[props(default)]
+    pub placeholder: String,
+    pub options: Vec<(String, String)>,
+    #[props(default)]
+    pub class: String,
+    #[props(default)]
+    pub onchange: Option<EventHandler<String>>,
+}
+
+#[component]
+pub fn SimpleSelect(props: SimpleSelectProps) -> Element {
+    let val = props.value;
+    let onchange = props.onchange;
+    rsx! {
+        Select {
+            value: Some(val),
+            placeholder: props.placeholder.clone(),
+            onchange: move |v: String| {
+                if let Some(h) = onchange {
+                    h.call(v);
+                }
+            },
+            SelectTrigger {
+                class: format!("h-10 text-sm bg-card border-input {}", props.class),
+                SelectValue { placeholder: props.placeholder }
+            }
+            SelectContent {
+                for (opt_val, opt_label) in props.options {
+                    SelectItem {
+                        key: "{opt_val}",
+                        value: opt_val.clone(),
+                        text: opt_label.clone(),
+                        "{opt_label}"
+                    }
+                }
+            }
         }
     }
 }

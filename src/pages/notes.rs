@@ -245,7 +245,7 @@ pub fn NotesPage() -> Element {
                                             div {
                                                 key: "note-{n_id}",
                                                 class: "group relative flex flex-col justify-between rounded-xl border border-border/80 bg-card/90 p-5 shadow-sm hover:shadow-md hover:border-foreground/30 transition-all duration-200 backdrop-blur-sm",
-                                                
+
                                                 // Card Header: Badge & Quick actions
                                                 div { class: "flex items-start justify-between gap-2 mb-3",
                                                     div { class: "flex items-center gap-1.5",

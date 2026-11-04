@@ -70,8 +70,18 @@ fn first_day_of_month(year: u32, month: u32) -> usize {
 }
 
 const MONTH_NAMES: [&str; 12] = [
-    "January", "February", "March", "April", "May", "June", "July", "August", "September",
-    "October", "November", "December",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 ];
 
 const WEEKDAY_NAMES: [&str; 7] = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
@@ -112,10 +122,7 @@ pub fn Calendar(props: CalendarProps) -> Element {
     let grid_cells = if total_cells <= 35 { 35 } else { 42 };
     let trailing_count = grid_cells - total_cells;
 
-    let class = format!(
-        "w-full flex flex-col gap-4 select-none {}",
-        props.class
-    );
+    let class = format!("w-full flex flex-col gap-4 select-none {}", props.class);
 
     rsx! {
         div {

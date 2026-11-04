@@ -89,7 +89,10 @@ pub fn CalendarPage() -> Element {
     let on_change_priority = move |(ev_id, new_prio): (u32, String)| {
         if let Some(ev) = events.write().iter_mut().find(|e| e.id == ev_id) {
             ev.priority = new_prio.clone();
-            toast.info("Priority Updated", format!("Event priority set to {new_prio}"));
+            toast.info(
+                "Priority Updated",
+                format!("Event priority set to {new_prio}"),
+            );
         }
     };
 
@@ -103,14 +106,20 @@ pub fn CalendarPage() -> Element {
                 _ => EventColor::Amber,
             };
             ev.category = new_cat.clone();
-            toast.info("Category Updated", format!("Event category set to {new_cat}"));
+            toast.info(
+                "Category Updated",
+                format!("Event category set to {new_cat}"),
+            );
         }
     };
 
     let on_delete_event = move |ev_id: u32| {
         events.write().retain(|e| e.id != ev_id);
         detail_event.set(None);
-        toast.error("Event Deleted", "The event has been removed from your calendar.");
+        toast.error(
+            "Event Deleted",
+            "The event has been removed from your calendar.",
+        );
     };
 
     // Filter events based on active category & search keyword
@@ -143,89 +152,85 @@ pub fn CalendarPage() -> Element {
         .collect();
 
     // Navigation callbacks
-    let on_prev = move |_| {
-        match active_view() {
-            CalendarView::Month | CalendarView::Schedule => {
-                let m = view_month();
-                let y = view_year();
-                if m == 1 {
-                    view_month.set(12);
-                    view_year.set(y - 1);
-                } else {
-                    view_month.set(m - 1);
-                }
+    let on_prev = move |_| match active_view() {
+        CalendarView::Month | CalendarView::Schedule => {
+            let m = view_month();
+            let y = view_year();
+            if m == 1 {
+                view_month.set(12);
+                view_year.set(y - 1);
+            } else {
+                view_month.set(m - 1);
             }
-            CalendarView::Week => {
-                let (y, m, d) = active_selected;
-                let new_d = if d > 7 {
-                    (y, m, d - 7)
-                } else {
-                    let pm = if m == 1 { 12 } else { m - 1 };
-                    let py = if m == 1 { y - 1 } else { y };
-                    let pmax = days_in_month(py, pm);
-                    (py, pm, pmax - (7 - d))
-                };
-                selected_date.set(Some(new_d));
-                view_year.set(new_d.0);
-                view_month.set(new_d.1);
-            }
-            CalendarView::Day => {
-                let (y, m, d) = active_selected;
-                let new_d = if d > 1 {
-                    (y, m, d - 1)
-                } else {
-                    let pm = if m == 1 { 12 } else { m - 1 };
-                    let py = if m == 1 { y - 1 } else { y };
-                    let pmax = days_in_month(py, pm);
-                    (py, pm, pmax)
-                };
-                selected_date.set(Some(new_d));
-                view_year.set(new_d.0);
-                view_month.set(new_d.1);
-            }
+        }
+        CalendarView::Week => {
+            let (y, m, d) = active_selected;
+            let new_d = if d > 7 {
+                (y, m, d - 7)
+            } else {
+                let pm = if m == 1 { 12 } else { m - 1 };
+                let py = if m == 1 { y - 1 } else { y };
+                let pmax = days_in_month(py, pm);
+                (py, pm, pmax - (7 - d))
+            };
+            selected_date.set(Some(new_d));
+            view_year.set(new_d.0);
+            view_month.set(new_d.1);
+        }
+        CalendarView::Day => {
+            let (y, m, d) = active_selected;
+            let new_d = if d > 1 {
+                (y, m, d - 1)
+            } else {
+                let pm = if m == 1 { 12 } else { m - 1 };
+                let py = if m == 1 { y - 1 } else { y };
+                let pmax = days_in_month(py, pm);
+                (py, pm, pmax)
+            };
+            selected_date.set(Some(new_d));
+            view_year.set(new_d.0);
+            view_month.set(new_d.1);
         }
     };
 
-    let on_next = move |_| {
-        match active_view() {
-            CalendarView::Month | CalendarView::Schedule => {
-                let m = view_month();
-                let y = view_year();
-                if m == 12 {
-                    view_month.set(1);
-                    view_year.set(y + 1);
-                } else {
-                    view_month.set(m + 1);
-                }
+    let on_next = move |_| match active_view() {
+        CalendarView::Month | CalendarView::Schedule => {
+            let m = view_month();
+            let y = view_year();
+            if m == 12 {
+                view_month.set(1);
+                view_year.set(y + 1);
+            } else {
+                view_month.set(m + 1);
             }
-            CalendarView::Week => {
-                let (y, m, d) = active_selected;
-                let max_d = days_in_month(y, m);
-                let new_d = if d + 7 <= max_d {
-                    (y, m, d + 7)
-                } else {
-                    let nm = if m == 12 { 1 } else { m + 1 };
-                    let ny = if m == 12 { y + 1 } else { y };
-                    (ny, nm, (d + 7) - max_d)
-                };
-                selected_date.set(Some(new_d));
-                view_year.set(new_d.0);
-                view_month.set(new_d.1);
-            }
-            CalendarView::Day => {
-                let (y, m, d) = active_selected;
-                let max_d = days_in_month(y, m);
-                let new_d = if d < max_d {
-                    (y, m, d + 1)
-                } else {
-                    let nm = if m == 12 { 1 } else { m + 1 };
-                    let ny = if m == 12 { y + 1 } else { y };
-                    (ny, nm, 1)
-                };
-                selected_date.set(Some(new_d));
-                view_year.set(new_d.0);
-                view_month.set(new_d.1);
-            }
+        }
+        CalendarView::Week => {
+            let (y, m, d) = active_selected;
+            let max_d = days_in_month(y, m);
+            let new_d = if d + 7 <= max_d {
+                (y, m, d + 7)
+            } else {
+                let nm = if m == 12 { 1 } else { m + 1 };
+                let ny = if m == 12 { y + 1 } else { y };
+                (ny, nm, (d + 7) - max_d)
+            };
+            selected_date.set(Some(new_d));
+            view_year.set(new_d.0);
+            view_month.set(new_d.1);
+        }
+        CalendarView::Day => {
+            let (y, m, d) = active_selected;
+            let max_d = days_in_month(y, m);
+            let new_d = if d < max_d {
+                (y, m, d + 1)
+            } else {
+                let nm = if m == 12 { 1 } else { m + 1 };
+                let ny = if m == 12 { y + 1 } else { y };
+                (ny, nm, 1)
+            };
+            selected_date.set(Some(new_d));
+            view_year.set(new_d.0);
+            view_month.set(new_d.1);
         }
     };
 

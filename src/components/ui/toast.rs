@@ -27,11 +27,19 @@ pub struct ToastState {
 #[allow(dead_code)]
 impl ToastState {
     pub fn show(&self, title: impl Into<String>, description: impl Into<String>) {
-        self.push(ToastVariant::Default, title.into(), Some(description.into()));
+        self.push(
+            ToastVariant::Default,
+            title.into(),
+            Some(description.into()),
+        );
     }
 
     pub fn success(&self, title: impl Into<String>, description: impl Into<String>) {
-        self.push(ToastVariant::Success, title.into(), Some(description.into()));
+        self.push(
+            ToastVariant::Success,
+            title.into(),
+            Some(description.into()),
+        );
     }
 
     pub fn error(&self, title: impl Into<String>, description: impl Into<String>) {

@@ -33,11 +33,7 @@ impl EventColor {
     /// Color styling for event pill / card in calendar grid: (bg_class, text_class, border_class).
     pub fn pill_classes(&self) -> (&'static str, &'static str, &'static str) {
         match self {
-            EventColor::Blue => (
-                "bg-info/12 hover:bg-info/22",
-                "text-info",
-                "border-info/35",
-            ),
+            EventColor::Blue => ("bg-info/12 hover:bg-info/22", "text-info", "border-info/35"),
             EventColor::Green => (
                 "bg-success/12 hover:bg-success/22",
                 "text-success",
@@ -213,8 +209,18 @@ pub fn day_of_week(year: u32, month: u32, day: u32) -> usize {
 }
 
 pub const MONTH_NAMES: [&str; 12] = [
-    "January", "February", "March", "April", "May", "June", "July", "August", "September",
-    "October", "November", "December",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 ];
 
 pub const SHORT_MONTH_NAMES: [&str; 12] = [
@@ -222,7 +228,13 @@ pub const SHORT_MONTH_NAMES: [&str; 12] = [
 ];
 
 pub const WEEKDAY_NAMES: [&str; 7] = [
-    "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
 ];
 
 pub const WEEKDAY_SHORT_NAMES: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

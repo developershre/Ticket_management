@@ -635,5 +635,3 @@ pub fn UploadCloudIcon(props: IconProps) -> Element {
         }
     }
 }
-
-

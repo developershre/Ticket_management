@@ -2,8 +2,8 @@
 
 use dioxus::prelude::*;
 
-mod components;
 pub mod api;
+mod components;
 pub mod db;
 mod icons;
 mod pages;
@@ -61,7 +61,10 @@ fn main() {
 
     // Initialize SQLite database adhering to DATABASE.SQL schema
     if let Err(e) = db::init_database() {
-        eprintln!("[BPSL IT Support DB] Warning: database init failed: {:?}", e);
+        eprintln!(
+            "[BPSL IT Support DB] Warning: database init failed: {:?}",
+            e
+        );
     }
 
     // Operational aid: run a single sync cycle against the configured API

@@ -52,4 +52,3 @@ fn civil_from_days(z: i64) -> (u32, u32, u32) {
 /// (like NOTES or tickets) have been modified by FAB or dialogs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct AppDbRevision(pub u64);
-

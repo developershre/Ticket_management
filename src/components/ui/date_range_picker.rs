@@ -44,7 +44,11 @@ fn format_range(range: DateRange) -> String {
 
 /// Two-step selection: first click sets the start, second sets the end
 /// (a click before the start restarts the range there).
-fn select_day(mut range: Signal<Option<DateRange>>, mut pending: Signal<bool>, day: (u32, u32, u32)) {
+fn select_day(
+    mut range: Signal<Option<DateRange>>,
+    mut pending: Signal<bool>,
+    day: (u32, u32, u32),
+) {
     if !*pending.read() {
         range.set(Some((day, day)));
         pending.set(true);

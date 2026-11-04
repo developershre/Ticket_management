@@ -26,7 +26,11 @@ pub fn Switch(props: SwitchProps) -> Element {
     let is_checked = *is_checked_sig.read();
 
     let bg_class = if is_checked { "bg-primary" } else { "bg-input" };
-    let thumb_trans = if is_checked { "translate-x-4" } else { "translate-x-0" };
+    let thumb_trans = if is_checked {
+        "translate-x-4"
+    } else {
+        "translate-x-0"
+    };
 
     let class = format!(
         "peer inline-flex h-5 w-9 shrink-0 items-center rounded-full border-2 border-transparent \

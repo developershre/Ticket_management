@@ -14,6 +14,7 @@ use crate::components::ui::dialog::{
     Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 };
 use crate::components::ui::input::Input;
+use crate::components::ui::select::SimpleSelect;
 use crate::components::ui::separator::Separator;
 use crate::components::ui::toast::ToastState;
 use crate::icons::{
@@ -545,11 +546,17 @@ pub fn Reminders() -> Element {
                 if let Some(mut sync) = db_sync {
                     sync.with_mut(|r| r.0 += 1);
                 }
-                toast.success("Ticket Submitted", format!("Ticket for {emp_name} ({emp_code}) submitted successfully"));
+                toast.success(
+                    "Ticket Submitted",
+                    format!("Ticket for {emp_name} ({emp_code}) submitted successfully"),
+                );
                 is_create_open.set(false);
             }
             Err(e) => {
-                toast.error("Database Error", format!("Failed to create reminder: {:?}", e));
+                toast.error(
+                    "Database Error",
+                    format!("Failed to create reminder: {:?}", e),
+                );
             }
         }
     };
@@ -566,7 +573,10 @@ pub fn Reminders() -> Element {
             if let Some(target_pos) = list.iter().position(|r| r.id == target_id) {
                 list.insert(target_pos, item);
                 let new_rank = target_pos + 1;
-                toast.info("Priority Updated", format!("\"{title}\" is now #{new_rank}"));
+                toast.info(
+                    "Priority Updated",
+                    format!("\"{title}\" is now #{new_rank}"),
+                );
             } else {
                 list.push(item);
             }
@@ -578,7 +588,11 @@ pub fn Reminders() -> Element {
         let mut list = reminders.write();
         if let Some(item) = list.iter_mut().find(|r| r.id == id) {
             item.done = !item.done;
-            item.status = if item.done { "Completed".to_string() } else { "Pending".to_string() };
+            item.status = if item.done {
+                "Completed".to_string()
+            } else {
+                "Pending".to_string()
+            };
             let status = item.status.clone();
             let rem_id = item.reminder_id;
             let _ = crate::db::update_reminder_status(rem_id, &status);
@@ -651,21 +665,18 @@ pub fn Reminders() -> Element {
             // scheduled email; the row itself stays in the sheet and will be
             // re-cached locally as Cancelled on the next pull.
             if !server_id.is_empty() {
+                let _ = crate::db::update_reminder_status(rem_id, "Cancelled");
                 crate::sync::enqueue_reminder_update(
                     rem_id,
                     serde_json::json!({ "status": "Cancelled" }),
                 );
+            } else {
+                let _ = crate::db::cancel_queued_ops_for_entity("reminder", rem_id);
+                let _ = crate::db::delete_reminder_db(rem_id);
             }
-            let _ = crate::db::delete_reminder_db(rem_id);
-            toast.info(
-                "Reminder Removed",
-                if server_id.is_empty() {
-                    format!("\"{title}\" removed (it had not reached the sheet yet).")
-                } else {
-                    format!(
-                        "\"{title}\" removed locally and cancelled in the sheet. The API has no delete — the sheet keeps the row as Cancelled."
-                    )
-                },
+            toast.success(
+                "Reminder Deleted",
+                format!("\"{title}\" removed and synced with Google Sheets"),
             );
             if let Some(mut sync) = db_sync {
                 sync.with_mut(|r| r.0 += 1);
@@ -680,8 +691,14 @@ pub fn Reminders() -> Element {
             item.service_category = new_tag.clone();
             let rem_id = item.reminder_id;
             let _ = crate::db::update_reminder_category(rem_id, &new_tag);
-            crate::sync::enqueue_reminder_update(rem_id, serde_json::json!({ "service_category": new_tag }));
-            toast.info("Category Changed", format!("\"{}\" is now {new_tag}", item.reminder_message));
+            crate::sync::enqueue_reminder_update(
+                rem_id,
+                serde_json::json!({ "service_category": new_tag }),
+            );
+            toast.info(
+                "Category Changed",
+                format!("\"{}\" is now {new_tag}", item.reminder_message),
+            );
             if let Some(mut sync) = db_sync {
                 sync.with_mut(|r| r.0 += 1);
             }
@@ -744,17 +761,39 @@ pub fn Reminders() -> Element {
     // Clear completed reminders
     let mut clear_completed = move || {
         let mut list = reminders.write();
-        let completed_ids: Vec<(String, i64)> = list.iter().filter(|r| r.done).map(|r| (r.id.clone(), r.reminder_id)).collect();
+        let completed_ids: Vec<(String, i64, String)> = list
+            .iter()
+            .filter(|r| r.done)
+            .map(|r| (r.id.clone(), r.reminder_id, r.server_reminder_id.clone()))
+            .collect();
         let count = completed_ids.len();
         if count == 0 {
-            toast.info("No Completed Reminders", "There are no completed items to clear");
+            toast.info(
+                "No Completed Reminders",
+                "There are no completed items to clear",
+            );
             return;
         }
-        for (_id, rem_id) in &completed_ids {
-            let _ = crate::db::delete_reminder_db(*rem_id);
+        for (_id, rem_id, server_id) in &completed_ids {
+            if !server_id.is_empty() {
+                let _ = crate::db::update_reminder_status(*rem_id, "Cancelled");
+                crate::sync::enqueue_reminder_update(
+                    *rem_id,
+                    serde_json::json!({ "status": "Cancelled" }),
+                );
+            } else {
+                let _ = crate::db::cancel_queued_ops_for_entity("reminder", *rem_id);
+                let _ = crate::db::delete_reminder_db(*rem_id);
+            }
         }
         list.retain(|r| !r.done);
-        toast.success("Completed Cleared", format!("Cleared {count} completed reminders"));
+        toast.success(
+            "Completed Cleared",
+            format!("Cleared {count} completed reminders"),
+        );
+        if let Some(mut sync) = db_sync {
+            sync.with_mut(|r| r.0 += 1);
+        }
     };
 
     let all_reminders = reminders.read().clone();
@@ -1142,6 +1181,20 @@ pub fn Reminders() -> Element {
                                                                 }
                                                             }
                                                         }
+                                                        button {
+                                                            r#type: "button",
+                                                            title: "Delete reminder & sync with Google Sheets",
+                                                            class: "flex items-center gap-1 rounded-md border border-border/80 bg-background px-2 py-1 text-xs text-muted-foreground hover:border-destructive hover:text-destructive hover:bg-destructive/10 transition-colors cursor-pointer",
+                                                            onclick: {
+                                                                let id_del = reminder_c.id.clone();
+                                                                move |e: MouseEvent| {
+                                                                    e.stop_propagation();
+                                                                    delete_reminder(id_del.clone());
+                                                                }
+                                                            },
+                                                            TrashIcon { class: "size-3" }
+                                                            span { "Delete" }
+                                                        }
                                                     }
                                                 }
                                             }
@@ -1183,15 +1236,13 @@ pub fn Reminders() -> Element {
                                     "{directory_employees.len()} employees loaded"
                                 }
                             }
-                            select {
-                                class: "h-10 rounded-md border border-input bg-card px-3 text-sm text-foreground focus:border-primary focus:ring-1 focus:ring-primary/20 focus:outline-none cursor-pointer",
-                                value: "{new_employee_code}",
-                                onchange: move |e: FormEvent| {
-                                    let val = e.value();
-                                    new_employee_code.set(val.clone());
-                                    let trimmed = val.trim();
+                            SimpleSelect {
+                                value: new_employee_code,
+                                placeholder: "-- Choose an Employee (auto-fills code & details) --".to_string(),
+                                onchange: move |val: String| {
+                                    let trimmed = val.trim().to_string();
                                     if !trimmed.is_empty() {
-                                        if let Some(emp) = crate::db::find_employee_by_code(trimmed) {
+                                        if let Some(emp) = crate::db::find_employee_by_code(&trimmed) {
                                             new_employee_name.set(emp.emp_name);
                                             if !emp.emp_email.is_empty() {
                                                 new_email_address.set(emp.emp_email);
@@ -1199,14 +1250,15 @@ pub fn Reminders() -> Element {
                                         }
                                     }
                                 },
-                                option { value: "", "-- Choose an Employee (auto-fills code & details) --" }
-                                for emp in directory_employees.iter() {
-                                    option {
-                                        key: "{emp.emp_id}",
-                                        value: "{emp.emp_code}",
-                                        "{emp.emp_code} - {emp.emp_name} ({emp.department})"
-                                    }
-                                }
+                                options: directory_employees
+                                    .iter()
+                                    .map(|emp| {
+                                        (
+                                            emp.emp_code.clone(),
+                                            format!("{} - {} ({})", emp.emp_code, emp.emp_name, emp.department),
+                                        )
+                                    })
+                                    .collect(),
                             }
                         }
 
@@ -1270,34 +1322,35 @@ pub fn Reminders() -> Element {
                                     "Category"
                                     span { class: "text-destructive font-bold", " *" }
                                 }
-                                select {
-                                    class: "h-10 rounded-md border border-input bg-card px-3 text-sm text-foreground focus:border-primary focus:ring-1 focus:ring-primary/20 focus:outline-none cursor-pointer",
-                                    value: "{new_category}",
-                                    onchange: move |e: FormEvent| new_category.set(e.value()),
-                                    option { value: "Select category", disabled: true, "Select category" }
-                                    option { value: "IT Support", "IT Support" }
-                                    option { value: "Hardware", "Hardware" }
-                                    option { value: "Software", "Software" }
-                                    option { value: "Network", "Network" }
-                                    option { value: "Access & Accounts", "Access & Accounts" }
-                                    option { value: "Security", "Security" }
-                                    option { value: "Infrastructure", "Infrastructure" }
-                                    option { value: "General", "General" }
-                                    option { value: "Other", "Other" }
+                                SimpleSelect {
+                                    value: new_category,
+                                    placeholder: "Select category...".to_string(),
+                                    options: vec![
+                                        ("IT Support".to_string(), "IT Support".to_string()),
+                                        ("Hardware".to_string(), "Hardware".to_string()),
+                                        ("Software".to_string(), "Software".to_string()),
+                                        ("Network".to_string(), "Network".to_string()),
+                                        ("Access & Accounts".to_string(), "Access & Accounts".to_string()),
+                                        ("Security".to_string(), "Security".to_string()),
+                                        ("Infrastructure".to_string(), "Infrastructure".to_string()),
+                                        ("General".to_string(), "General".to_string()),
+                                        ("Other".to_string(), "Other".to_string()),
+                                    ],
                                 }
                             }
                             div { class: "flex flex-col gap-1.5",
                                 label { class: "text-xs font-semibold text-foreground",
                                     "Priority"
                                 }
-                                select {
-                                    class: "h-10 rounded-md border border-input bg-card px-3 text-sm text-foreground focus:border-primary focus:ring-1 focus:ring-primary/20 focus:outline-none cursor-pointer",
-                                    value: "{new_priority}",
-                                    onchange: move |e: FormEvent| new_priority.set(e.value()),
-                                    option { value: "Low", "Low" }
-                                    option { value: "Medium", "Medium" }
-                                    option { value: "High", "High" }
-                                    option { value: "Critical", "Critical" }
+                                SimpleSelect {
+                                    value: new_priority,
+                                    placeholder: "Select priority...".to_string(),
+                                    options: vec![
+                                        ("Low".to_string(), "Low".to_string()),
+                                        ("Medium".to_string(), "Medium".to_string()),
+                                        ("High".to_string(), "High".to_string()),
+                                        ("Critical".to_string(), "Critical".to_string()),
+                                    ],
                                 }
                             }
                         }
@@ -1428,6 +1481,18 @@ pub fn Reminders() -> Element {
 
                         DialogFooter {
                             Button {
+                                variant: "destructive",
+                                onclick: {
+                                    let id_del = r.id.clone();
+                                    move |_| {
+                                        delete_reminder(id_del.clone());
+                                        is_detail_open.set(false);
+                                    }
+                                },
+                                TrashIcon { class: "size-3.5 mr-1.5" }
+                                "Delete Reminder"
+                            }
+                            Button {
                                 variant: "outline",
                                 onclick: move |_| is_detail_open.set(false),
                                 "Close"
@@ -1461,4 +1526,3 @@ pub fn Reminders() -> Element {
         }
     }
 }
-

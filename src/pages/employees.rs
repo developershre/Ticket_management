@@ -207,24 +207,15 @@ fn render_action_cell(e: &EmployeeItem) -> Element {
 
 fn employee_columns() -> Vec<DataTableColumn<EmployeeItem>> {
     vec![
-        DataTableColumn::new(
-            "name",
-            "Employee",
-            render_name_cell,
-            |e: &EmployeeItem| SortValue::Text(e.emp_name.clone()),
-        ),
-        DataTableColumn::new(
-            "code",
-            "Code",
-            render_code_cell,
-            |e: &EmployeeItem| SortValue::Text(e.emp_code.clone()),
-        ),
-        DataTableColumn::new(
-            "email",
-            "Email",
-            render_email_cell,
-            |e: &EmployeeItem| SortValue::Text(e.emp_email.clone()),
-        ),
+        DataTableColumn::new("name", "Employee", render_name_cell, |e: &EmployeeItem| {
+            SortValue::Text(e.emp_name.clone())
+        }),
+        DataTableColumn::new("code", "Code", render_code_cell, |e: &EmployeeItem| {
+            SortValue::Text(e.emp_code.clone())
+        }),
+        DataTableColumn::new("email", "Email", render_email_cell, |e: &EmployeeItem| {
+            SortValue::Text(e.emp_email.clone())
+        }),
         DataTableColumn::new(
             "department",
             "Department",
@@ -237,12 +228,9 @@ fn employee_columns() -> Vec<DataTableColumn<EmployeeItem>> {
             render_division_cell,
             |e: &EmployeeItem| SortValue::Text(e.division.clone()),
         ),
-        DataTableColumn::new(
-            "actions",
-            "",
-            render_action_cell,
-            |_: &EmployeeItem| SortValue::Text(String::new()),
-        ),
+        DataTableColumn::new("actions", "", render_action_cell, |_: &EmployeeItem| {
+            SortValue::Text(String::new())
+        }),
     ]
 }
 

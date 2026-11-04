@@ -105,7 +105,11 @@ pub fn DialogContent(props: DialogContentProps) -> Element {
         return rsx! {};
     }
 
-    let max_w_fallback = if props.class.contains("max-w-") { "" } else { "max-w-lg" };
+    let max_w_fallback = if props.class.contains("max-w-") {
+        ""
+    } else {
+        "max-w-lg"
+    };
     let class = format!(
         "fixed left-1/2 top-1/2 z-50 grid w-[calc(100%-2rem)] {max_w_fallback} -translate-x-1/2 -translate-y-1/2 \
          gap-4 border border-border/80 bg-card p-5 sm:p-6 rounded-md shadow-2xl duration-150 \

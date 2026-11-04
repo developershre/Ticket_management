@@ -173,7 +173,10 @@ pub fn start_worker() {
 }
 
 fn worker_loop() {
-    let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
         Ok(rt) => rt,
         Err(e) => {
             with_status(|s| {
@@ -241,7 +244,10 @@ fn worker_loop() {
 /// Runs one synchronous cycle (used by `--sync-once` and the test
 /// harness; the normal path is the worker thread).
 pub fn run_cycle_blocking() {
-    let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() else {
+    let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
         return;
     };
     rt.block_on(run_cycle());
@@ -315,9 +321,13 @@ pub async fn run_cycle() {
                     let _ = db::mark_op_superseded(op.op_id);
                 }
                 Err(e) => {
-                    let is_schema_mismatch = matches!(&e, ApiError::Api { code, .. } if code == "SCHEMA_MISMATCH");
+                    let is_schema_mismatch =
+                        matches!(&e, ApiError::Api { code, .. } if code == "SCHEMA_MISMATCH");
                     if !is_schema_mismatch || op.retry_count == 0 {
-                        eprintln!("[sync execute_op ERROR] op={:?} entity={:?} err={}", op.op_type, op.entity_type, e);
+                        eprintln!(
+                            "[sync execute_op ERROR] op={:?} entity={:?} err={}",
+                            op.op_type, op.entity_type, e
+                        );
                     }
                     let next = next_attempt_at(&op, &e);
                     let _ = db::mark_op_error(op.op_id, &e.short(), e.is_retryable(), next);
@@ -442,7 +452,10 @@ enum ExecOutcome {
 fn merge_due_ops(ops: Vec<SyncOp>) -> Vec<SyncOp> {
     let mut merged: Vec<SyncOp> = Vec::new();
     for op in ops {
-        let Some(pos) = merged.iter().position(|m| m.local_ticket_id == op.local_ticket_id) else {
+        let Some(pos) = merged
+            .iter()
+            .position(|m| m.local_ticket_id == op.local_ticket_id)
+        else {
             merged.push(op);
             continue;
         };
@@ -496,17 +509,23 @@ async fn execute_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutcome, ApiE
 
     match op.op_type.as_str() {
         "CREATE" => {
-            if op.retry_count > 0
-                && ack_maybe_lost(op.last_error.as_deref().unwrap_or_default())
-            {
+            if op.retry_count > 0 && ack_maybe_lost(op.last_error.as_deref().unwrap_or_default()) {
                 if let Some(remote) = find_matching_ticket(client, &op.payload).await? {
-                    db::set_ticket_mapping(op.local_ticket_id, &remote.ticket_id, &remote.last_updated_on)?;
+                    db::set_ticket_mapping(
+                        op.local_ticket_id,
+                        &remote.ticket_id,
+                        &remote.last_updated_on,
+                    )?;
                     return Ok(ExecOutcome::Synced);
                 }
             }
             let sanitized = sanitize_ticket_payload(client, &op.payload, true);
             let remote = client.tickets_create(&sanitized).await?;
-            db::set_ticket_mapping(op.local_ticket_id, &remote.ticket_id, &remote.last_updated_on)?;
+            db::set_ticket_mapping(
+                op.local_ticket_id,
+                &remote.ticket_id,
+                &remote.last_updated_on,
+            )?;
             Ok(ExecOutcome::Synced)
         }
 
@@ -524,7 +543,11 @@ async fn execute_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutcome, ApiE
                 };
                 let sanitized = sanitize_ticket_payload(client, &row, true);
                 let remote = client.tickets_create(&sanitized).await?;
-                db::set_ticket_mapping(op.local_ticket_id, &remote.ticket_id, &remote.last_updated_on)?;
+                db::set_ticket_mapping(
+                    op.local_ticket_id,
+                    &remote.ticket_id,
+                    &remote.last_updated_on,
+                )?;
                 return Ok(ExecOutcome::Synced);
             };
 
@@ -620,10 +643,23 @@ pub fn to_sheet_kanban_state(val: &str) -> &'static str {
         "Onhold" | "On Hold" | "On-Hold" | "Hold" => "On Hold",
         "Completed" | "Done" | "Resolved" | "Closed" => "Done",
         other => match other {
-            s if s.eq_ignore_ascii_case("pending") || s.eq_ignore_ascii_case("open") || s.eq_ignore_ascii_case("new") => "Open",
-            s if s.eq_ignore_ascii_case("inprogress") || s.eq_ignore_ascii_case("in progress") => "In Progress",
+            s if s.eq_ignore_ascii_case("pending")
+                || s.eq_ignore_ascii_case("open")
+                || s.eq_ignore_ascii_case("new") =>
+            {
+                "Open"
+            }
+            s if s.eq_ignore_ascii_case("inprogress") || s.eq_ignore_ascii_case("in progress") => {
+                "In Progress"
+            }
             s if s.eq_ignore_ascii_case("onhold") || s.eq_ignore_ascii_case("on hold") => "On Hold",
-            s if s.eq_ignore_ascii_case("completed") || s.eq_ignore_ascii_case("done") || s.eq_ignore_ascii_case("resolved") || s.eq_ignore_ascii_case("closed") => "Done",
+            s if s.eq_ignore_ascii_case("completed")
+                || s.eq_ignore_ascii_case("done")
+                || s.eq_ignore_ascii_case("resolved")
+                || s.eq_ignore_ascii_case("closed") =>
+            {
+                "Done"
+            }
             _ => "Open",
         },
     }
@@ -638,11 +674,29 @@ pub fn to_sheet_stage(val: &str) -> &'static str {
         "Onhold" | "On Hold" | "Hold" => "Assigned",
         "Completed" | "Done" | "Resolution" | "Resolved" | "Closed" => "Resolution",
         other => match other {
-            s if s.eq_ignore_ascii_case("pending") || s.eq_ignore_ascii_case("open") || s.eq_ignore_ascii_case("new") => "New",
+            s if s.eq_ignore_ascii_case("pending")
+                || s.eq_ignore_ascii_case("open")
+                || s.eq_ignore_ascii_case("new") =>
+            {
+                "New"
+            }
             s if s.eq_ignore_ascii_case("assigned") => "Assigned",
-            s if s.eq_ignore_ascii_case("inprogress") || s.eq_ignore_ascii_case("in progress") || s.eq_ignore_ascii_case("investigation") => "Investigation",
-            s if s.eq_ignore_ascii_case("onhold") || s.eq_ignore_ascii_case("on hold") => "Assigned",
-            s if s.eq_ignore_ascii_case("completed") || s.eq_ignore_ascii_case("done") || s.eq_ignore_ascii_case("resolution") || s.eq_ignore_ascii_case("resolved") => "Resolution",
+            s if s.eq_ignore_ascii_case("inprogress")
+                || s.eq_ignore_ascii_case("in progress")
+                || s.eq_ignore_ascii_case("investigation") =>
+            {
+                "Investigation"
+            }
+            s if s.eq_ignore_ascii_case("onhold") || s.eq_ignore_ascii_case("on hold") => {
+                "Assigned"
+            }
+            s if s.eq_ignore_ascii_case("completed")
+                || s.eq_ignore_ascii_case("done")
+                || s.eq_ignore_ascii_case("resolution")
+                || s.eq_ignore_ascii_case("resolved") =>
+            {
+                "Resolution"
+            }
             _ => "New",
         },
     }
@@ -656,10 +710,23 @@ pub fn to_sheet_status(val: &str) -> &'static str {
         "Onhold" | "On Hold" | "On-Hold" | "Hold" => "On Hold",
         "Completed" | "Done" | "Resolved" | "Closed" => "Closed",
         other => match other {
-            s if s.eq_ignore_ascii_case("pending") || s.eq_ignore_ascii_case("open") || s.eq_ignore_ascii_case("new") => "Open",
-            s if s.eq_ignore_ascii_case("inprogress") || s.eq_ignore_ascii_case("in progress") => "In Progress",
+            s if s.eq_ignore_ascii_case("pending")
+                || s.eq_ignore_ascii_case("open")
+                || s.eq_ignore_ascii_case("new") =>
+            {
+                "Open"
+            }
+            s if s.eq_ignore_ascii_case("inprogress") || s.eq_ignore_ascii_case("in progress") => {
+                "In Progress"
+            }
             s if s.eq_ignore_ascii_case("onhold") || s.eq_ignore_ascii_case("on hold") => "On Hold",
-            s if s.eq_ignore_ascii_case("completed") || s.eq_ignore_ascii_case("done") || s.eq_ignore_ascii_case("resolved") || s.eq_ignore_ascii_case("closed") => "Closed",
+            s if s.eq_ignore_ascii_case("completed")
+                || s.eq_ignore_ascii_case("done")
+                || s.eq_ignore_ascii_case("resolved")
+                || s.eq_ignore_ascii_case("closed") =>
+            {
+                "Closed"
+            }
             _ => "Open",
         },
     }
@@ -674,10 +741,32 @@ pub fn from_sheet_status(val: &str) -> &'static str {
         "On Hold" | "Onhold" | "On-Hold" | "Hold" | "Assigned" => "Onhold",
         "Done" | "Completed" | "Resolved" | "Closed" | "Resolution" => "Completed",
         other => match other {
-            s if s.eq_ignore_ascii_case("open") || s.eq_ignore_ascii_case("pending") || s.eq_ignore_ascii_case("new") => "Pending",
-            s if s.eq_ignore_ascii_case("in progress") || s.eq_ignore_ascii_case("inprogress") || s.eq_ignore_ascii_case("investigation") => "InProgress",
-            s if s.eq_ignore_ascii_case("on hold") || s.eq_ignore_ascii_case("onhold") || s.eq_ignore_ascii_case("assigned") => "Onhold",
-            s if s.eq_ignore_ascii_case("done") || s.eq_ignore_ascii_case("completed") || s.eq_ignore_ascii_case("resolved") || s.eq_ignore_ascii_case("closed") || s.eq_ignore_ascii_case("resolution") => "Completed",
+            s if s.eq_ignore_ascii_case("open")
+                || s.eq_ignore_ascii_case("pending")
+                || s.eq_ignore_ascii_case("new") =>
+            {
+                "Pending"
+            }
+            s if s.eq_ignore_ascii_case("in progress")
+                || s.eq_ignore_ascii_case("inprogress")
+                || s.eq_ignore_ascii_case("investigation") =>
+            {
+                "InProgress"
+            }
+            s if s.eq_ignore_ascii_case("on hold")
+                || s.eq_ignore_ascii_case("onhold")
+                || s.eq_ignore_ascii_case("assigned") =>
+            {
+                "Onhold"
+            }
+            s if s.eq_ignore_ascii_case("done")
+                || s.eq_ignore_ascii_case("completed")
+                || s.eq_ignore_ascii_case("resolved")
+                || s.eq_ignore_ascii_case("closed")
+                || s.eq_ignore_ascii_case("resolution") =>
+            {
+                "Completed"
+            }
             _ => "Pending",
         },
     }
@@ -700,7 +789,10 @@ pub fn sanitize_ticket_payload(client: &ApiClient, payload: &Value, for_create: 
             obj.insert("employee_code".to_string(), json!(code));
         }
         if let Some(kanban) = obj.get("kanban_state").and_then(|v| v.as_str()) {
-            obj.insert("kanban_state".to_string(), json!(to_sheet_kanban_state(kanban)));
+            obj.insert(
+                "kanban_state".to_string(),
+                json!(to_sheet_kanban_state(kanban)),
+            );
         }
         if let Some(stage) = obj.get("stage").and_then(|v| v.as_str()) {
             obj.insert("stage".to_string(), json!(to_sheet_stage(stage)));
@@ -724,7 +816,10 @@ async fn find_matching_ticket(
     client: &ApiClient,
     payload: &Value,
 ) -> Result<Option<ServerTicket>, ApiError> {
-    let subject = payload.get("subject").and_then(|v| v.as_str()).unwrap_or("");
+    let subject = payload
+        .get("subject")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let desc = payload
         .get("problem_description")
         .and_then(|v| v.as_str())
@@ -809,8 +904,10 @@ async fn pull(client: &ApiClient) -> Result<usize, ApiError> {
 
     let pending_creates = db::pending_create_subjects();
     let mapped = db::mapped_tickets();
-    let local_by_server: HashMap<&str, i64> =
-        mapped.iter().map(|m| (m.server_id.as_str(), m.local_id)).collect();
+    let local_by_server: HashMap<&str, i64> = mapped
+        .iter()
+        .map(|m| (m.server_id.as_str(), m.local_id))
+        .collect();
     let mut changed = 0usize;
     let now_str = crate::state::format_utc(now_epoch());
 
@@ -1043,9 +1140,15 @@ fn ensure_iso8601(val: Option<&Value>) -> Value {
 pub fn sanitize_reminder_create_payload(payload: &Value) -> Value {
     let mut out = serde_json::Map::new();
     if let Some(obj) = payload.as_object() {
-        if let Some(v) = obj.get("employee_code") { out.insert("employee_code".to_string(), v.clone()); }
-        if let Some(v) = obj.get("service_category") { out.insert("service_category".to_string(), v.clone()); }
-        if let Some(v) = obj.get("reminder_message") { out.insert("reminder_message".to_string(), v.clone()); }
+        if let Some(v) = obj.get("employee_code") {
+            out.insert("employee_code".to_string(), v.clone());
+        }
+        if let Some(v) = obj.get("service_category") {
+            out.insert("service_category".to_string(), v.clone());
+        }
+        if let Some(v) = obj.get("reminder_message") {
+            out.insert("reminder_message".to_string(), v.clone());
+        }
         out.insert("send_at".to_string(), ensure_iso8601(obj.get("send_at")));
         // Omitted when empty: a create without `cc_emails` means "no CC".
         if let Some(Value::String(cc)) = cc_field(obj) {
@@ -1088,11 +1191,21 @@ fn cc_field(obj: &serde_json::Map<String, Value>) -> Option<Value> {
 pub fn sanitize_reminder_update_payload(payload: &Value) -> Value {
     let mut out = serde_json::Map::new();
     if let Some(obj) = payload.as_object() {
-        if let Some(v) = obj.get("employee_code") { out.insert("employee_code".to_string(), v.clone()); }
-        if let Some(v) = obj.get("service_category") { out.insert("service_category".to_string(), v.clone()); }
-        if let Some(v) = obj.get("reminder_message") { out.insert("reminder_message".to_string(), v.clone()); }
-        if let Some(v) = obj.get("send_at") { out.insert("send_at".to_string(), ensure_iso8601(Some(v))); }
-        if let Some(v) = obj.get("status") { out.insert("status".to_string(), v.clone()); }
+        if let Some(v) = obj.get("employee_code") {
+            out.insert("employee_code".to_string(), v.clone());
+        }
+        if let Some(v) = obj.get("service_category") {
+            out.insert("service_category".to_string(), v.clone());
+        }
+        if let Some(v) = obj.get("reminder_message") {
+            out.insert("reminder_message".to_string(), v.clone());
+        }
+        if let Some(v) = obj.get("send_at") {
+            out.insert("send_at".to_string(), ensure_iso8601(Some(v)));
+        }
+        if let Some(v) = obj.get("status") {
+            out.insert("status".to_string(), v.clone());
+        }
         // Forwarded even when empty: `"cc_emails": ""` is how the API clears
         // recipients. Absent key means "leave unchanged".
         if let Some(cc) = cc_field(obj) {
@@ -1107,7 +1220,11 @@ async fn execute_reminder_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutc
         "CREATE" => {
             let sanitized = sanitize_reminder_create_payload(&op.payload);
             let remote = client.reminders_create(&sanitized).await?;
-            db::set_reminder_mapping(op.local_ticket_id, &remote.reminder_id, &remote.last_updated_at)?;
+            db::set_reminder_mapping(
+                op.local_ticket_id,
+                &remote.reminder_id,
+                &remote.last_updated_at,
+            )?;
             Ok(ExecOutcome::Synced)
         }
         "UPDATE" => {
@@ -1122,13 +1239,21 @@ async fn execute_reminder_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutc
                 };
                 let sanitized = sanitize_reminder_create_payload(&row);
                 let remote = client.reminders_create(&sanitized).await?;
-                db::set_reminder_mapping(op.local_ticket_id, &remote.reminder_id, &remote.last_updated_at)?;
+                db::set_reminder_mapping(
+                    op.local_ticket_id,
+                    &remote.reminder_id,
+                    &remote.last_updated_at,
+                )?;
                 return Ok(ExecOutcome::Synced);
             };
 
             let sanitized = sanitize_reminder_update_payload(&op.payload);
             let remote = client.reminders_update(&server_id, &sanitized).await?;
-            db::set_reminder_mapping(op.local_ticket_id, &remote.reminder_id, &remote.last_updated_at)?;
+            db::set_reminder_mapping(
+                op.local_ticket_id,
+                &remote.reminder_id,
+                &remote.last_updated_at,
+            )?;
             Ok(ExecOutcome::Synced)
         }
         "SEND_NOW" => {
@@ -1138,10 +1263,26 @@ async fn execute_reminder_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutc
                 .or_else(|| db::server_reminder_id(op.local_ticket_id));
 
             if let Some(server_id) = server_id {
-                let force = op.payload.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+                let force = op
+                    .payload
+                    .get("force")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 client.reminders_send_now(&server_id, force).await?;
                 let now_str = crate::state::format_utc(now_epoch());
                 let _ = db::set_reminder_sent(op.local_ticket_id, &now_str);
+            }
+            Ok(ExecOutcome::Synced)
+        }
+        "DELETE" => {
+            let server_id = op
+                .server_ticket_id
+                .clone()
+                .or_else(|| db::server_reminder_id(op.local_ticket_id));
+            if let Some(server_id) = server_id {
+                let mut patch = serde_json::Map::new();
+                patch.insert("status".to_string(), serde_json::Value::String("Cancelled".to_string()));
+                let _ = client.reminders_update(&server_id, &serde_json::Value::Object(patch)).await;
             }
             Ok(ExecOutcome::Synced)
         }
@@ -1158,7 +1299,9 @@ async fn pull_reminders(client: &ApiClient) -> Result<usize, ApiError> {
     let mut server: HashMap<String, ServerReminder> = HashMap::new();
     let mut offset = 0u64;
     for _ in 0..MAX_PAGES {
-        let page = client.reminders_list(offset, PAGE_LIMIT, None, None).await?;
+        let page = client
+            .reminders_list(offset, PAGE_LIMIT, None, None)
+            .await?;
         let count = page.items.len() as u64;
         for r in page.items {
             server.insert(r.reminder_id.clone(), r);
@@ -1170,8 +1313,10 @@ async fn pull_reminders(client: &ApiClient) -> Result<usize, ApiError> {
     }
 
     let mapped = db::mapped_reminders();
-    let local_by_server: HashMap<&str, i64> =
-        mapped.iter().map(|m| (m.server_id.as_str(), m.local_id)).collect();
+    let local_by_server: HashMap<&str, i64> = mapped
+        .iter()
+        .map(|m| (m.server_id.as_str(), m.local_id))
+        .collect();
     let mut changed = 0usize;
 
     for (server_id, r) in &server {
@@ -1188,8 +1333,10 @@ async fn pull_reminders(client: &ApiClient) -> Result<usize, ApiError> {
                 }
             }
             None => {
-                db::insert_server_reminder(r)?;
-                changed += 1;
+                if !r.status.eq_ignore_ascii_case("cancelled") {
+                    db::insert_server_reminder(r)?;
+                    changed += 1;
+                }
             }
         }
     }
@@ -1225,7 +1372,8 @@ pub fn enqueue_reminder_send_now(local_reminder_id: i64, force: bool) {
         eprintln!("[sync] enqueue_reminder_send_now: row {local_reminder_id} has no server_id");
         return;
     };
-    if let Err(e) = db::enqueue_reminder_send_now(local_reminder_id, &server_id, force, &now_str()) {
+    if let Err(e) = db::enqueue_reminder_send_now(local_reminder_id, &server_id, force, &now_str())
+    {
         eprintln!("[sync] enqueue_reminder_send_now failed: {e}");
         return;
     }
@@ -1233,7 +1381,10 @@ pub fn enqueue_reminder_send_now(local_reminder_id: i64, force: bool) {
 }
 
 /// Immediate execution of reminders.sendNow (secure form email)
-pub async fn send_reminder_now_immediate(reminder_id: &str, force: bool) -> Result<Value, ApiError> {
+pub async fn send_reminder_now_immediate(
+    reminder_id: &str,
+    force: bool,
+) -> Result<Value, ApiError> {
     let client = ensure_client().map_err(ApiError::Network)?;
     let result = client.reminders_send_now(reminder_id, force).await?;
     let now_str = crate::state::format_utc(now_epoch());
@@ -1242,7 +1393,9 @@ pub async fn send_reminder_now_immediate(reminder_id: &str, force: bool) -> Resu
 }
 
 /// Immediate execution of employees.create
-pub async fn create_employee_immediate(emp: &crate::api::Employee) -> Result<crate::api::Employee, ApiError> {
+pub async fn create_employee_immediate(
+    emp: &crate::api::Employee,
+) -> Result<crate::api::Employee, ApiError> {
     let client = ensure_client().map_err(ApiError::Network)?;
     let payload = serde_json::to_value(emp).map_err(|e| ApiError::Decode(e.to_string()))?;
     let created = client.employees_create(&payload).await?;

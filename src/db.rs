@@ -661,7 +661,9 @@ pub fn get_all_notes() -> Vec<DbNote> {
         Err(_) => return Vec::new(),
     };
 
-    let mut stmt = match conn.prepare("SELECT id, COALESCE(emp_code, ''), COALESCE(content, '') FROM NOTES ORDER BY id ASC") {
+    let mut stmt = match conn.prepare(
+        "SELECT id, COALESCE(emp_code, ''), COALESCE(content, '') FROM NOTES ORDER BY id ASC",
+    ) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
@@ -964,6 +966,7 @@ pub fn get_all_reminders() -> Vec<DbReminder> {
             COALESCE(server_reminder_id, ''),
             COALESCE(server_last_updated, '')
         FROM reminders
+        WHERE COALESCE(status, '') != 'Cancelled'
         ORDER BY reminder_id ASC
         "#,
     ) {
@@ -1532,6 +1535,16 @@ pub fn mark_op_superseded(op_id: i64) -> Result<()> {
     conn.execute(
         "UPDATE sync_queue SET status = 'superseded', next_attempt_at = NULL WHERE op_id = ?1",
         params![op_id],
+    )?;
+    Ok(())
+}
+
+pub fn cancel_queued_ops_for_entity(entity: &str, local_id: i64) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE sync_queue SET status = 'superseded', next_attempt_at = NULL \
+         WHERE entity = ?1 AND local_ticket_id = ?2 AND status IN ('pending', 'failed')",
+        params![entity, local_id],
     )?;
     Ok(())
 }

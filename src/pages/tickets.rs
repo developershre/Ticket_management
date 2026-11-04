@@ -19,12 +19,13 @@ use crate::components::ui::dropdown_menu::{
     DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger,
 };
 use crate::components::ui::input::Input;
+use crate::components::ui::select::SimpleSelect;
 use crate::components::ui::tabs::{Tabs, TabsContent, TabsList, TabsTrigger};
 use crate::components::ui::toast::ToastState;
 use crate::icons::{
     CheckIcon, CopyIcon, ExternalLinkIcon, EyeIcon, FileTextIcon, FilterIcon, GripVerticalIcon,
-    MoreHorizontalIcon, PaperclipIcon, PencilIcon, PlusIcon, SearchIcon, TrashIcon, UploadCloudIcon,
-    XIcon,
+    MoreHorizontalIcon, PaperclipIcon, PencilIcon, PlusIcon, SearchIcon, TrashIcon,
+    UploadCloudIcon, XIcon,
 };
 
 /// Extract direct viewable image preview URL (supporting Google Drive links and standard image formats).
@@ -48,7 +49,13 @@ fn get_image_preview_url(filename: &str, url: &str) -> Option<String> {
     if url_trimmed.contains("drive.google.com") {
         if let Some(pos) = url_trimmed.find("/file/d/") {
             let after = &url_trimmed[pos + 8..];
-            let id = after.split('/').next().unwrap_or(after).split('?').next().unwrap_or(after);
+            let id = after
+                .split('/')
+                .next()
+                .unwrap_or(after)
+                .split('?')
+                .next()
+                .unwrap_or(after);
             if !id.is_empty() {
                 return Some(format!("https://lh3.googleusercontent.com/d/{id}"));
             }
@@ -361,7 +368,9 @@ impl TicketItem {
     }
 
     pub fn emp_name(&self) -> String {
-        if let (Some(start), Some(end)) = (self.employee_code.find('('), self.employee_code.rfind(')')) {
+        if let (Some(start), Some(end)) =
+            (self.employee_code.find('('), self.employee_code.rfind(')'))
+        {
             if end > start {
                 let inside = self.employee_code[start + 1..end].trim();
                 if !inside.is_empty() {
@@ -495,7 +504,8 @@ impl TicketContextState {
         self.edit_email_address.set(t.email_address.clone());
         self.edit_category.set(t.category.clone());
         self.edit_subject.set(t.subject.clone());
-        self.edit_problem_description.set(t.problem_description.clone());
+        self.edit_problem_description
+            .set(t.problem_description.clone());
         self.edit_attachment_name.set(t.attachment_name.clone());
         self.edit_attachment_url.set(t.attachment_url.clone());
         self.edit_priority.set(t.priority.clone());
@@ -528,7 +538,11 @@ impl TicketContextState {
             local_num = Some(list[pos].ticket_id);
         }
         let num = local_num
-            .or_else(|| ticket_id.strip_prefix("IT-").and_then(|s| s.parse::<i64>().ok()))
+            .or_else(|| {
+                ticket_id
+                    .strip_prefix("IT-")
+                    .and_then(|s| s.parse::<i64>().ok())
+            })
             .or_else(|| ticket_id.parse::<i64>().ok());
         if let Some(num) = num {
             let _ = crate::db::update_ticket_status(num, new_status);
@@ -551,7 +565,11 @@ impl TicketContextState {
             local_num = Some(list[pos].ticket_id);
         }
         let num = local_num
-            .or_else(|| ticket_id.strip_prefix("IT-").and_then(|s| s.parse::<i64>().ok()))
+            .or_else(|| {
+                ticket_id
+                    .strip_prefix("IT-")
+                    .and_then(|s| s.parse::<i64>().ok())
+            })
             .or_else(|| ticket_id.parse::<i64>().ok());
         if let Some(num) = num {
             let _ = crate::db::update_ticket_priority(num, new_priority);
@@ -567,7 +585,11 @@ impl TicketContextState {
             local_num = Some(list[pos].ticket_id);
         }
         let num = local_num
-            .or_else(|| ticket_id.strip_prefix("IT-").and_then(|s| s.parse::<i64>().ok()))
+            .or_else(|| {
+                ticket_id
+                    .strip_prefix("IT-")
+                    .and_then(|s| s.parse::<i64>().ok())
+            })
             .or_else(|| ticket_id.parse::<i64>().ok());
         if let Some(num) = num {
             let _ = crate::db::update_ticket_category(num, new_category);
@@ -584,7 +606,11 @@ impl TicketContextState {
             local_num = Some(list[pos].ticket_id);
         }
         let num = local_num
-            .or_else(|| ticket_id.strip_prefix("IT-").and_then(|s| s.parse::<i64>().ok()))
+            .or_else(|| {
+                ticket_id
+                    .strip_prefix("IT-")
+                    .and_then(|s| s.parse::<i64>().ok())
+            })
             .or_else(|| ticket_id.parse::<i64>().ok());
         if let Some(num) = num {
             let _ = crate::db::update_ticket_assignee(num, new_assignee);
@@ -629,7 +655,11 @@ impl TicketContextState {
             .iter()
             .find(|t| t.id == ticket_id)
             .map(|t| t.ticket_id)
-            .or_else(|| ticket_id.strip_prefix("IT-").and_then(|s| s.parse::<i64>().ok()))
+            .or_else(|| {
+                ticket_id
+                    .strip_prefix("IT-")
+                    .and_then(|s| s.parse::<i64>().ok())
+            })
             .or_else(|| ticket_id.parse::<i64>().ok());
 
         if let Some(num) = local_id {
@@ -689,7 +719,9 @@ fn status_badge_class(status: &str) -> &'static str {
         "Pending" => "text-amber-500 dark:text-amber-400 border-amber-500/35 bg-amber-500/15",
         "InProgress" => "text-sky-500 dark:text-sky-400 border-sky-500/35 bg-sky-500/15",
         "Onhold" => "text-purple-500 dark:text-purple-400 border-purple-500/35 bg-purple-500/15",
-        "Completed" => "text-emerald-500 dark:text-emerald-400 border-emerald-500/35 bg-emerald-500/15",
+        "Completed" => {
+            "text-emerald-500 dark:text-emerald-400 border-emerald-500/35 bg-emerald-500/15"
+        }
         _ => "text-muted-foreground border-border bg-muted/40",
     }
 }
@@ -706,8 +738,12 @@ fn status_badge_variant(status: &str) -> &'static str {
 
 fn sla_badge_class(sla: &str) -> &'static str {
     match sla {
-        "Within SLA" => "text-emerald-500 dark:text-emerald-400 border-emerald-500/35 bg-emerald-500/15",
-        "Approaching Breach" => "text-amber-500 dark:text-amber-400 border-amber-500/35 bg-amber-500/15",
+        "Within SLA" => {
+            "text-emerald-500 dark:text-emerald-400 border-emerald-500/35 bg-emerald-500/15"
+        }
+        "Approaching Breach" => {
+            "text-amber-500 dark:text-amber-400 border-amber-500/35 bg-amber-500/15"
+        }
         "Breached" => "text-rose-500 dark:text-rose-400 border-rose-500/35 bg-rose-500/15",
         _ => "text-muted-foreground border-border bg-muted/30",
     }
@@ -1511,7 +1547,15 @@ fn ticket_row_id(t: &TicketItem) -> String {
 fn ticket_search_text(t: &TicketItem) -> String {
     format!(
         "{} {} {} {} {} {} {} {} {}",
-        t.id, t.subject, t.employee_code, t.email_address, t.category, t.priority, t.assigned_to, t.customer, t.sla_status
+        t.id,
+        t.subject,
+        t.employee_code,
+        t.email_address,
+        t.category,
+        t.priority,
+        t.assigned_to,
+        t.customer,
+        t.sla_status
     )
 }
 
@@ -1525,12 +1569,9 @@ fn ticket_priority_filter_value(t: &TicketItem) -> String {
 
 fn ticket_columns() -> Vec<DataTableColumn<TicketItem>> {
     vec![
-        DataTableColumn::new(
-            "id",
-            "Ticket ID",
-            render_id_cell,
-            |t: &TicketItem| SortValue::Text(t.id.clone()),
-        ),
+        DataTableColumn::new("id", "Ticket ID", render_id_cell, |t: &TicketItem| {
+            SortValue::Text(t.id.clone())
+        }),
         DataTableColumn::new(
             "title",
             "Subject & Requester",
@@ -1543,18 +1584,12 @@ fn ticket_columns() -> Vec<DataTableColumn<TicketItem>> {
             render_category_cell,
             |t: &TicketItem| SortValue::Text(t.category.clone()),
         ),
-        DataTableColumn::new(
-            "status",
-            "Status",
-            render_status_cell,
-            |t: &TicketItem| SortValue::Text(t.status.clone()),
-        ),
-        DataTableColumn::new(
-            "sla",
-            "SLA Status",
-            render_sla_cell,
-            |t: &TicketItem| SortValue::Text(t.sla_status.clone()),
-        ),
+        DataTableColumn::new("status", "Status", render_status_cell, |t: &TicketItem| {
+            SortValue::Text(t.status.clone())
+        }),
+        DataTableColumn::new("sla", "SLA Status", render_sla_cell, |t: &TicketItem| {
+            SortValue::Text(t.sla_status.clone())
+        }),
         DataTableColumn::new(
             "priority",
             "Priority",
@@ -1934,11 +1969,17 @@ pub fn Tickets() -> Element {
                     sync.with_mut(|r| r.0 += 1);
                 }
 
-                toast.success("Ticket Created", format!("{real_id_str} created successfully"));
+                toast.success(
+                    "Ticket Created",
+                    format!("{real_id_str} created successfully"),
+                );
                 is_create_open.set(false);
             }
             Err(e) => {
-                toast.error("Database Error", format!("Failed to create ticket: {:?}", e));
+                toast.error(
+                    "Database Error",
+                    format!("Failed to create ticket: {:?}", e),
+                );
             }
         }
     };
@@ -1991,14 +2032,19 @@ pub fn Tickets() -> Element {
             {
                 let mut put_str = |key: &str, old: &str, new: &str| {
                     if old != new {
-                        api_fields.insert(key.to_string(), serde_json::Value::String(new.to_string()));
+                        api_fields
+                            .insert(key.to_string(), serde_json::Value::String(new.to_string()));
                     }
                 };
                 put_str("employee_code", &current.employee_code, &emp_combined);
                 put_str("email_address", &current.email_address, &email_val);
                 put_str("category", &current.category, &cat_val);
                 put_str("subject", &current.subject, &subj_val);
-                put_str("problem_description", &current.problem_description, &desc_val);
+                put_str(
+                    "problem_description",
+                    &current.problem_description,
+                    &desc_val,
+                );
                 put_str("attachment_name", &current.attachment_name, &att_name_val);
                 put_str("attachment_url", &current.attachment_url, &att_url_val);
                 put_str("priority", &current.priority, &prio_val);
@@ -2091,7 +2137,10 @@ pub fn Tickets() -> Element {
                 crate::sync::enqueue_update(num, serde_json::Value::Object(api_fields));
             }
 
-            toast.success("Ticket Modified", format!("{} modified successfully", current.id));
+            toast.success(
+                "Ticket Modified",
+                format!("{} modified successfully", current.id),
+            );
             state.is_edit_open.set(false);
             state.editing_ticket.set(None);
         }
@@ -2121,8 +2170,20 @@ pub fn Tickets() -> Element {
             return;
         }
 
-        let db_id = crate::db::create_ticket(&title, &category, &priority, &employee, &assignee, &col, "Quick ticket created via column quick-add action");
-        let real_id = if let Ok(id) = db_id { format!("IT-{id}") } else { fallback_id };
+        let db_id = crate::db::create_ticket(
+            &title,
+            &category,
+            &priority,
+            &employee,
+            &assignee,
+            &col,
+            "Quick ticket created via column quick-add action",
+        );
+        let real_id = if let Ok(id) = db_id {
+            format!("IT-{id}")
+        } else {
+            fallback_id
+        };
         // Queue the create for background sync (only when the row exists).
         if let Ok(id) = db_id {
             crate::sync::enqueue_create(id);
@@ -2156,7 +2217,6 @@ pub fn Tickets() -> Element {
         ));
         toast.success("Ticket Created", format!("{real_id} created in {col_disp}"));
     };
-
 
     rsx! {
         div { class: "flex flex-col flex-1 w-full h-full p-4 md:p-6 min-h-0 overflow-hidden",
@@ -2311,7 +2371,7 @@ pub fn Tickets() -> Element {
                                             search_query.set(String::new());
                                             selected_priority.set("All".to_string());
                                         },
-        
+
                                         div {
                                             key: "board-col-{column}",
                                             class: "flex flex-col h-full min-h-0 rounded-md border border-border/70 bg-card/75 p-3 transition-colors duration-150 {col_highlight}",
@@ -2340,7 +2400,7 @@ pub fn Tickets() -> Element {
                                                 }
                                                 clear_drag_state();
                                             },
-        
+
                                             div { class: "flex items-center justify-between px-1 border-b border-border/40 pb-2.5",
                                                 div { class: "flex flex-col gap-0.5",
                                                     div { class: "flex items-center gap-2",
@@ -2357,7 +2417,7 @@ pub fn Tickets() -> Element {
                                                     "{column_tickets.len()}"
                                                 }
                                             }
-        
+
                                             div {
                                                 class: "flex flex-col gap-2 min-h-0 flex-1 overflow-y-auto pr-1",
                                                 ondragenter: move |e: DragEvent| {
@@ -2385,7 +2445,7 @@ pub fn Tickets() -> Element {
                                                     }
                                                     clear_drag_state();
                                                 },
-        
+
                                                 for ticket in column_tickets.iter() {
                                                     {
                                                         let id = ticket.id.clone();
@@ -2396,10 +2456,10 @@ pub fn Tickets() -> Element {
                                                         let ticket_status = ticket.status.clone();
                                                         let sla_status = ticket.sla_status.clone();
                                                         let deadline = ticket.deadline.clone();
-        
+
                                                         let is_dragged = dragged_id.read().as_deref() == Some(&id);
                                                         let is_card_over = drag_over_card.read().as_deref() == Some(&id) && !is_dragged;
-        
+
                                                         let card_cls = if is_dragged {
                                                             "opacity-40 scale-[0.99] border-dashed border-primary ring-1 ring-primary/40 bg-muted/40 cursor-grabbing rounded-md border p-3 flex flex-col gap-2"
                                                         } else if ticket_status == "Completed" {
@@ -2409,12 +2469,12 @@ pub fn Tickets() -> Element {
                                                         } else {
                                                             "group flex cursor-grab active:cursor-grabbing flex-col gap-2 rounded-md border border-border/70 bg-card p-3 transition-colors duration-150 hover:border-primary/50 hover:bg-accent/20 shadow-xs"
                                                         };
-        
+
                                                         let id_for_start = id.clone();
                                                         let id_for_enter = id.clone();
                                                         let id_for_over = id.clone();
                                                         let id_for_drop = id.clone();
-        
+
                                                         rsx! {
                                                             div {
                                                                 key: "board-card-wrap-{id}",
@@ -2441,10 +2501,10 @@ pub fn Tickets() -> Element {
                                                                     e.prevent_default();
                                                                     e.stop_propagation();
                                                                     let src = e
-        
-        
-        
-        
+
+
+
+
                                                                         .data()
                                                                         .data_transfer()
                                                                         .get_as_text()
@@ -2455,16 +2515,16 @@ pub fn Tickets() -> Element {
                                                                     }
                                                                     clear_drag_state();
                                                                 },
-                
+
                                                                 if is_card_over {
                                                                     div { class: "h-1 w-full rounded-full bg-primary animate-pulse my-0.5" }
                                                                 }
-                
+
                                                                 TicketContextMenu {
                                                                     ticket: ticket.clone(),
                                                                     on_view: move |t| state.open_view(t),
                                                                     on_edit: move |t| state.open_edit(t),
-                
+
                                                                     div {
                                                                         draggable: "true",
                                                                         "data-drag-id": "{id}",
@@ -2479,7 +2539,7 @@ pub fn Tickets() -> Element {
                                                                             let t_dbl = ticket.clone();
                                                                             move |_| state.open_view(t_dbl.clone())
                                                                         },
-                
+
                                                                         div { class: "pointer-events-none flex flex-col gap-2 w-full",
                                                                             div { class: "flex items-center justify-between gap-1.5",
                                                                                 div { class: "flex items-center gap-1.5 min-w-0",
@@ -2529,11 +2589,11 @@ pub fn Tickets() -> Element {
                                                                                     }
                                                                                 }
                                                                             }
-                
+
                                                                             p { class: "text-sm font-semibold leading-snug text-foreground group-hover:text-primary/95 transition-colors line-clamp-2",
                                                                                 "{title}"
                                                                             }
-                
+
                                                                             div { class: "flex flex-col gap-0.5 text-[11px] pt-0.5",
                                                                                 div { class: "flex items-center justify-between gap-1.5 text-muted-foreground",
                                                                                     span { class: "font-medium text-foreground truncate", "{ticket.emp_name()}" }
@@ -2550,14 +2610,14 @@ pub fn Tickets() -> Element {
                                                                                     }
                                                                                 }
                                                                             }
-                
+
                                                                             if !deadline.is_empty() {
                                                                                 div { class: "flex items-center justify-between text-[10px] text-muted-foreground/80 pt-1 border-t border-border/30",
                                                                                     span { class: "font-mono text-warning font-medium", "Due: {deadline}" }
                                                                                 }
                                                                             }
                                                                         }
-                
+
                                                                         div { class: "mt-1 flex items-center justify-between pt-2 border-t border-border/40 text-xs",
                                                                             div { class: "flex items-center gap-1 pointer-events-auto",
                                                                                 span { class: "rounded-md bg-muted/80 px-2 py-0.5 text-[10px] font-medium text-muted-foreground mr-1",
@@ -2604,7 +2664,7 @@ pub fn Tickets() -> Element {
                                                         }
                                                     }
                                                 }
-        
+
                                                 div {
                                                     class: if is_col_over { "flex items-center justify-center rounded-md border-2 border-dashed border-primary bg-primary/10 py-2.5 text-xs font-semibold text-primary transition-all animate-pulse" } else { "flex items-center justify-center rounded-md border border-dashed border-border/40 py-2 text-[11px] text-muted-foreground/50 transition-all hover:border-border hover:text-muted-foreground hover:bg-accent/20 cursor-pointer" },
                                                     onclick: {
@@ -2753,7 +2813,7 @@ pub fn Tickets() -> Element {
                                         "Reported on {ticket.created_on} · Last updated: {ticket.last_updated_on}"
                                     }
                                 }
-        
+
                                 div { class: "flex flex-col gap-4 py-3 text-xs",
                                     div { class: "flex flex-col gap-1.5 rounded-md bg-muted/30 border border-border/40 p-3",
                                         span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider",
@@ -2778,7 +2838,7 @@ pub fn Tickets() -> Element {
                                             }
                                         }
                                     }
-        
+
                                     div { class: "grid grid-cols-2 sm:grid-cols-4 gap-2.5",
                                         div { class: "flex flex-col gap-0.5 rounded-md bg-muted/20 p-2.5 border border-border/40",
                                             span { class: "text-[9px] font-semibold text-muted-foreground uppercase tracking-wider",
@@ -2815,7 +2875,7 @@ pub fn Tickets() -> Element {
                                             span { class: "text-[10px] text-muted-foreground", "Client Scope" }
                                         }
                                     }
-        
+
                                     div { class: "flex flex-col gap-1.5",
                                         span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider",
                                             "Problem Description"
@@ -2828,7 +2888,7 @@ pub fn Tickets() -> Element {
                                             }
                                         }
                                     }
-        
+
                                     div { class: "flex flex-col gap-1.5",
                                         span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5",
                                             PaperclipIcon { class: "size-3.5 text-primary" }
@@ -2898,7 +2958,7 @@ pub fn Tickets() -> Element {
                                             }
                                         }
                                     }
-        
+
                                     div { class: "grid grid-cols-2 sm:grid-cols-4 gap-2.5",
                                         div { class: "flex flex-col gap-0.5 rounded-md bg-muted/20 p-2.5 border border-border/40",
                                             span { class: "text-[9px] font-semibold text-muted-foreground uppercase tracking-wider",
@@ -2949,7 +3009,7 @@ pub fn Tickets() -> Element {
                                             span { class: "text-[10px] text-muted-foreground", "Client Feedback" }
                                         }
                                     }
-        
+
                                     if !ticket.activities.is_empty() || !ticket.my_activity.is_empty() {
                                         div { class: "grid grid-cols-1 sm:grid-cols-2 gap-2.5",
                                             if !ticket.activities.is_empty() {
@@ -2971,7 +3031,7 @@ pub fn Tickets() -> Element {
                                         }
                                     }
                                 }
-        
+
                                 DialogFooter { class: "flex items-center justify-between gap-2 pt-3 border-t border-border/50",
                                     Button {
                                         variant: "outline",
@@ -3016,15 +3076,13 @@ pub fn Tickets() -> Element {
                                     "{directory_employees.len()} employees loaded"
                                 }
                             }
-                            select {
-                                class: "h-10 rounded-md border border-input bg-card px-3 text-sm text-foreground focus:border-primary focus:ring-1 focus:ring-primary/20 focus:outline-none cursor-pointer",
-                                value: "{create_employee_code}",
-                                onchange: move |e: FormEvent| {
-                                    let val = e.value();
-                                    create_employee_code.set(val.clone());
-                                    let trimmed = val.trim();
+                            SimpleSelect {
+                                value: create_employee_code,
+                                placeholder: "-- Choose an Employee (auto-fills code & details) --".to_string(),
+                                onchange: move |val: String| {
+                                    let trimmed = val.trim().to_string();
                                     if !trimmed.is_empty() {
-                                        if let Some(emp) = crate::db::find_employee_by_code(trimmed) {
+                                        if let Some(emp) = crate::db::find_employee_by_code(&trimmed) {
                                             create_emp_name.set(emp.emp_name);
                                             if !emp.emp_email.is_empty() {
                                                 create_email_address.set(emp.emp_email);
@@ -3032,14 +3090,15 @@ pub fn Tickets() -> Element {
                                         }
                                     }
                                 },
-                                option { value: "", "-- Choose an Employee (auto-fills code & details) --" }
-                                for emp in directory_employees.iter() {
-                                    option {
-                                        key: "{emp.emp_id}",
-                                        value: "{emp.emp_code}",
-                                        "{emp.emp_code} - {emp.emp_name} ({emp.department})"
-                                    }
-                                }
+                                options: directory_employees
+                                    .iter()
+                                    .map(|emp| {
+                                        (
+                                            emp.emp_code.clone(),
+                                            format!("{} - {} ({})", emp.emp_code, emp.emp_name, emp.department),
+                                        )
+                                    })
+                                    .collect(),
                             }
                         }
 
@@ -3103,34 +3162,35 @@ pub fn Tickets() -> Element {
                                     "Category"
                                     span { class: "text-destructive font-bold", " *" }
                                 }
-                                select {
-                                    class: "h-10 rounded-md border border-input bg-card px-3 text-sm text-foreground focus:border-primary focus:ring-1 focus:ring-primary/20 focus:outline-none cursor-pointer",
-                                    value: "{create_category}",
-                                    onchange: move |e: FormEvent| create_category.set(e.value()),
-                                    option { value: "Select category", disabled: true, "Select category" }
-                                    option { value: "IT Support", "IT Support" }
-                                    option { value: "Hardware", "Hardware" }
-                                    option { value: "Software", "Software" }
-                                    option { value: "Network", "Network" }
-                                    option { value: "Access & Accounts", "Access & Accounts" }
-                                    option { value: "Security", "Security" }
-                                    option { value: "Infrastructure", "Infrastructure" }
-                                    option { value: "General", "General" }
-                                    option { value: "Other", "Other" }
+                                SimpleSelect {
+                                    value: create_category,
+                                    placeholder: "Select category...".to_string(),
+                                    options: vec![
+                                        ("IT Support".to_string(), "IT Support".to_string()),
+                                        ("Hardware".to_string(), "Hardware".to_string()),
+                                        ("Software".to_string(), "Software".to_string()),
+                                        ("Network".to_string(), "Network".to_string()),
+                                        ("Access & Accounts".to_string(), "Access & Accounts".to_string()),
+                                        ("Security".to_string(), "Security".to_string()),
+                                        ("Infrastructure".to_string(), "Infrastructure".to_string()),
+                                        ("General".to_string(), "General".to_string()),
+                                        ("Other".to_string(), "Other".to_string()),
+                                    ],
                                 }
                             }
                             div { class: "flex flex-col gap-1.5",
                                 label { class: "text-xs font-semibold text-foreground",
                                     "Priority"
                                 }
-                                select {
-                                    class: "h-10 rounded-md border border-input bg-card px-3 text-sm text-foreground focus:border-primary focus:ring-1 focus:ring-primary/20 focus:outline-none cursor-pointer",
-                                    value: "{create_priority}",
-                                    onchange: move |e: FormEvent| create_priority.set(e.value()),
-                                    option { value: "Low", "Low" }
-                                    option { value: "Medium", "Medium" }
-                                    option { value: "High", "High" }
-                                    option { value: "Critical", "Critical" }
+                                SimpleSelect {
+                                    value: create_priority,
+                                    placeholder: "Select priority...".to_string(),
+                                    options: vec![
+                                        ("Low".to_string(), "Low".to_string()),
+                                        ("Medium".to_string(), "Medium".to_string()),
+                                        ("High".to_string(), "High".to_string()),
+                                        ("Critical".to_string(), "Critical".to_string()),
+                                    ],
                                 }
                             }
                         }
@@ -3219,7 +3279,7 @@ pub fn Tickets() -> Element {
                                         "Update ticket details, requester information, assignment, SLA, and attachments."
                                     }
                                 }
-        
+
                                 div { class: "flex flex-col gap-4 py-3 text-xs",
                                     div { class: "flex flex-col gap-1",
                                         label { class: "text-xs font-semibold text-foreground", "Subject" }
@@ -3230,7 +3290,7 @@ pub fn Tickets() -> Element {
                                             oninput: move |e: FormEvent| edit_subject.set(e.value()),
                                         }
                                     }
-        
+
                                     div { class: "rounded-md border border-border/60 bg-muted/20 p-3 flex flex-col gap-2.5",
                                         div { class: "flex items-center justify-between",
                                             span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider",
@@ -3295,7 +3355,7 @@ pub fn Tickets() -> Element {
                                             }
                                         }
                                     }
-        
+
                                     div { class: "grid grid-cols-2 sm:grid-cols-5 gap-2.5",
                                         div { class: "flex flex-col gap-1",
                                             label { class: "text-[11px] font-semibold text-foreground", "Category" }
@@ -3366,7 +3426,7 @@ pub fn Tickets() -> Element {
                                             }
                                         }
                                     }
-        
+
                                     div { class: "flex flex-col gap-1",
                                         label { class: "text-[11px] font-semibold text-foreground", "Problem Description" }
                                         textarea {
@@ -3376,7 +3436,7 @@ pub fn Tickets() -> Element {
                                             oninput: move |e: FormEvent| edit_problem_description.set(e.value()),
                                         }
                                     }
-        
+
                                     div { class: "rounded-md border border-border/70 bg-muted/20 p-3.5 flex flex-col gap-2.5",
                                         div { class: "flex items-center justify-between",
                                             span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5",
@@ -3396,7 +3456,7 @@ pub fn Tickets() -> Element {
                                                 }
                                             }
                                         }
-        
+
                                         if edit_attachment_name.read().is_empty() && edit_attachment_url.read().is_empty() {
                                             div { class: "flex flex-col gap-2",
                                                 label { class: "flex flex-col items-center justify-center border-2 border-dashed border-border/80 hover:border-primary/60 bg-card/60 hover:bg-card p-4 rounded-lg cursor-pointer transition-all duration-150 group",
@@ -3500,7 +3560,7 @@ pub fn Tickets() -> Element {
                                             }
                                         }
                                     }
-        
+
                                     div { class: "grid grid-cols-2 sm:grid-cols-4 gap-3",
                                         div { class: "flex flex-col gap-1",
                                             label { class: "text-[11px] font-semibold text-foreground", "Target Deadline" }
@@ -3546,7 +3606,7 @@ pub fn Tickets() -> Element {
                                             }
                                         }
                                     }
-        
+
                                     div { class: "grid grid-cols-1 sm:grid-cols-2 gap-3",
                                         div { class: "flex flex-col gap-1",
                                             label { class: "text-[11px] font-semibold text-foreground", "Activities Summary" }
@@ -3576,7 +3636,7 @@ pub fn Tickets() -> Element {
                                         MultiActivitySelector { value: edit_my_activity }
                                     }
                                 }
-        
+
                                 DialogFooter { class: "flex items-center justify-end gap-2 pt-3 border-t border-border/50",
                                     Button {
                                         variant: "outline",
@@ -3610,4 +3670,3 @@ pub fn Tickets() -> Element {
         }
     }
 }
-
