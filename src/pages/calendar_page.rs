@@ -973,9 +973,24 @@ pub fn CalendarPage() -> Element {
                                             span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Created Date" }
                                             span { class: "font-mono font-medium text-foreground", "{t.created_on}" }
                                         }
-                                        div { class: "flex flex-col gap-0.5",
-                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Employee Code" }
-                                            span { class: "font-mono font-medium text-foreground", "{t.employee_code}" }
+                                        {
+                                            let emp_clean = if let Some(idx) = t.employee_code.find('(') {
+                                                t.employee_code[..idx].trim()
+                                            } else {
+                                                t.employee_code.trim()
+                                            };
+                                            let emp_db = crate::db::find_employee_by_code(emp_clean);
+                                            let emp_name = emp_db.as_ref().map(|e| e.emp_name.clone()).unwrap_or_else(|| t.employee_code.clone());
+                                            rsx! {
+                                                div { class: "flex flex-col gap-0.5",
+                                                    span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Employee Name" }
+                                                    span { class: "font-semibold text-foreground truncate", "{emp_name}" }
+                                                }
+                                                div { class: "flex flex-col gap-0.5",
+                                                    span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Employee Code" }
+                                                    span { class: "font-mono font-medium text-foreground", "{emp_clean}" }
+                                                }
+                                            }
                                         }
                                     }
 
@@ -1022,39 +1037,47 @@ pub fn CalendarPage() -> Element {
                                         }
                                     }
 
-                                    div { class: "grid grid-cols-2 gap-3 text-xs bg-muted/20 p-3 rounded-md border border-border/50",
-                                        div { class: "flex flex-col gap-0.5",
-                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Recipient Name" }
-                                            span { class: "font-semibold text-foreground", "{r.employee_name}" }
-                                        }
-                                        div { class: "flex flex-col gap-0.5",
-                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Employee Code" }
-                                            span { class: "font-mono font-semibold text-foreground", "{r.employee_code}" }
-                                        }
-                                        div { class: "flex flex-col gap-0.5",
-                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Status" }
-                                            span { class: "font-semibold text-foreground", "{r.status}" }
-                                        }
-                                        div { class: "flex flex-col gap-0.5",
-                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Scheduled Send Time" }
-                                            span { class: "font-mono font-medium text-foreground", "{r.send_at}" }
-                                        }
-                                        div { class: "flex flex-col gap-0.5",
-                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Repeat Frequency" }
-                                            span { class: "font-mono font-semibold text-foreground uppercase", "{r.repeat_frequency}" }
-                                        }
-                                        div { class: "flex flex-col gap-0.5",
-                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Created At" }
-                                            span { class: "font-mono font-medium text-foreground", "{r.created_at}" }
-                                        }
-                                        div { class: "flex flex-col gap-0.5",
-                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Recipient Email" }
-                                            span { class: "font-mono text-[11px] text-foreground truncate", "{r.email_address}" }
-                                        }
-                                        if !r.cc_emails.is_empty() {
-                                            div { class: "col-span-2 flex flex-col gap-0.5 pt-1 border-t border-border/30",
-                                                span { class: "text-muted-foreground text-[10px] uppercase font-bold", "CC Recipients" }
-                                                span { class: "font-mono text-[11px] text-foreground truncate", "{r.cc_emails}" }
+                                    {
+                                        let emp_code_clean = r.employee_code.trim();
+                                        let emp_db = crate::db::find_employee_by_code(emp_code_clean);
+                                        let recipient_name = emp_db.as_ref().map(|e| e.emp_name.clone()).unwrap_or_else(|| r.employee_name.clone());
+                                        let recipient_email = emp_db.as_ref().map(|e| e.emp_email.clone()).filter(|e| !e.is_empty()).unwrap_or_else(|| r.email_address.clone());
+                                        rsx! {
+                                            div { class: "grid grid-cols-2 gap-3 text-xs bg-muted/20 p-3 rounded-md border border-border/50",
+                                                div { class: "flex flex-col gap-0.5",
+                                                    span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Recipient Name" }
+                                                    span { class: "font-semibold text-foreground", "{recipient_name}" }
+                                                }
+                                                div { class: "flex flex-col gap-0.5",
+                                                    span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Employee Code" }
+                                                    span { class: "font-mono font-semibold text-foreground", "{r.employee_code}" }
+                                                }
+                                                div { class: "flex flex-col gap-0.5",
+                                                    span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Status" }
+                                                    span { class: "font-semibold text-foreground", "{r.status}" }
+                                                }
+                                                div { class: "flex flex-col gap-0.5",
+                                                    span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Scheduled Send Time" }
+                                                    span { class: "font-mono font-medium text-foreground", "{r.send_at}" }
+                                                }
+                                                div { class: "flex flex-col gap-0.5",
+                                                    span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Repeat Frequency" }
+                                                    span { class: "font-mono font-semibold text-foreground uppercase", "{r.repeat_frequency}" }
+                                                }
+                                                div { class: "flex flex-col gap-0.5",
+                                                    span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Created At" }
+                                                    span { class: "font-mono font-medium text-foreground", "{r.created_at}" }
+                                                }
+                                                div { class: "flex flex-col gap-0.5",
+                                                    span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Recipient Email" }
+                                                    span { class: "font-mono text-[11px] text-foreground truncate", "{recipient_email}" }
+                                                }
+                                                if !r.cc_emails.is_empty() {
+                                                    div { class: "col-span-2 flex flex-col gap-0.5 pt-1 border-t border-border/30",
+                                                        span { class: "text-muted-foreground text-[10px] uppercase font-bold", "CC Recipients" }
+                                                        span { class: "font-mono text-[11px] text-foreground truncate", "{r.cc_emails}" }
+                                                    }
+                                                }
                                             }
                                         }
                                     }

@@ -39,9 +39,9 @@ struct CollectionVariable {
 }
 
 pub const DEFAULT_BASE_URL: &str =
-    "https://script.google.com/macros/s/AKfycbzx_5xVNedTPoIiT6WJ68zxKKaaaH-YahglFcL81LnD206RqnhonLqqBkYgyMSbBhDaoA/exec";
+    "https://script.google.com/macros/s/AKfycbx6TTCZF1WfcFPpJWOqGoMXKhXq-wxJprGtCIKfAHZnm9wGmSgBuRCpiTWUu4519oyV/exec";
 pub const DEFAULT_API_KEY: &str =
-    "227bca5c1d4a4da8af0df1e8d46b8e6659df068e5d5949a8a8054764193cde944b16920be76943dcb1a7a54fb108699c";
+    "3db901120c3b45eaaffbee17b0731cca8e1af5bdd1fc4ddfa8549320acc537a349529cdfad6a435cb757b335329081a7";
 
 impl ApiConfig {
     /// Resolution order:
@@ -879,7 +879,7 @@ impl ApiClient {
 
     /// Posts one envelope and unwraps the response envelope. Note the API
     /// answers with HTTP 200 even for failures â€” `success`/`error` live in
-/// Posts one envelope and unwraps the response envelope. Note the API
+    /// Posts one envelope and unwraps the response envelope. Note the API
     /// answers with HTTP 200 even for failures â€” success/error live in
     /// the body. Automatically retries transient LOCK_TIMEOUT and busy errors.
     async fn post(&self, action: &str, data: Value) -> Result<Value, ApiError> {
@@ -1252,7 +1252,8 @@ impl ApiClient {
 }
 
 fn parse_ticket(data: Value) -> Result<ServerTicket, ApiError> {
-    serde_json::from_value(data).map_err(|e| ApiError::Decode(format!("invalid ticket payload: {e}")))
+    serde_json::from_value(data)
+        .map_err(|e| ApiError::Decode(format!("invalid ticket payload: {e}")))
 }
 
 fn parse_employee(data: Value) -> Result<Employee, ApiError> {
@@ -1265,5 +1266,6 @@ fn parse_employee(data: Value) -> Result<Employee, ApiError> {
 }
 
 fn parse_reminder(data: Value) -> Result<ServerReminder, ApiError> {
-    serde_json::from_value(data).map_err(|e| ApiError::Decode(format!("invalid reminder payload: {e}")))
+    serde_json::from_value(data)
+        .map_err(|e| ApiError::Decode(format!("invalid reminder payload: {e}")))
 }

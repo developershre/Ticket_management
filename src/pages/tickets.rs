@@ -380,9 +380,6 @@ impl TicketItem {
     }
 
     pub fn emp_name(&self) -> String {
-        if !self.customer.trim().is_empty() {
-            return self.customer.trim().to_string();
-        }
         let code = self.emp_code_only();
         if !code.is_empty() {
             if let Some(emp) = crate::db::find_employee_by_code(code) {
@@ -390,6 +387,9 @@ impl TicketItem {
                     return emp.emp_name;
                 }
             }
+        }
+        if !self.customer.trim().is_empty() && self.customer.trim() != "Internal" {
+            return self.customer.trim().to_string();
         }
         if let (Some(start), Some(end)) =
             (self.employee_code.find('('), self.employee_code.rfind(')'))
@@ -420,6 +420,18 @@ impl TicketItem {
             return self.employee_code.clone();
         }
         "Unknown".to_string()
+    }
+
+    pub fn emp_email(&self) -> String {
+        let code = self.emp_code_only();
+        if !code.is_empty() {
+            if let Some(emp) = crate::db::find_employee_by_code(code) {
+                if !emp.emp_email.trim().is_empty() {
+                    return emp.emp_email;
+                }
+            }
+        }
+        self.email_address.clone()
     }
 
     pub fn assignee_name(&self) -> &str {
@@ -548,7 +560,17 @@ pub struct TicketContextState {
 }
 
 impl TicketContextState {
-    pub fn open_view(&mut self, t: TicketItem) {
+    pub fn open_view(&mut self, mut t: TicketItem) {
+        let code = t.emp_code_only().to_string();
+        if !code.is_empty() {
+            // Always use database to get the latest employee details
+            if let Some(emp) = crate::db::find_employee_by_code(&code) {
+                t.employee = format!("{} ({})", emp.emp_code, emp.emp_name);
+                if !emp.emp_email.is_empty() {
+                    t.email_address = emp.emp_email;
+                }
+            }
+        }
         self.viewing_ticket.set(Some(t));
         self.is_view_open.set(true);
     }
@@ -583,9 +605,20 @@ impl TicketContextState {
     }
 
     pub fn open_edit(&mut self, t: TicketItem) {
-        self.edit_emp_name.set(t.emp_name());
-        self.edit_employee_code.set(t.emp_code_only().to_string());
-        self.edit_email_address.set(t.email_address.clone());
+        let code = t.emp_code_only().to_string();
+        self.edit_employee_code.set(code.clone());
+        // Always query database directly to get latest employee info
+        if let Some(emp) = crate::db::find_employee_by_code(&code) {
+            self.edit_emp_name.set(emp.emp_name);
+            if !emp.emp_email.is_empty() {
+                self.edit_email_address.set(emp.emp_email);
+            } else {
+                self.edit_email_address.set(t.email_address.clone());
+            }
+        } else {
+            self.edit_emp_name.set(t.emp_name());
+            self.edit_email_address.set(t.email_address.clone());
+        }
         self.edit_category.set(t.category.clone());
         self.edit_subject.set(t.subject.clone());
         self.edit_problem_description
@@ -1374,7 +1407,7 @@ fn TicketTitleCell(ticket: TicketItem) -> Element {
     let title = ticket.title.clone();
     let emp_name = ticket.emp_name();
     let emp_code = ticket.emp_code_only().to_string();
-    let email = ticket.email_address.clone();
+    let email = ticket.emp_email();
     let t_view = ticket.clone();
     let t_edit = ticket.clone();
     rsx! {
@@ -1932,7 +1965,21 @@ pub fn Tickets() -> Element {
             return;
         }
 
-        let email_val = create_email_address.read().trim().to_string();
+        // Always query database for latest employee details
+        let (name_val, email_val) = if let Some(emp) = crate::db::find_employee_by_code(&emp_code) {
+            let email = if !emp.emp_email.is_empty() {
+                emp.emp_email
+            } else {
+                create_email_address.read().trim().to_string()
+            };
+            (emp.emp_name, email)
+        } else {
+            (
+                create_emp_name.read().trim().to_string(),
+                create_email_address.read().trim().to_string(),
+            )
+        };
+
         if email_val.is_empty() {
             toast.error("Validation Error", "Please enter Email Address");
             return;
@@ -1956,12 +2003,6 @@ pub fn Tickets() -> Element {
             return;
         }
 
-        let mut name_val = create_emp_name.read().trim().to_string();
-        if name_val.is_empty() {
-            if let Some(u) = crate::db::find_employee_by_code(&emp_code) {
-                name_val = u.emp_name;
-            }
-        }
         let emp_combined = if name_val.is_empty() {
             emp_code.clone()
         } else {
@@ -2085,7 +2126,20 @@ pub fn Tickets() -> Element {
             }
 
             let code_val = edit_employee_code.read().trim().to_string();
-            let name_val = edit_emp_name.read().trim().to_string();
+            // Always query database for latest employee details
+            let (name_val, email_val) = if let Some(emp) = crate::db::find_employee_by_code(&code_val) {
+                let email = if !emp.emp_email.is_empty() {
+                    emp.emp_email
+                } else {
+                    edit_email_address.read().trim().to_string()
+                };
+                (emp.emp_name, email)
+            } else {
+                (
+                    edit_emp_name.read().trim().to_string(),
+                    edit_email_address.read().trim().to_string(),
+                )
+            };
             let emp_combined = if name_val.is_empty() {
                 code_val.clone()
             } else if code_val.is_empty() {
@@ -2094,7 +2148,6 @@ pub fn Tickets() -> Element {
                 format!("{} ({})", code_val, name_val)
             };
 
-            let email_val = edit_email_address.read().trim().to_string();
             let cat_val = edit_category.read().clone();
             let desc_val = edit_problem_description.read().clone();
             let att_name_val = edit_attachment_name.read().clone();
@@ -3159,10 +3212,11 @@ pub fn Tickets() -> Element {
                                         if !trimmed.is_empty() {
                                             if let Some(emp) = crate::db::find_employee_by_code(trimmed) {
                                                 create_emp_name.set(emp.emp_name);
-                                                if !emp.emp_email.is_empty() {
-                                                    create_email_address.set(emp.emp_email);
-                                                }
+                                                create_email_address.set(emp.emp_email);
                                             }
+                                        } else {
+                                            create_emp_name.set(String::new());
+                                            create_email_address.set(String::new());
                                         }
                                     },
                                 }
@@ -3361,7 +3415,20 @@ pub fn Tickets() -> Element {
                                                     class: "text-xs h-9 w-full",
                                                     placeholder: "e.g. 10001".to_string(),
                                                     value: edit_employee_code.read().clone(),
-                                                    oninput: move |e: FormEvent| edit_employee_code.set(e.value()),
+                                                    oninput: move |e: FormEvent| {
+                                                        let val = e.value();
+                                                        edit_employee_code.set(val.clone());
+                                                        let trimmed = val.trim();
+                                                        if !trimmed.is_empty() {
+                                                            if let Some(emp) = crate::db::find_employee_by_code(trimmed) {
+                                                                edit_emp_name.set(emp.emp_name);
+                                                                edit_email_address.set(emp.emp_email);
+                                                            }
+                                                        } else {
+                                                            edit_emp_name.set(String::new());
+                                                            edit_email_address.set(String::new());
+                                                        }
+                                                    },
                                                 }
                                             }
                                             div { class: "flex flex-col gap-1",
