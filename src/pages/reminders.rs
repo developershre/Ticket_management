@@ -1524,15 +1524,10 @@ pub fn Reminders() -> Element {
                                 }
                             }
                             div { class: "flex flex-col gap-1.5",
-                                label { class: "text-xs font-semibold text-foreground flex items-center justify-between",
-                                    span { "Schedule Date & Time" }
-                                    span { class: "text-[10px] text-muted-foreground font-normal", "(Leave empty for now)" }
-                                }
-                                Input {
-                                    class: "h-10 text-sm rounded-md border border-input bg-card px-3 focus:border-primary focus:ring-1 focus:ring-primary/20",
-                                    placeholder: "e.g. 2026-11-06T10:30:00+05:30".to_string(),
-                                    value: new_send_at.read().clone(),
-                                    oninput: move |e: FormEvent| new_send_at.set(e.value()),
+                                crate::components::ui::ClockDateTimePicker {
+                                    value: new_send_at,
+                                    label: "Schedule Date & Time".to_string(),
+                                    placeholder: "Pick date & time (or leave empty)".to_string(),
                                 }
                             }
                         }
@@ -1662,14 +1657,10 @@ pub fn Reminders() -> Element {
                                     }
                                 }
                                 div { class: "flex flex-col gap-1.5",
-                                    label { class: "text-xs font-semibold text-foreground flex items-center justify-between",
-                                        span { "Scheduled Send At" }
-                                        span { class: "text-[10px] text-muted-foreground", "e.g. 2026-11-06T10:30:00+05:30" }
-                                    }
-                                    Input {
-                                        class: "h-9 text-xs rounded-md border border-input bg-card px-3 focus:border-primary",
-                                        value: edit_send_at.read().clone(),
-                                        oninput: move |e: FormEvent| edit_send_at.set(e.value()),
+                                    crate::components::ui::ClockDateTimePicker {
+                                        value: edit_send_at,
+                                        label: "Scheduled Send At".to_string(),
+                                        placeholder: "Pick date & time (or leave empty)".to_string(),
                                     }
                                 }
                                 div { class: "flex flex-col gap-1.5",
