@@ -88,6 +88,7 @@ pub fn NotesPage() -> Element {
             .collect::<Vec<NoteItem>>()
     });
     let notes_data = notes_memo();
+    let all_employees = crate::db::get_all_employees();
 
     let total_count = notes_data.len();
 
@@ -367,24 +368,25 @@ pub fn NotesPage() -> Element {
                                                     "Assign Employee"
                                                 }
                                                 ContextMenuSubContent {
-                                                    for &code in &["EMP-4019", "EMP-4020", "EMP-3042", "EMP-1088", "EMP-2045"] {
+                                                    for emp in all_employees.iter().take(20) {
                                                         {
-                                                            let is_active = emp_code_str == code;
-                                                            let c_str = code.to_string();
+                                                            let is_active = emp_code_str == emp.emp_code;
+                                                            let c_str = emp.emp_code.clone();
+                                                            let name_str = emp.emp_name.clone();
                                                             rsx! {
                                                                 ContextMenuItem {
-                                                                    key: "emp-{code}",
+                                                                    key: "emp-{c_str}",
                                                                     on_select: move |_| {
                                                                         let _ = crate::db::update_note_emp_code(n_id, &c_str);
-                                                                        toast.success("Assigned", format!("Note #{n_id} assigned to {c_str}"));
+                                                                        toast.success("Assigned", format!("Note #{n_id} assigned to {name_str} ({c_str})"));
                                                                         if let Some(mut sync) = db_sync {
                                                                             sync.with_mut(|r| r.0 += 1);
                                                                         }
                                                                     },
-                                                                    div { class: "flex items-center justify-between w-full",
-                                                                        span { "{code}" }
+                                                                    div { class: "flex items-center justify-between w-full gap-2",
+                                                                        span { class: "truncate text-xs", "{emp.emp_name} ({emp.emp_code})" }
                                                                         if is_active {
-                                                                            CheckIcon { class: "size-3.5 text-primary ml-auto" }
+                                                                            CheckIcon { class: "size-3.5 text-primary ml-auto shrink-0" }
                                                                         }
                                                                     }
                                                                 }

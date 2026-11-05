@@ -1257,28 +1257,16 @@ async fn execute_reminder_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutc
                     return Ok(ExecOutcome::Synced);
                 }
             }
-            let mut sanitized = sanitize_reminder_create_payload(&op.payload);
-            let remote = match client.reminders_create(&sanitized).await {
-                Ok(remote) => remote,
-                Err(ApiError::Api { ref code, ref message, .. })
-                    if code == "UNKNOWN_FIELD" =>
-                {
-                    eprintln!("[sync] Remote Google Apps Script rejected optional field: {message}. Stripping unsupported fields and retrying create.");
-                    if let Some(obj) = sanitized.as_object_mut() {
-                        obj.remove("repeat_frequency");
-                        if message.contains("cc_emails") || message.contains("cc") {
-                            obj.remove("cc_emails");
-                        }
-                    }
-                    client.reminders_create(&sanitized).await?
-                }
-                Err(e) => return Err(e),
-            };
-            db::set_reminder_mapping(
-                op.local_ticket_id,
-                &remote.reminder_id,
-                &remote.last_updated_at,
-            )?;
+            let sanitized = sanitize_reminder_create_payload(&op.payload);
+            let remote = client.reminders_create(&sanitized).await?;
+            if !remote.reminder_id.is_empty() {
+                db::set_reminder_mapping(
+                    op.local_ticket_id,
+                    &remote.reminder_id,
+                    &remote.last_updated_at,
+                )?;
+            }
+            let _ = db::deduplicate_reminders_db();
             Ok(ExecOutcome::Synced)
         }
         "UPDATE" => {
@@ -1464,12 +1452,19 @@ async fn pull_reminders(client: &ApiClient) -> Result<usize, ApiError> {
             }
             None => {
                 if !r.status.eq_ignore_ascii_case("cancelled") && !db::server_id_has_active_delete(server_id) {
-                    db::insert_server_reminder(r)?;
-                    changed += 1;
+                    if let Some(matched_local_id) = db::find_unmapped_or_duplicate_reminder(r) {
+                        db::set_reminder_mapping(matched_local_id, server_id, &r.last_updated_at)?;
+                        db::apply_server_reminder(matched_local_id, r)?;
+                        changed += 1;
+                    } else {
+                        db::insert_server_reminder(r)?;
+                        changed += 1;
+                    }
                 }
             }
         }
     }
+    let _ = db::deduplicate_reminders_db();
     Ok(changed)
 }
 

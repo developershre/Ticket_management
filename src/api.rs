@@ -40,6 +40,7 @@ struct CollectionVariable {
 
 pub const DEFAULT_BASE_URL: &str =
     "https://script.google.com/macros/s/AKfycbx6TTCZF1WfcFPpJWOqGoMXKhXq-wxJprGtCIKfAHZnm9wGmSgBuRCpiTWUu4519oyV/exec";
+    "https://script.google.com/macros/s/AKfycbx6TTCZF1WfcFPpJWOqGoMXKhXq-wxJprGtCIKfAHZnm9wGmSgBuRCpiTWUu4519oyV/exec";
 pub const DEFAULT_API_KEY: &str =
     "7c78963778914d0fbf9b34cc237145fcfa5727a58dd2447abbdcbc77768690916242dbccd0ae41f1b694bf59c6ae0a62";
 
@@ -1266,6 +1267,5 @@ fn parse_employee(data: Value) -> Result<Employee, ApiError> {
 }
 
 fn parse_reminder(data: Value) -> Result<ServerReminder, ApiError> {
-    serde_json::from_value(data)
-        .map_err(|e| ApiError::Decode(format!("invalid reminder payload: {e}")))
+    serde_json::from_value(data).map_err(|e| ApiError::Decode(format!("invalid reminder payload: {e}")))
 }

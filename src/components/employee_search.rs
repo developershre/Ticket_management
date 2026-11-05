@@ -40,23 +40,26 @@ pub fn EmployeeSearchInput(props: EmployeeSearchInputProps) -> Element {
     // Sync query with external code changes (e.g. form reset, external edit, or initial load)
     use_effect(move || {
         let code = emp_code_signal.read().clone();
-        let name = emp_name_signal.read().clone();
         if code != *last_synced_code.read() {
             last_synced_code.set(code.clone());
             if !code.is_empty() {
-                if !name.is_empty() {
-                    query.set(format!("{code} - {name}"));
-                } else if let Some(emp) = crate::db::find_employee_by_code(&code) {
+                // Always query database directly to get the latest info
+                if let Some(emp) = crate::db::find_employee_by_code(&code) {
                     query.set(format!("{code} - {}", emp.emp_name));
                     emp_name_signal.set(emp.emp_name);
-                    if !emp.emp_email.is_empty() && email_signal.read().is_empty() {
-                        email_signal.set(emp.emp_email);
-                    }
+                    email_signal.set(emp.emp_email);
                 } else {
-                    query.set(code);
+                    let name = emp_name_signal.read().clone();
+                    if !name.is_empty() {
+                        query.set(format!("{code} - {name}"));
+                    } else {
+                        query.set(code);
+                    }
                 }
             } else {
                 query.set(String::new());
+                emp_name_signal.set(String::new());
+                email_signal.set(String::new());
             }
         }
     });
@@ -111,14 +114,20 @@ pub fn EmployeeSearchInput(props: EmployeeSearchInputProps) -> Element {
                         if e.key() == Key::Escape {
                             is_open.set(false);
                         } else if e.key() == Key::Enter {
-                            if let Some(emp) = first_match.as_ref() {
-                                last_synced_code.set(emp.emp_code.clone());
-                                emp_code_signal.set(emp.emp_code.clone());
-                                emp_name_signal.set(emp.emp_name.clone());
-                                if !emp.emp_email.is_empty() {
+                            if let Some(emp_m) = first_match.as_ref() {
+                                let code = emp_m.emp_code.clone();
+                                last_synced_code.set(code.clone());
+                                emp_code_signal.set(code.clone());
+                                // Always query database directly to get latest info
+                                if let Some(emp) = crate::db::find_employee_by_code(&code) {
+                                    emp_name_signal.set(emp.emp_name.clone());
                                     email_signal.set(emp.emp_email.clone());
+                                    query.set(format!("{} - {}", emp.emp_code, emp.emp_name));
+                                } else {
+                                    emp_name_signal.set(emp_m.emp_name.clone());
+                                    email_signal.set(emp_m.emp_email.clone());
+                                    query.set(format!("{} - {}", emp_m.emp_code, emp_m.emp_name));
                                 }
-                                query.set(format!("{} - {}", emp.emp_code, emp.emp_name));
                                 is_open.set(false);
                             }
                         }
@@ -135,20 +144,22 @@ pub fn EmployeeSearchInput(props: EmployeeSearchInputProps) -> Element {
                             emp_name_signal.set(String::new());
                             email_signal.set(String::new());
                         } else if let Some(emp) = crate::db::find_employee_by_code(trimmed) {
-                            // If user typed an exact employee code, auto-fill details immediately
-                            last_synced_code.set(emp.emp_code.clone());
-                            emp_code_signal.set(emp.emp_code);
-                            emp_name_signal.set(emp.emp_name);
-                            if !emp.emp_email.is_empty() {
-                                email_signal.set(emp.emp_email);
-                            }
-                        } else if let Some(emp) = all.iter().find(|e| e.emp_name.eq_ignore_ascii_case(trimmed)) {
-                            // If user typed an exact employee name, auto-fill details immediately
+                            // If user typed an exact employee code, auto-fill details immediately from DB
                             last_synced_code.set(emp.emp_code.clone());
                             emp_code_signal.set(emp.emp_code.clone());
-                            emp_name_signal.set(emp.emp_name.clone());
-                            if !emp.emp_email.is_empty() {
-                                email_signal.set(emp.emp_email.clone());
+                            emp_name_signal.set(emp.emp_name);
+                            email_signal.set(emp.emp_email);
+                        } else if let Some(emp_match) = all.iter().find(|e| e.emp_name.eq_ignore_ascii_case(trimmed)) {
+                            // If user typed an exact employee name, lookup by code in DB for latest info
+                            let code = emp_match.emp_code.clone();
+                            last_synced_code.set(code.clone());
+                            emp_code_signal.set(code.clone());
+                            if let Some(emp) = crate::db::find_employee_by_code(&code) {
+                                emp_name_signal.set(emp.emp_name);
+                                email_signal.set(emp.emp_email);
+                            } else {
+                                emp_name_signal.set(emp_match.emp_name.clone());
+                                email_signal.set(emp_match.emp_email.clone());
                             }
                         }
                     },
@@ -242,13 +253,19 @@ pub fn EmployeeSearchInput(props: EmployeeSearchInputProps) -> Element {
                                         key: "{emp.emp_id}",
                                         class: "relative flex flex-col gap-0.5 rounded-md px-3 py-2 cursor-pointer transition-colors {item_cls}",
                                         onclick: move |_| {
-                                            last_synced_code.set(e_c.emp_code.clone());
-                                            emp_code_signal.set(e_c.emp_code.clone());
-                                            emp_name_signal.set(e_c.emp_name.clone());
-                                            if !e_c.emp_email.is_empty() {
+                                            let code = e_c.emp_code.clone();
+                                            last_synced_code.set(code.clone());
+                                            emp_code_signal.set(code.clone());
+                                            // Always query database directly to get latest info
+                                            if let Some(emp) = crate::db::find_employee_by_code(&code) {
+                                                emp_name_signal.set(emp.emp_name.clone());
+                                                email_signal.set(emp.emp_email.clone());
+                                                query.set(format!("{} - {}", emp.emp_code, emp.emp_name));
+                                            } else {
+                                                emp_name_signal.set(e_c.emp_name.clone());
                                                 email_signal.set(e_c.emp_email.clone());
+                                                query.set(format!("{} - {}", e_c.emp_code, e_c.emp_name));
                                             }
-                                            query.set(format!("{} - {}", e_c.emp_code, e_c.emp_name));
                                             is_open.set(false);
                                         },
                                         div {

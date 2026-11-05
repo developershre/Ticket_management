@@ -56,19 +56,34 @@ impl ReminderItem {
         &self.service_category
     }
     pub fn display_name(&self) -> String {
-        if !self.employee_name.trim().is_empty() {
-            return self.employee_name.trim().to_string();
-        }
         let code = self.employee_code.trim();
         if !code.is_empty() {
+            // Always query database directly to get the latest employee details
             if let Some(emp) = crate::db::find_employee_by_code(code) {
                 if !emp.emp_name.trim().is_empty() {
                     return emp.emp_name;
                 }
             }
+        }
+        if !self.employee_name.trim().is_empty() {
+            return self.employee_name.trim().to_string();
+        }
+        if !code.is_empty() {
             return code.to_string();
         }
         "Unknown".to_string()
+    }
+
+    pub fn display_email(&self) -> String {
+        let code = self.employee_code.trim();
+        if !code.is_empty() {
+            if let Some(emp) = crate::db::find_employee_by_code(code) {
+                if !emp.emp_email.trim().is_empty() {
+                    return emp.emp_email;
+                }
+            }
+        }
+        self.email_address.clone()
     }
 }
 
@@ -95,41 +110,69 @@ fn status_badge_variant(status: &str) -> &'static str {
 }
 
 fn initial_reminders() -> Vec<ReminderItem> {
-    // Reminders are read from SQLite only — the local cache of the Google
-    // Sheet. When the table is empty, no fake mock items are fabricated.
-    crate::db::get_all_reminders()
-        .into_iter()
-        .map(|r| {
-            let done = r.status.eq_ignore_ascii_case("completed")
-                || r.status.eq_ignore_ascii_case("sent")
-                || r.status.eq_ignore_ascii_case("done");
-            let display_id = if !r.server_reminder_id.is_empty() {
-                r.server_reminder_id.clone()
-            } else {
-                format!("REM-{}", r.reminder_id)
-            };
-            ReminderItem {
-                id: display_id,
-                reminder_id: r.reminder_id,
-                employee_code: r.employee_code,
-                employee_name: r.employee_name,
-                email_address: r.email_address,
-                service_category: r.service_category,
-                reminder_message: r.reminder_message,
-                send_at: r.send_at,
-                status: r.status,
-                email_sent_at: r.email_sent_at,
-                ticket_id: r.ticket_id,
-                created_at: r.created_at,
-                last_updated_at: r.last_updated_at,
-                server_reminder_id: r.server_reminder_id,
-                server_last_updated: r.server_last_updated,
-                cc_emails: r.cc_emails,
-                repeat_frequency: r.repeat_frequency,
-                done,
+    // Run DB deduplication first to ensure SQLite table has strictly one row per reminder
+    let _ = crate::db::deduplicate_reminders_db();
+    let rows = crate::db::get_all_reminders();
+    let mut items: Vec<ReminderItem> = Vec::new();
+
+    for r in rows {
+        let done = r.status.eq_ignore_ascii_case("completed")
+            || r.status.eq_ignore_ascii_case("sent")
+            || r.status.eq_ignore_ascii_case("done");
+        let display_id = if !r.server_reminder_id.is_empty() {
+            r.server_reminder_id.clone()
+        } else {
+            format!("REM-{}", r.reminder_id)
+        };
+        let (emp_name, emp_email) = if let Some(emp) = crate::db::find_employee_by_code(r.employee_code.trim()) {
+            let name = if !emp.emp_name.trim().is_empty() { emp.emp_name } else { r.employee_name };
+            let email = if !emp.emp_email.trim().is_empty() { emp.emp_email } else { r.email_address };
+            (name, email)
+        } else {
+            (r.employee_name, r.email_address)
+        };
+        let item = ReminderItem {
+            id: display_id,
+            reminder_id: r.reminder_id,
+            employee_code: r.employee_code,
+            employee_name: emp_name,
+            email_address: emp_email,
+            service_category: r.service_category,
+            reminder_message: r.reminder_message,
+            send_at: r.send_at,
+            status: r.status,
+            email_sent_at: r.email_sent_at,
+            ticket_id: r.ticket_id,
+            created_at: r.created_at,
+            last_updated_at: r.last_updated_at,
+            server_reminder_id: r.server_reminder_id,
+            server_last_updated: r.server_last_updated,
+            cc_emails: r.cc_emails,
+            repeat_frequency: r.repeat_frequency,
+            done,
+        };
+
+        // In-memory duplicate guard: compare data and keep strictly one card
+        let dup_pos = items.iter().position(|existing: &ReminderItem| {
+            if !item.server_reminder_id.is_empty() && item.server_reminder_id == existing.server_reminder_id {
+                return true;
             }
-        })
-        .collect()
+            let same_code = existing.employee_code.trim().eq_ignore_ascii_case(item.employee_code.trim());
+            let same_msg = existing.reminder_message.trim() == item.reminder_message.trim();
+            same_code && same_msg
+        });
+
+        if let Some(pos) = dup_pos {
+            // Keep the one with server_reminder_id or latest data
+            if items[pos].server_reminder_id.is_empty() && !item.server_reminder_id.is_empty() {
+                items[pos] = item;
+            }
+        } else {
+            items.push(item);
+        }
+    }
+
+    items
 }
 
 // ============================================================
@@ -449,7 +492,25 @@ pub fn Reminders() -> Element {
             let _ = sync();
         }
         let list = initial_reminders();
-        if *reminders.peek() != list {
+        let should_update = {
+            let current = reminders.peek();
+            if current.len() != list.len() {
+                true
+            } else {
+                current.iter().zip(list.iter()).any(|(a, b)| {
+                    a.reminder_id != b.reminder_id
+                        || a.status != b.status
+                        || a.done != b.done
+                        || a.reminder_message != b.reminder_message
+                        || a.send_at != b.send_at
+                        || a.service_category != b.service_category
+                        || a.employee_code != b.employee_code
+                        || a.email_address != b.email_address
+                        || a.server_reminder_id != b.server_reminder_id
+                })
+            }
+        };
+        if should_update {
             reminders.set(list);
         }
     });
@@ -484,16 +545,58 @@ pub fn Reminders() -> Element {
 
     // Edit Reminder modal state
     let mut is_editing = use_signal(|| false);
+    let mut edit_employee_code = use_signal(String::new);
+    let mut edit_employee_name = use_signal(String::new);
+    let mut edit_email_address = use_signal(String::new);
     let mut edit_message = use_signal(String::new);
     let mut edit_category = use_signal(|| "General".to_string());
     let mut edit_send_at = use_signal(String::new);
     let mut edit_repeat_frequency = use_signal(|| "daily".to_string());
     let mut edit_cc_emails = use_signal(String::new);
 
+    // Reactively refresh employee details when new_employee_code changes
+    use_effect(move || {
+        let code = new_employee_code.read().trim().to_string();
+        if !code.is_empty() {
+            if let Some(emp) = crate::db::find_employee_by_code(&code) {
+                new_employee_name.set(emp.emp_name);
+                if !emp.emp_email.is_empty() {
+                    new_email_address.set(emp.emp_email);
+                }
+            }
+        }
+    });
+
+    // Reactively refresh employee details when edit_employee_code changes
+    use_effect(move || {
+        let code = edit_employee_code.read().trim().to_string();
+        if !code.is_empty() {
+            if let Some(emp) = crate::db::find_employee_by_code(&code) {
+                edit_employee_name.set(emp.emp_name);
+                if !emp.emp_email.is_empty() {
+                    edit_email_address.set(emp.emp_email);
+                }
+            }
+        }
+    });
+
     let directory_employees = crate::db::get_all_employees();
     let toast = use_context::<ToastState>();
 
-    let mut open_detail = move |r: ReminderItem| {
+    let mut open_detail = move |mut r: ReminderItem| {
+        let code = r.employee_code.trim();
+        if !code.is_empty() {
+            // Always query database directly to get latest employee info
+            if let Some(emp) = crate::db::find_employee_by_code(code) {
+                r.employee_name = emp.emp_name;
+                if !emp.emp_email.is_empty() {
+                    r.email_address = emp.emp_email;
+                }
+            }
+        }
+        edit_employee_code.set(r.employee_code.clone());
+        edit_employee_name.set(r.employee_name.clone());
+        edit_email_address.set(r.email_address.clone());
         edit_message.set(r.reminder_message.clone());
         edit_category.set(r.service_category.clone());
         edit_send_at.set(r.send_at.clone());
@@ -535,7 +638,21 @@ pub fn Reminders() -> Element {
             return;
         }
 
-        let email_val = new_email_address.read().trim().to_string();
+        // Always query database directly to get latest employee details
+        let (emp_name, email_val) = if let Some(u) = crate::db::find_employee_by_code(&emp_code) {
+            let email = if !u.emp_email.is_empty() {
+                u.emp_email
+            } else {
+                new_email_address.read().trim().to_string()
+            };
+            (u.emp_name, email)
+        } else {
+            (
+                new_employee_name.read().trim().to_string(),
+                new_email_address.read().trim().to_string(),
+            )
+        };
+
         if email_val.is_empty() {
             toast.error("Validation Error", "Please enter Email Address");
             return;
@@ -557,15 +674,6 @@ pub fn Reminders() -> Element {
         if desc_val.is_empty() {
             toast.error("Validation Error", "Please describe the problem");
             return;
-        }
-
-        let mut emp_name = new_employee_name.read().trim().to_string();
-        if emp_name.is_empty() {
-            if let Some(u) = crate::db::find_employee_by_code(&emp_code) {
-                emp_name = u.emp_name;
-            } else {
-                emp_name = emp_code.clone();
-            }
         }
 
         let reminder_msg = format!("{subj_val}: {desc_val}");
@@ -640,6 +748,32 @@ pub fn Reminders() -> Element {
     let mut save_reminder_edits = move || {
         let Some(curr) = active_reminder.read().clone() else { return; };
         let rem_id = curr.reminder_id;
+        let emp_code = edit_employee_code.read().trim().to_string();
+        if emp_code.is_empty() {
+            toast.error("Validation Error", "Please enter Employee Code");
+            return;
+        }
+
+        // Always query database directly to get latest employee details
+        let (emp_name, email_val) = if let Some(u) = crate::db::find_employee_by_code(&emp_code) {
+            let email = if !u.emp_email.is_empty() {
+                u.emp_email
+            } else {
+                edit_email_address.read().trim().to_string()
+            };
+            (u.emp_name, email)
+        } else {
+            (
+                edit_employee_name.read().trim().to_string(),
+                edit_email_address.read().trim().to_string(),
+            )
+        };
+
+        if email_val.is_empty() {
+            toast.error("Validation Error", "Please enter Email Address");
+            return;
+        }
+
         let msg = edit_message.read().trim().to_string();
         if msg.is_empty() {
             toast.error("Validation Error", "Reminder message cannot be empty");
@@ -653,9 +787,9 @@ pub fn Reminders() -> Element {
         let cc = edit_cc_emails.read().trim().to_string();
 
         let updated_input = crate::db::NewReminderInput {
-            employee_code: curr.employee_code.clone(),
-            employee_name: curr.employee_name.clone(),
-            email_address: curr.email_address.clone(),
+            employee_code: emp_code.clone(),
+            employee_name: emp_name.clone(),
+            email_address: email_val.clone(),
             service_category: cat.clone(),
             reminder_message: msg.clone(),
             send_at: final_send_at.clone(),
@@ -672,6 +806,7 @@ pub fn Reminders() -> Element {
         }
 
         let patch = serde_json::json!({
+            "employee_code": emp_code,
             "service_category": cat,
             "reminder_message": msg,
             "send_at": crate::sync::parse_to_iso8601(&final_send_at),
@@ -681,6 +816,9 @@ pub fn Reminders() -> Element {
         crate::sync::enqueue_reminder_update(rem_id, patch);
 
         let mut updated_item = curr.clone();
+        updated_item.employee_code = updated_input.employee_code;
+        updated_item.employee_name = updated_input.employee_name;
+        updated_item.email_address = updated_input.email_address;
         updated_item.service_category = updated_input.service_category;
         updated_item.reminder_message = updated_input.reminder_message;
         updated_item.send_at = updated_input.send_at;
@@ -708,10 +846,10 @@ pub fn Reminders() -> Element {
             return;
         }
         let mut list = reminders.write();
-        if let Some(src_pos) = list.iter().position(|r| r.id == src_id) {
+        if let Some(src_pos) = list.iter().position(|r| r.id == src_id || r.reminder_id.to_string() == src_id) {
             let item = list.remove(src_pos);
             let title = item.title().to_string();
-            if let Some(target_pos) = list.iter().position(|r| r.id == target_id) {
+            if let Some(target_pos) = list.iter().position(|r| r.id == target_id || r.reminder_id.to_string() == target_id) {
                 list.insert(target_pos, item);
                 let new_rank = target_pos + 1;
                 toast.info(
@@ -727,7 +865,7 @@ pub fn Reminders() -> Element {
     // Toggle completion status
     let mut toggle_done = move |id: String| {
         let mut list = reminders.write();
-        if let Some(item) = list.iter_mut().find(|r| r.id == id) {
+        if let Some(item) = list.iter_mut().find(|r| r.id == id || r.reminder_id.to_string() == id) {
             if item.done || item.status.eq_ignore_ascii_case("completed") {
                 toast.warning("Finalized", "Completed reminders cannot be modified.");
                 return;
@@ -799,18 +937,13 @@ pub fn Reminders() -> Element {
     // Delete reminder
     let mut delete_reminder = move |id: String| {
         let mut list = reminders.write();
-        if let Some(pos) = list.iter().position(|r| r.id == id) {
+        if let Some(pos) = list.iter().position(|r| r.id == id || r.reminder_id.to_string() == id) {
             let item = list.remove(pos);
             let rem_id = item.reminder_id;
             let server_id = item.server_reminder_id.clone();
             let title = item.reminder_message.clone();
             drop(list);
 
-            // The API has no `reminders.delete` (documented action list has
-            // 17 actions, none of which delete reminders). The closest
-            // supported operation is `status: "Cancelled"`, which stops the
-            // scheduled email; the row itself stays in the sheet and will be
-            // re-cached locally as Cancelled on the next pull.
             if !server_id.is_empty() {
                 crate::sync::enqueue_reminder_delete(rem_id);
                 let _ = crate::db::delete_reminder_db(rem_id);
@@ -831,7 +964,7 @@ pub fn Reminders() -> Element {
     // Change category
     let mut change_category = move |(id, new_tag): (String, String)| {
         let mut list = reminders.write();
-        if let Some(item) = list.iter_mut().find(|r| r.id == id) {
+        if let Some(item) = list.iter_mut().find(|r| r.id == id || r.reminder_id.to_string() == id) {
             if item.done || item.status.eq_ignore_ascii_case("completed") {
                 toast.warning("Finalized", "Completed reminders cannot be updated.");
                 return;
@@ -856,7 +989,7 @@ pub fn Reminders() -> Element {
     // Change timing
     let mut change_timing = move |(id, new_when): (String, String)| {
         let mut list = reminders.write();
-        if let Some(item) = list.iter_mut().find(|r| r.id == id) {
+        if let Some(item) = list.iter_mut().find(|r| r.id == id || r.reminder_id.to_string() == id) {
             if item.done || item.status.eq_ignore_ascii_case("completed") {
                 toast.warning("Finalized", "Completed reminders cannot be updated.");
                 return;
@@ -878,7 +1011,7 @@ pub fn Reminders() -> Element {
     // Move to top
     let mut move_to_top = move |id: String| {
         let mut list = reminders.write();
-        if let Some(pos) = list.iter().position(|r| r.id == id) {
+        if let Some(pos) = list.iter().position(|r| r.id == id || r.reminder_id.to_string() == id) {
             let item = list.remove(pos);
             let title = item.title().to_string();
             list.insert(0, item);
@@ -889,7 +1022,7 @@ pub fn Reminders() -> Element {
     // Move to bottom
     let mut move_to_bottom = move |id: String| {
         let mut list = reminders.write();
-        if let Some(pos) = list.iter().position(|r| r.id == id) {
+        if let Some(pos) = list.iter().position(|r| r.id == id || r.reminder_id.to_string() == id) {
             let item = list.remove(pos);
             let title = item.title().to_string();
             list.push(item);
@@ -900,7 +1033,7 @@ pub fn Reminders() -> Element {
     // Move relative (-1 or +1)
     let mut move_relative = move |(id, dir): (String, i32)| {
         let mut list = reminders.write();
-        if let Some(pos) = list.iter().position(|r| r.id == id) {
+        if let Some(pos) = list.iter().position(|r| r.id == id || r.reminder_id.to_string() == id) {
             let len = list.len();
             let new_pos = (pos as isize + dir as isize).clamp(0, (len - 1) as isize) as usize;
             if new_pos != pos {
@@ -1113,7 +1246,7 @@ pub fn Reminders() -> Element {
 
                                 rsx! {
                                     div {
-                                        key: "rem-card-wrap-{id}",
+                                        key: "rem-card-wrap-{reminder.reminder_id}",
                                         class: "flex flex-col gap-1.5",
                                         ondragenter: move |e: DragEvent| {
                                             e.prevent_default();
@@ -1419,10 +1552,11 @@ pub fn Reminders() -> Element {
                                         if !trimmed.is_empty() {
                                             if let Some(emp) = crate::db::find_employee_by_code(trimmed) {
                                                 new_employee_name.set(emp.emp_name);
-                                                if !emp.emp_email.is_empty() {
-                                                    new_email_address.set(emp.emp_email);
-                                                }
+                                                new_email_address.set(emp.emp_email);
                                             }
+                                        } else {
+                                            new_employee_name.set(String::new());
+                                            new_email_address.set(String::new());
                                         }
                                     },
                                 }
@@ -1617,6 +1751,65 @@ pub fn Reminders() -> Element {
 
                         if is_editing() {
                             div { class: "flex flex-col gap-3.5 py-2 text-xs",
+                                div { class: "rounded-md border border-border/60 bg-muted/20 p-3 flex flex-col gap-2.5",
+                                    div { class: "flex items-center justify-between",
+                                        span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider",
+                                            "Recipient Employee"
+                                        }
+                                        span { class: "text-[10px] text-muted-foreground",
+                                            "{directory_employees.len()} employees loaded"
+                                        }
+                                    }
+                                    crate::components::employee_search::EmployeeSearchInput {
+                                        employee_code: edit_employee_code,
+                                        employee_name: edit_employee_name,
+                                        email_address: edit_email_address,
+                                        placeholder: "Type code (e.g. 11061) or name (e.g. Chaitram)...".to_string(),
+                                    }
+                                    div { class: "grid grid-cols-1 sm:grid-cols-3 gap-2.5",
+                                        div { class: "flex flex-col gap-1",
+                                            label { class: "text-[11px] font-semibold text-foreground", "Employee Name" }
+                                            Input {
+                                                class: "text-xs h-9 w-full",
+                                                placeholder: "e.g. Employee Name".to_string(),
+                                                value: edit_employee_name.read().clone(),
+                                                oninput: move |e: FormEvent| edit_employee_name.set(e.value()),
+                                            }
+                                        }
+                                        div { class: "flex flex-col gap-1",
+                                            label { class: "text-[11px] font-semibold text-foreground", "Employee Code" }
+                                            Input {
+                                                class: "text-xs h-9 w-full",
+                                                placeholder: "e.g. 10001".to_string(),
+                                                value: edit_employee_code.read().clone(),
+                                                oninput: move |e: FormEvent| {
+                                                    let val = e.value();
+                                                    edit_employee_code.set(val.clone());
+                                                    let trimmed = val.trim();
+                                                    if !trimmed.is_empty() {
+                                                        if let Some(emp) = crate::db::find_employee_by_code(trimmed) {
+                                                            edit_employee_name.set(emp.emp_name);
+                                                            edit_email_address.set(emp.emp_email);
+                                                        }
+                                                    } else {
+                                                        edit_employee_name.set(String::new());
+                                                        edit_email_address.set(String::new());
+                                                    }
+                                                },
+                                            }
+                                        }
+                                        div { class: "flex flex-col gap-1",
+                                            label { class: "text-[11px] font-semibold text-foreground", "Email Address" }
+                                            Input {
+                                                class: "text-xs h-9 w-full",
+                                                placeholder: "e.g. user@example.com".to_string(),
+                                                value: edit_email_address.read().clone(),
+                                                oninput: move |e: FormEvent| edit_email_address.set(e.value()),
+                                            }
+                                        }
+                                    }
+                                }
+
                                 div { class: "flex flex-col gap-1.5",
                                     label { class: "text-xs font-semibold text-foreground", "Reminder Message" }
                                     textarea {
@@ -1723,7 +1916,7 @@ pub fn Reminders() -> Element {
                                         span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider", "Recipient" }
                                         span { class: "font-semibold text-foreground text-xs", "{r.display_name()}" }
                                         span { class: "font-mono text-muted-foreground text-[11px]", "Code: {r.employee_code}" }
-                                        span { class: "text-muted-foreground text-[11px]", "Email: {r.email_address}" }
+                                        span { class: "text-muted-foreground text-[11px]", "Email: {r.display_email()}" }
                                     }
                                     div { class: "p-3 rounded-md bg-muted/20 border border-border/60 flex flex-col gap-1.5",
                                         span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider", "Associated Ticket" }

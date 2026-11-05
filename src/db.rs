@@ -349,6 +349,9 @@ pub fn init_database() -> Result<()> {
          next_attempt_at = NULL WHERE status = 'in_flight'",
         [],
     )?;
+
+    drop(conn);
+    let _ = deduplicate_reminders_db();
     Ok(())
 }
 
@@ -2224,6 +2227,114 @@ pub fn set_reminder_mapping(
         params![server_reminder_id, local_reminder_id],
     )?;
     Ok(())
+}
+
+pub fn find_unmapped_or_duplicate_reminder(r: &crate::api::ServerReminder) -> Option<i64> {
+    let conn = get_connection().ok()?;
+    // 1. Direct match by server_reminder_id
+    let srv_id = r.reminder_id.trim();
+    if !srv_id.is_empty() {
+        if let Ok(id) = conn.query_row(
+            "SELECT reminder_id FROM reminders WHERE server_reminder_id = ?1 LIMIT 1",
+            params![srv_id],
+            |row| row.get::<_, i64>(0),
+        ) {
+            return Some(id);
+        }
+    }
+
+    // 2. Data match: compare employee_code and reminder_message on unmapped row
+    let clean_code = r.employee_code.trim();
+    let clean_msg = r.reminder_message.trim();
+    if !clean_code.is_empty() && !clean_msg.is_empty() {
+        if let Ok(id) = conn.query_row(
+            "SELECT reminder_id FROM reminders \
+             WHERE (server_reminder_id IS NULL OR server_reminder_id = '') \
+               AND TRIM(employee_code) = ?1 AND TRIM(reminder_message) = ?2 \
+             ORDER BY reminder_id ASC LIMIT 1",
+            params![clean_code, clean_msg],
+            |row| row.get::<_, i64>(0),
+        ) {
+            return Some(id);
+        }
+    }
+
+    None
+}
+
+/// Deduplicates reminders table in SQLite by comparing data.
+/// Merges redundant duplicate rows so only one canonical row and card remains.
+pub fn deduplicate_reminders_db() -> Result<usize> {
+    let mut conn = get_connection()?;
+    let tx = conn.transaction()?;
+    let mut deleted_count = 0usize;
+
+    // 1. Merge unmapped rows into matching server-mapped rows
+    // e.g. Row B has server_reminder_id == '' and matches Row A which has server_reminder_id != ''
+    {
+        let mut stmt = tx.prepare(
+            "SELECT b.reminder_id, a.reminder_id, a.server_reminder_id, a.server_last_updated, a.email_sent_at, a.status \
+             FROM reminders b \
+             JOIN reminders a ON TRIM(b.employee_code) = TRIM(a.employee_code) \
+                             AND TRIM(b.reminder_message) = TRIM(a.reminder_message) \
+                             AND b.reminder_id != a.reminder_id \
+             WHERE (b.server_reminder_id IS NULL OR b.server_reminder_id = '') \
+               AND (a.server_reminder_id IS NOT NULL AND a.server_reminder_id != '')"
+        )?;
+
+        let pairs: Vec<(i64, i64, String, String, String, String)> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            })?
+            .filter_map(Result::ok)
+            .collect();
+
+        for (unmapped_id, mapped_id, srv_id, srv_updated, email_sent, status) in pairs {
+            // Update unmapped row with server fields
+            tx.execute(
+                "UPDATE reminders SET server_reminder_id = ?1, server_last_updated = ?2, \
+                 email_sent_at = ?3, status = ?4, last_updated_at = CURRENT_TIMESTAMP \
+                 WHERE reminder_id = ?5",
+                params![srv_id, srv_updated, email_sent, status, unmapped_id],
+            )?;
+            // Point any queued ops for mapped_id to unmapped_id
+            tx.execute(
+                "UPDATE sync_queue SET local_ticket_id = ?1 WHERE entity_type = 'reminder' AND local_ticket_id = ?2",
+                params![unmapped_id, mapped_id],
+            )?;
+            // Delete the duplicate mapped row
+            tx.execute("DELETE FROM reminders WHERE reminder_id = ?1", params![mapped_id])?;
+            deleted_count += 1;
+        }
+    }
+
+    // 2. Remove identical duplicates with same non-empty server_reminder_id
+    {
+        let mut stmt = tx.prepare(
+            "SELECT reminder_id FROM reminders r1 \
+             WHERE server_reminder_id IS NOT NULL AND server_reminder_id != '' \
+               AND reminder_id > (SELECT MIN(r2.reminder_id) FROM reminders r2 WHERE r2.server_reminder_id = r1.server_reminder_id)"
+        )?;
+        let duplicate_ids: Vec<i64> = stmt
+            .query_map([], |row| row.get(0))?
+            .filter_map(Result::ok)
+            .collect();
+
+        for dup_id in duplicate_ids {
+            tx.execute("DELETE FROM reminders WHERE reminder_id = ?1", params![dup_id])?;
+            deleted_count += 1;
+        }
+    }
+
+    tx.commit()?;
+    Ok(deleted_count)
 }
 
 pub fn is_reminder_completed(reminder_id: i64) -> bool {

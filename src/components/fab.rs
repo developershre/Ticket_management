@@ -167,7 +167,21 @@ pub fn Fab() -> Element {
             return;
         }
 
-        let email_val = ticket_email_address.read().trim().to_string();
+        // Always query database directly to get latest employee info
+        let (name_val, email_val) = if let Some(u) = crate::db::find_employee_by_code(&emp_code) {
+            let email = if !u.emp_email.is_empty() {
+                u.emp_email
+            } else {
+                ticket_email_address.read().trim().to_string()
+            };
+            (u.emp_name, email)
+        } else {
+            (
+                ticket_employee_name.read().trim().to_string(),
+                ticket_email_address.read().trim().to_string(),
+            )
+        };
+
         if email_val.is_empty() {
             toast.error("Validation Error", "Please enter Email Address");
             return;
@@ -191,12 +205,6 @@ pub fn Fab() -> Element {
             return;
         }
 
-        let mut name_val = ticket_employee_name.read().trim().to_string();
-        if name_val.is_empty() {
-            if let Some(u) = crate::db::find_employee_by_code(&emp_code) {
-                name_val = u.emp_name;
-            }
-        }
         let emp_combined = if name_val.is_empty() {
             emp_code.clone()
         } else {
@@ -262,7 +270,21 @@ pub fn Fab() -> Element {
             return;
         }
 
-        let email_val = reminder_email_address.read().trim().to_string();
+        // Always query database directly to get latest employee info
+        let (emp_name, email_val) = if let Some(u) = crate::db::find_employee_by_code(&emp_code) {
+            let email = if !u.emp_email.is_empty() {
+                u.emp_email
+            } else {
+                reminder_email_address.read().trim().to_string()
+            };
+            (u.emp_name, email)
+        } else {
+            (
+                reminder_employee_name.read().trim().to_string(),
+                reminder_email_address.read().trim().to_string(),
+            )
+        };
+
         if email_val.is_empty() {
             toast.error("Validation Error", "Please enter Email Address");
             return;
@@ -284,15 +306,6 @@ pub fn Fab() -> Element {
         if desc_val.is_empty() {
             toast.error("Validation Error", "Please describe the problem");
             return;
-        }
-
-        let mut emp_name = reminder_employee_name.read().trim().to_string();
-        if emp_name.is_empty() {
-            if let Some(u) = crate::db::find_employee_by_code(&emp_code) {
-                emp_name = u.emp_name;
-            } else {
-                emp_name = emp_code.clone();
-            }
         }
 
         let reminder_msg = format!("{subj_val}: {desc_val}");
@@ -480,10 +493,11 @@ pub fn Fab() -> Element {
                                             if !trimmed.is_empty() {
                                                 if let Some(emp) = crate::db::find_employee_by_code(trimmed) {
                                                     ticket_employee_name.set(emp.emp_name);
-                                                    if !emp.emp_email.is_empty() {
-                                                        ticket_email_address.set(emp.emp_email);
-                                                    }
+                                                    ticket_email_address.set(emp.emp_email);
                                                 }
+                                            } else {
+                                                ticket_employee_name.set(String::new());
+                                                ticket_email_address.set(String::new());
                                             }
                                         },
                                     }
@@ -647,10 +661,11 @@ pub fn Fab() -> Element {
                                             if !trimmed.is_empty() {
                                                 if let Some(emp) = crate::db::find_employee_by_code(trimmed) {
                                                     reminder_employee_name.set(emp.emp_name);
-                                                    if !emp.emp_email.is_empty() {
-                                                        reminder_email_address.set(emp.emp_email);
-                                                    }
+                                                    reminder_email_address.set(emp.emp_email);
                                                 }
+                                            } else {
+                                                reminder_employee_name.set(String::new());
+                                                reminder_email_address.set(String::new());
                                             }
                                         },
                                     }
