@@ -31,6 +31,32 @@ fn is_dir_writable(dir: &Path) -> bool {
 }
 
 fn resolve_db_path() -> PathBuf {
+    // If installed in Program Files or a read-only system folder, always store user
+    // data in %APPDATA%\BPSL IT Support\ to avoid permission errors on write/WAL.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let parent_str = parent.to_string_lossy().to_lowercase();
+            let is_system_install = parent_str.contains("program files") || !is_dir_writable(parent);
+            if is_system_install {
+                if let Some(app_data) = std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA")) {
+                    let app_dir = PathBuf::from(app_data).join("BPSL IT Support");
+                    let _ = std::fs::create_dir_all(&app_dir);
+                    let target_db = app_dir.join("management.db");
+                    if !target_db.exists() {
+                        let seed = parent.join("management.db");
+                        if seed.exists() {
+                            let _ = std::fs::copy(&seed, &target_db);
+                        }
+                    }
+                    if target_db.exists() {
+                        return target_db;
+                    }
+                }
+            }
+        }
+    }
+
+    // Development / portable mode: use local management.db if present in working directory
     let local = Path::new("management.db");
     if local.exists() {
         return local.to_path_buf();
@@ -39,26 +65,6 @@ fn resolve_db_path() -> PathBuf {
         if let Some(parent) = exe.parent() {
             let candidate = parent.join("management.db");
             if candidate.exists() {
-                // If the directory containing the exe is writable (e.g. portable mode/dev build),
-                // use it directly.
-                if is_dir_writable(parent) {
-                    return candidate;
-                }
-
-                // If installed in a read-only directory like Program Files, copy the seed
-                // database to the user's writable AppData folder so SQLite has write/WAL access.
-                if let Some(app_data) = std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA")) {
-                    let app_dir = PathBuf::from(app_data).join("BPSL IT Support");
-                    let _ = std::fs::create_dir_all(&app_dir);
-                    let target_db = app_dir.join("management.db");
-                    if !target_db.exists() {
-                        let _ = std::fs::copy(&candidate, &target_db);
-                    }
-                    if target_db.exists() {
-                        return target_db;
-                    }
-                }
-
                 return candidate;
             }
             if let Some(up) = parent.parent() {

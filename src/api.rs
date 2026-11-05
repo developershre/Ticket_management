@@ -38,18 +38,11 @@ struct CollectionVariable {
     value: String,
 }
 
-pub const DEFAULT_BASE_URL: &str =
-    "https://script.google.com/macros/s/AKfycbx6TTCZF1WfcFPpJWOqGoMXKhXq-wxJprGtCIKfAHZnm9wGmSgBuRCpiTWUu4519oyV/exec";
-    "https://script.google.com/macros/s/AKfycbx6TTCZF1WfcFPpJWOqGoMXKhXq-wxJprGtCIKfAHZnm9wGmSgBuRCpiTWUu4519oyV/exec";
-pub const DEFAULT_API_KEY: &str =
-    "7c78963778914d0fbf9b34cc237145fcfa5727a58dd2447abbdcbc77768690916242dbccd0ae41f1b694bf59c6ae0a62";
-
 impl ApiConfig {
     /// Resolution order:
     /// 1. `TMS_API_BASE_URL`, `TMS_API_KEY`, `TMS_EMPLOYEE_CODE` env vars or `.env` file
     /// 2. `base_url` / `api_key` variables of `TMS_API.postman_collection.json`
     ///    (searched in working dir, next to executable and one level above)
-    /// 3. Default built-in base URL and API key.
     pub fn load() -> Result<ApiConfig, String> {
         let (dot_url, dot_key, dot_emp) = Self::from_dotenv_file();
         let env_url = non_empty_env("TMS_API_BASE_URL").or(dot_url);
@@ -60,10 +53,14 @@ impl ApiConfig {
 
         let base_url = env_url
             .or(file_url)
-            .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
+            .ok_or_else(|| {
+                "Missing TMS_API_BASE_URL. Please define TMS_API_BASE_URL in your .env file or environment.".to_string()
+            })?;
         let api_key = env_key
             .or(file_key)
-            .unwrap_or_else(|| DEFAULT_API_KEY.to_string());
+            .ok_or_else(|| {
+                "Missing TMS_API_KEY. Please define TMS_API_KEY in your .env file or environment.".to_string()
+            })?;
 
         Ok(ApiConfig {
             base_url: base_url.trim().to_string(),
@@ -136,6 +133,9 @@ impl ApiConfig {
         let mut out = vec![PathBuf::from(file_name)];
         if let Ok(cwd) = std::env::current_dir() {
             out.push(cwd.join(file_name));
+        }
+        if let Some(app_data) = std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA")) {
+            out.push(PathBuf::from(app_data).join("BPSL IT Support").join(file_name));
         }
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {

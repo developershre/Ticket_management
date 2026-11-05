@@ -53,6 +53,26 @@ const DND_JS: Asset = asset!("/assets/dnd.js");
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    // Command-line tool to initialize a clean, empty SQLite database with all tables
+    if args.first().map(String::as_str) == Some("--init-clean-db") {
+        let target = args.get(1).cloned().unwrap_or_else(|| "management.db".to_string());
+        let path = std::path::Path::new(&target);
+        if path.exists() {
+            let _ = std::fs::remove_file(path);
+        }
+        std::env::set_var("TMS_DB_PATH", &target);
+        match db::init_database() {
+            Ok(_) => {
+                println!("[BPSL IT Support] Successfully initialized clean empty database at '{}'", target);
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("[BPSL IT Support] Failed to initialize clean database: {:?}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
     // Sync test harness (see src/sync_test.rs): configures its own DB path
     // and runs scripted end-to-end scenarios, so it must run before the
     // regular database initialization.
