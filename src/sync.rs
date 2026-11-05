@@ -1174,8 +1174,11 @@ pub fn sanitize_reminder_create_payload(payload: &Value) -> Value {
             .unwrap_or("daily")
             .trim()
             .to_ascii_lowercase();
-        let freq_val = if freq == "once" { "once" } else { "daily" };
-        out.insert("repeat_frequency".to_string(), json!(freq_val));
+        // Only forward "once" to avoid breaking older Google Apps Script deployments
+        // where repeat_frequency is not recognized (blank/omitted defaults to daily anyway).
+        if freq == "once" {
+            out.insert("repeat_frequency".to_string(), json!("once"));
+        }
         // Omitted when empty: a create without `cc_emails` means "no CC".
         if let Some(Value::String(cc)) = cc_field(obj) {
             if !cc.is_empty() {
@@ -1254,8 +1257,23 @@ async fn execute_reminder_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutc
                     return Ok(ExecOutcome::Synced);
                 }
             }
-            let sanitized = sanitize_reminder_create_payload(&op.payload);
-            let remote = client.reminders_create(&sanitized).await?;
+            let mut sanitized = sanitize_reminder_create_payload(&op.payload);
+            let remote = match client.reminders_create(&sanitized).await {
+                Ok(remote) => remote,
+                Err(ApiError::Api { ref code, ref message, .. })
+                    if code == "UNKNOWN_FIELD" =>
+                {
+                    eprintln!("[sync] Remote Google Apps Script rejected optional field: {message}. Stripping unsupported fields and retrying create.");
+                    if let Some(obj) = sanitized.as_object_mut() {
+                        obj.remove("repeat_frequency");
+                        if message.contains("cc_emails") || message.contains("cc") {
+                            obj.remove("cc_emails");
+                        }
+                    }
+                    client.reminders_create(&sanitized).await?
+                }
+                Err(e) => return Err(e),
+            };
             db::set_reminder_mapping(
                 op.local_ticket_id,
                 &remote.reminder_id,
@@ -1273,8 +1291,23 @@ async fn execute_reminder_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutc
                 let Some(row) = db::reminder_create_payload(op.local_ticket_id) else {
                     return Ok(ExecOutcome::Superseded);
                 };
-                let sanitized = sanitize_reminder_create_payload(&row);
-                let remote = client.reminders_create(&sanitized).await?;
+                let mut sanitized = sanitize_reminder_create_payload(&row);
+                let remote = match client.reminders_create(&sanitized).await {
+                    Ok(remote) => remote,
+                    Err(ApiError::Api { ref code, ref message, .. })
+                        if code == "UNKNOWN_FIELD" =>
+                    {
+                        eprintln!("[sync] Remote Google Apps Script rejected optional field in pre-sync create: {message}. Stripping and retrying.");
+                        if let Some(obj) = sanitized.as_object_mut() {
+                            obj.remove("repeat_frequency");
+                            if message.contains("cc_emails") || message.contains("cc") {
+                                obj.remove("cc_emails");
+                            }
+                        }
+                        client.reminders_create(&sanitized).await?
+                    }
+                    Err(e) => return Err(e),
+                };
                 db::set_reminder_mapping(
                     op.local_ticket_id,
                     &remote.reminder_id,
@@ -1283,8 +1316,25 @@ async fn execute_reminder_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutc
                 return Ok(ExecOutcome::Synced);
             };
 
-            let sanitized = sanitize_reminder_update_payload(&op.payload);
-            match client.reminders_update(&server_id, &sanitized).await {
+            let mut sanitized = sanitize_reminder_update_payload(&op.payload);
+            let update_res = match client.reminders_update(&server_id, &sanitized).await {
+                Ok(remote) => Ok(remote),
+                Err(ApiError::Api { ref code, ref message, .. })
+                    if code == "UNKNOWN_FIELD" =>
+                {
+                    eprintln!("[sync] Remote Google Apps Script rejected optional field in update: {message}. Stripping and retrying.");
+                    if let Some(obj) = sanitized.as_object_mut() {
+                        obj.remove("repeat_frequency");
+                        if message.contains("cc_emails") || message.contains("cc") {
+                            obj.remove("cc_emails");
+                        }
+                    }
+                    client.reminders_update(&server_id, &sanitized).await
+                }
+                Err(e) => Err(e),
+            };
+
+            match update_res {
                 Ok(remote) => {
                     db::set_reminder_mapping(
                         op.local_ticket_id,
