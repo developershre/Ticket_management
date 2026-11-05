@@ -103,8 +103,8 @@ pub fn NotesPage() -> Element {
                 .filter(|n| {
                     n.title.to_lowercase().contains(&q)
                         || n.details.to_lowercase().contains(&q)
-                        || n.emp_code.to_lowercase().contains(&q)
                         || n.id.to_string().contains(&q)
+                        || crate::db::matches_emp_query(&n.emp_code, "", "", &q)
                 })
                 .collect()
         }
@@ -319,7 +319,13 @@ pub fn NotesPage() -> Element {
 
                                                 // Card Footer: Char/Word counter & info
                                                 div { class: "flex items-center justify-between border-t border-border/50 pt-2.5 text-[10px] text-muted-foreground",
-                                                    span { "SQLite: NOTES" }
+                                                    {
+                                                        let disp_c = crate::state::format_display_12hr(&note.created_at);
+                                                        let text_to_show = if disp_c.is_empty() { "Saved in SQLite".to_string() } else { disp_c };
+                                                        rsx! {
+                                                            span { title: "{note.created_at}", "{text_to_show}" }
+                                                        }
+                                                    }
                                                     span { "{title_str.len() + details_str.len()} characters" }
                                                 }
                                             }

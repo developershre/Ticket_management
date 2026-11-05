@@ -498,4 +498,54 @@ mod tests {
         assert_eq!(all[0].reminder_id, local_id);
         assert_eq!(all[0].server_reminder_id, "REM-20261104235243-86307EC2");
     }
+
+    /// Test 11: Flexible employee code matching across different prefix and formatting styles
+    #[test]
+    fn test_emp_code_search_matching() {
+        let (_path, _lock) = setup_test_db();
+
+        // Direct matching
+        assert!(db::matches_emp_query("11082", "Rajesh Kumar", "rajesh@bpsl.com", "11082"));
+        assert!(db::matches_emp_query("11082", "Rajesh Kumar", "rajesh@bpsl.com", "emp-11082"));
+        assert!(db::matches_emp_query("11082", "Rajesh Kumar", "rajesh@bpsl.com", "EMP 11082"));
+        assert!(db::matches_emp_query("EMP-11082", "Rajesh Kumar", "rajesh@bpsl.com", "11082"));
+        assert!(db::matches_emp_query("11082 (Rajesh)", "Rajesh Kumar", "rajesh@bpsl.com", "11082"));
+        assert!(db::matches_emp_query("11082 (Rajesh)", "Rajesh Kumar", "rajesh@bpsl.com", "EMP-11082"));
+        assert!(db::matches_emp_query("11082", "Rajesh Kumar", "rajesh@bpsl.com", "Rajesh"));
+        assert!(db::matches_emp_query("11082", "Rajesh Kumar", "rajesh@bpsl.com", "rajesh@bpsl.com"));
+    }
+
+    /// Test 12: 12-hour format display in UI while preserving clean data
+    #[test]
+    fn test_12hr_format_display() {
+        use crate::state::format_display_12hr;
+
+        // ISO 8601 with explicit IST timezone
+        let out1 = format_display_12hr("2026-11-06T14:30:00+05:30");
+        assert_eq!(out1, "Nov 06, 2026 · 02:30 PM");
+
+        // UTC timestamp ending in 'Z' converts to local IST (+05:30)
+        // 07:00 UTC + 5h30m = 12:30 IST (the exact user scenario reported)
+        let out_user = format_display_12hr("2026-11-05T07:00:00.000Z");
+        assert_eq!(out_user, "Nov 05, 2026 · 12:30 PM");
+
+        let out2 = format_display_12hr("2026-11-06T09:15:00Z");
+        assert_eq!(out2, "Nov 06, 2026 · 02:45 PM");
+
+        // SQL timestamp without timezone defaults to local time
+        let out3 = format_display_12hr("2026-11-04 18:24:26");
+        assert_eq!(out3, "Nov 04, 2026 · 06:24 PM");
+
+        // Date only
+        let out4 = format_display_12hr("2026-11-06");
+        assert_eq!(out4, "Nov 06, 2026");
+
+        // Pre-formatted human text is preserved
+        let out5 = format_display_12hr("Today · 2:00 PM");
+        assert_eq!(out5, "Today · 2:00 PM");
+
+        // parse_to_iso8601 ensures explicit +05:30 offset is sent to Google Sheets
+        assert_eq!(crate::sync::parse_to_iso8601("2026-11-05 12:30:00"), "2026-11-05T12:30:00+05:30");
+        assert_eq!(crate::sync::parse_to_iso8601("2026-11-05T07:00:00.000Z"), "2026-11-05T12:30:00+05:30");
+    }
 }

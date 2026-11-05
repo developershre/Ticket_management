@@ -98,6 +98,21 @@ pub fn Titlebar(props: TitlebarProps) -> Element {
                 ThemeToggle { class: "size-7 border-none bg-transparent hover:bg-sidebar-accent text-sidebar-foreground" }
             }
 
+            // Settings button (API config)
+            div { class: "flex items-center px-0.5",
+                button {
+                    r#type: "button",
+                    title: "API & System Settings",
+                    class: "size-7 inline-flex items-center justify-center rounded-md border-none bg-transparent hover:bg-sidebar-accent text-sidebar-foreground/80 hover:text-sidebar-foreground transition-colors cursor-pointer",
+                    onclick: move |_| {
+                        if let Some(mut open_settings) = try_use_context::<Signal<crate::state::OpenSettingsDialog>>() {
+                            open_settings.set(crate::state::OpenSettingsDialog(true));
+                        }
+                    },
+                    crate::icons::SettingsIcon { class: "size-4" }
+                }
+            }
+
             // Background sync status (Google Sheets ↔ SQLite)
             SyncPill {}
 
@@ -182,10 +197,18 @@ fn SyncPill() -> Element {
         }
     };
 
+    let open_settings = try_use_context::<Signal<crate::state::OpenSettingsDialog>>();
+
     rsx! {
-        div {
-            class: "hidden items-center gap-1.5 rounded-md border border-sidebar-border/80 bg-sidebar-accent/40 px-2 py-0.5 text-[11px] font-medium text-sidebar-foreground/70 sm:inline-flex",
-            title: "{tooltip}",
+        button {
+            r#type: "button",
+            class: "hidden items-center gap-1.5 rounded-md border border-sidebar-border/80 bg-sidebar-accent/40 px-2 py-0.5 text-[11px] font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/70 transition-colors cursor-pointer sm:inline-flex",
+            title: format!("{tooltip} · Click to configure API"),
+            onclick: move |_| {
+                if let Some(mut sig) = open_settings {
+                    sig.set(crate::state::OpenSettingsDialog(true));
+                }
+            },
             span { class: "size-1.5 shrink-0 rounded-full {dot_class}" }
             span { "{label}" }
         }

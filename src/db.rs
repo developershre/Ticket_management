@@ -43,9 +43,12 @@ fn resolve_db_path() -> PathBuf {
                     let _ = std::fs::create_dir_all(&app_dir);
                     let target_db = app_dir.join("management.db");
                     if !target_db.exists() {
-                        let seed = parent.join("management.db");
-                        if seed.exists() {
-                            let _ = std::fs::copy(&seed, &target_db);
+                        let seed_empty = parent.join("../assets/database.db");
+                        let seed_mgmt = parent.join("management.db");
+                        if seed_empty.exists() {
+                            let _ = std::fs::copy(&seed_empty, &target_db);
+                        } else if seed_mgmt.exists() {
+                            let _ = std::fs::copy(&seed_mgmt, &target_db);
                         }
                     }
                     if target_db.exists() {
@@ -877,26 +880,153 @@ pub fn get_all_employees() -> Vec<DbEmployee> {
     }
 }
 
-/// Lookup a single employee by their employee code.
+/// Helper to extract clean employee code and name candidates from any input string.
+/// E.g. "EMP-11061" -> ["EMP-11061", "11061"]
+///      "11061 (John Doe)" -> ["11061 (John Doe)", "11061", "John Doe"]
+pub fn extract_code_and_name_candidates(raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return out;
+    }
+    out.push(trimmed.to_string());
+
+    // Check for parentheses (e.g. "11061 (John Doe)" or "John Doe (11061)")
+    if let (Some(open), Some(close)) = (trimmed.find('('), trimmed.rfind(')')) {
+        if close > open {
+            let outside = trimmed[..open].trim();
+            let inside = trimmed[open + 1..close].trim();
+            if !outside.is_empty() {
+                out.push(outside.to_string());
+            }
+            if !inside.is_empty() {
+                out.push(inside.to_string());
+            }
+        }
+    }
+
+    // Strip "emp-", "emp_", "emp " prefixes
+    let lower = trimmed.to_lowercase();
+    for prefix in &["emp-", "emp_", "emp ", "emp"] {
+        if let Some(stripped) = lower.strip_prefix(prefix) {
+            let s = stripped.trim();
+            if !s.is_empty() {
+                out.push(s.to_string());
+            }
+        }
+    }
+
+    // Extract continuous digits if any (e.g. "EMP-11061" -> "11061")
+    let digits: String = trimmed.chars().filter(|c| c.is_ascii_digit()).collect();
+    if !digits.is_empty() && digits != trimmed {
+        out.push(digits);
+    }
+
+    out
+}
+
+/// Lookup a single employee by their employee code, name, or email with flexible matching.
 pub fn find_employee_by_code(code: &str) -> Option<DbEmployee> {
+    let clean = code.trim();
+    if clean.is_empty() {
+        return None;
+    }
     let conn = get_connection().ok()?;
-    conn.query_row(
-        "SELECT emp_id, emp_code, emp_name, emp_email, department, division FROM USERS WHERE emp_code = ?1 LIMIT 1",
-        params![code],
-        |row| {
-            Ok(DbEmployee {
-                emp_id: row.get(0)?,
-                emp_code: row.get(1)?,
-                emp_name: row.get(2)?,
-                emp_email: row.get(3)?,
-                department: row.get(4)?,
-                division: row.get(5)?,
-            })
-        },
-    )
-    .optional()
-    .ok()
-    .flatten()
+    let candidates = extract_code_and_name_candidates(clean);
+
+    for cand in candidates {
+        let row = conn.query_row(
+            "SELECT emp_id, emp_code, emp_name, emp_email, department, division FROM USERS \
+             WHERE emp_code = ?1 COLLATE NOCASE \
+                OR emp_name = ?1 COLLATE NOCASE \
+                OR emp_email = ?1 COLLATE NOCASE \
+             LIMIT 1",
+            params![cand],
+            |row| {
+                Ok(DbEmployee {
+                    emp_id: row.get(0)?,
+                    emp_code: row.get(1)?,
+                    emp_name: row.get(2)?,
+                    emp_email: row.get(3)?,
+                    department: row.get(4)?,
+                    division: row.get(5)?,
+                })
+            },
+        )
+        .optional()
+        .ok()
+        .flatten();
+
+        if row.is_some() {
+            return row;
+        }
+    }
+    None
+}
+
+/// Checks if a ticket or reminder's employee fields match a user search query.
+pub fn matches_emp_query(emp_code_field: &str, emp_name_field: &str, emp_email_field: &str, query: &str) -> bool {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return true;
+    }
+
+    // Direct match against fields
+    if emp_code_field.to_lowercase().contains(&q)
+        || emp_name_field.to_lowercase().contains(&q)
+        || emp_email_field.to_lowercase().contains(&q)
+    {
+        return true;
+    }
+
+    // Digits comparison (e.g. searching "11061" matches "EMP-11061" or vice versa)
+    let q_digits: String = q.chars().filter(|c| c.is_ascii_digit()).collect();
+    let code_digits: String = emp_code_field.chars().filter(|c| c.is_ascii_digit()).collect();
+    if !q_digits.is_empty() && !code_digits.is_empty() {
+        if q_digits == code_digits || code_digits.contains(&q_digits) || q_digits.contains(&code_digits) {
+            return true;
+        }
+    }
+
+    // Stripped EMP prefix comparison
+    let clean_q = q.trim_start_matches("emp-")
+        .trim_start_matches("emp_")
+        .trim_start_matches("emp ")
+        .trim_start_matches("emp")
+        .trim();
+    if !clean_q.is_empty() && emp_code_field.to_lowercase().contains(clean_q) {
+        return true;
+    }
+
+    // Enriched check from DB USERS table
+    if let Some(emp) = find_employee_by_code(emp_code_field).or_else(|| find_employee_by_code(emp_name_field)) {
+        if emp.emp_code.to_lowercase().contains(&q)
+            || emp.emp_name.to_lowercase().contains(&q)
+            || emp.emp_email.to_lowercase().contains(&q)
+            || emp.department.to_lowercase().contains(&q)
+            || emp.division.to_lowercase().contains(&q)
+        {
+            return true;
+        }
+        if !q_digits.is_empty() {
+            let emp_digits: String = emp.emp_code.chars().filter(|c| c.is_ascii_digit()).collect();
+            if !emp_digits.is_empty() && (emp_digits == q_digits || emp_digits.contains(&q_digits) || q_digits.contains(&emp_digits)) {
+                return true;
+            }
+        }
+    }
+
+    // Check if query itself is an employee in DB that matches the record
+    if let Some(emp_from_q) = find_employee_by_code(&q) {
+        if emp_from_q.emp_code.eq_ignore_ascii_case(emp_code_field)
+            || emp_from_q.emp_name.eq_ignore_ascii_case(emp_name_field)
+            || emp_from_q.emp_email.eq_ignore_ascii_case(emp_email_field)
+        {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Number of cached employees (sidebar badge).
@@ -1822,6 +1952,51 @@ pub fn sync_meta_set(key: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+/// Retrieves user-configured custom API settings stored locally in SQLite `sync_meta`.
+pub fn get_system_api_config() -> (Option<String>, Option<String>, Option<String>) {
+    let url = sync_meta_get("system_api_base_url").filter(|s| !s.trim().is_empty());
+    let key = sync_meta_get("system_api_key").filter(|s| !s.trim().is_empty());
+    let emp = sync_meta_get("system_employee_code").filter(|s| !s.trim().is_empty());
+    (url, key, emp)
+}
+
+/// Saves user-configured custom API settings locally in SQLite `sync_meta`
+/// and in `%APPDATA%\BPSL IT Support\.env`.
+pub fn save_system_api_config(base_url: &str, api_key: &str, employee_code: &str) -> Result<()> {
+    sync_meta_set("system_api_base_url", base_url.trim())?;
+    sync_meta_set("system_api_key", api_key.trim())?;
+    sync_meta_set("system_employee_code", employee_code.trim())?;
+
+    if let Some(app_data) = std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA")) {
+        let app_dir = std::path::PathBuf::from(app_data).join("BPSL IT Support");
+        let _ = std::fs::create_dir_all(&app_dir);
+        let env_path = app_dir.join(".env");
+        let env_content = format!(
+            "# BPSL IT Support - System API Configuration\nTMS_API_BASE_URL=\"{}\"\nTMS_API_KEY=\"{}\"\nTMS_EMPLOYEE_CODE=\"{}\"\n",
+            base_url.trim(),
+            api_key.trim(),
+            employee_code.trim()
+        );
+        let _ = std::fs::write(env_path, env_content);
+    }
+    Ok(())
+}
+
+/// Clears user-configured custom API settings from SQLite `sync_meta`.
+pub fn clear_system_api_config() -> Result<()> {
+    sync_meta_set("system_api_base_url", "")?;
+    sync_meta_set("system_api_key", "")?;
+    sync_meta_set("system_employee_code", "")?;
+
+    if let Some(app_data) = std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA")) {
+        let env_path = std::path::PathBuf::from(app_data).join("BPSL IT Support").join(".env");
+        if env_path.exists() {
+            let _ = std::fs::remove_file(env_path);
+        }
+    }
+    Ok(())
+}
+
 // ---- ticket ↔ server mapping ----
 
 /// Server id of a local ticket (`None` when it never reached the API).
@@ -2416,6 +2591,7 @@ pub fn set_server_reminder_sent(server_reminder_id: &str, sent_at: &str) -> Resu
 
 pub fn insert_server_reminder(r: &crate::api::ServerReminder) -> Result<i64> {
     let conn = get_connection()?;
+    let normalized_send_at = crate::state::to_ist_iso8601(&r.send_at);
     conn.execute(
         r#"
         INSERT INTO reminders (
@@ -2433,7 +2609,7 @@ pub fn insert_server_reminder(r: &crate::api::ServerReminder) -> Result<i64> {
             r.email_address,
             r.service_category,
             r.reminder_message,
-            r.send_at,
+            normalized_send_at,
             r.status,
             r.email_sent_at,
             r.ticket_id,
@@ -2450,6 +2626,7 @@ pub fn insert_server_reminder(r: &crate::api::ServerReminder) -> Result<i64> {
 
 pub fn apply_server_reminder(local_reminder_id: i64, r: &crate::api::ServerReminder) -> Result<()> {
     let conn = get_connection()?;
+    let normalized_send_at = crate::state::to_ist_iso8601(&r.send_at);
     conn.execute(
         r#"
         UPDATE reminders SET
@@ -2467,7 +2644,7 @@ pub fn apply_server_reminder(local_reminder_id: i64, r: &crate::api::ServerRemin
             r.email_address,
             r.service_category,
             r.reminder_message,
-            r.send_at,
+            normalized_send_at,
             r.status,
             r.email_sent_at,
             r.ticket_id,

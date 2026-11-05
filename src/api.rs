@@ -40,14 +40,16 @@ struct CollectionVariable {
 
 impl ApiConfig {
     /// Resolution order:
-    /// 1. `TMS_API_BASE_URL`, `TMS_API_KEY`, `TMS_EMPLOYEE_CODE` env vars or `.env` file
-    /// 2. `base_url` / `api_key` variables of `TMS_API.postman_collection.json`
+    /// 1. User-configured custom settings saved in SQLite `sync_meta`
+    /// 2. `TMS_API_BASE_URL`, `TMS_API_KEY`, `TMS_EMPLOYEE_CODE` env vars or `.env` file
+    /// 3. `base_url` / `api_key` variables of `TMS_API.postman_collection.json`
     ///    (searched in working dir, next to executable and one level above)
     pub fn load() -> Result<ApiConfig, String> {
+        let (sys_url, sys_key, sys_emp) = crate::db::get_system_api_config();
         let (dot_url, dot_key, dot_emp) = Self::from_dotenv_file();
-        let env_url = non_empty_env("TMS_API_BASE_URL").or(dot_url);
-        let env_key = non_empty_env("TMS_API_KEY").or(dot_key);
-        let employee_code = non_empty_env("TMS_EMPLOYEE_CODE").or(dot_emp);
+        let env_url = sys_url.or_else(|| non_empty_env("TMS_API_BASE_URL")).or(dot_url);
+        let env_key = sys_key.or_else(|| non_empty_env("TMS_API_KEY")).or(dot_key);
+        let employee_code = sys_emp.or_else(|| non_empty_env("TMS_EMPLOYEE_CODE")).or(dot_emp);
 
         let (file_url, file_key) = Self::from_collection_file();
 

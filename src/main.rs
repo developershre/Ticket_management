@@ -53,14 +53,31 @@ const DND_JS: Asset = asset!("/assets/dnd.js");
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    // Command-line tool to wipe the active database and leave all tables empty
+    if args.first().map(String::as_str) == Some("--reset-db") {
+        if let Ok(conn) = db::get_connection() {
+            let tables = ["USERS", "reminders", "tickets", "NOTES", "sync_queue", "sync_conflicts", "sync_meta"];
+            for t in tables {
+                let _ = conn.execute(&format!("DELETE FROM {}", t), []);
+            }
+            let _ = conn.execute_batch("VACUUM;");
+            println!("[BPSL IT Support] Active database wiped cleanly (all tables 0 rows).");
+            std::process::exit(0);
+        }
+    }
+
     // Command-line tool to initialize a clean, empty SQLite database with all tables
     if args.first().map(String::as_str) == Some("--init-clean-db") {
         let target = args.get(1).cloned().unwrap_or_else(|| "management.db".to_string());
-        let path = std::path::Path::new(&target);
-        if path.exists() {
-            let _ = std::fs::remove_file(path);
-        }
         std::env::set_var("TMS_DB_PATH", &target);
+        let _ = db::init_database();
+        if let Ok(conn) = db::get_connection() {
+            let tables = ["USERS", "reminders", "tickets", "NOTES", "sync_queue", "sync_conflicts", "sync_meta"];
+            for t in tables {
+                let _ = conn.execute(&format!("DELETE FROM {}", t), []);
+            }
+            let _ = conn.execute_batch("VACUUM;");
+        }
         match db::init_database() {
             Ok(_) => {
                 println!("[BPSL IT Support] Successfully initialized clean empty database at '{}'", target);
@@ -208,6 +225,9 @@ fn AppShell() -> Element {
     let db_sync = use_signal(state::AppDbRevision::default);
     use_context_provider(|| db_sync);
 
+    let mut open_settings = use_signal(state::OpenSettingsDialog::default);
+    use_context_provider(|| open_settings);
+
     rsx! {
         ToastProvider {
             SidebarProvider {
@@ -220,6 +240,11 @@ fn AppShell() -> Element {
                         }
                     }
                     Fab {}
+                    if open_settings.read().0 {
+                        components::settings_modal::SettingsModal {
+                            on_close: move |_| open_settings.set(state::OpenSettingsDialog(false)),
+                        }
+                    }
                 }
             }
         }

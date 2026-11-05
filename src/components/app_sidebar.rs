@@ -5,7 +5,7 @@
 use dioxus::prelude::*;
 
 use crate::components::ui::sidebar::{
-    Sidebar, SidebarCollapsible, SidebarContent, SidebarGroup, SidebarGroupContent,
+    Sidebar, SidebarCollapsible, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent,
     SidebarGroupLabel, SidebarMenu, SidebarMenuBadge, SidebarMenuButton,
     SidebarMenuItem, SidebarRail,
 };
@@ -125,6 +125,23 @@ pub fn AppSidebar() -> Element {
                     }
                 }
 
+            }
+
+            SidebarFooter {
+                SidebarMenu {
+                    SidebarMenuItem {
+                        SidebarMenuButton {
+                            tooltip: Some("API & System Settings".to_string()),
+                            onclick: move |_| {
+                                if let Some(mut open_settings) = try_use_context::<Signal<crate::state::OpenSettingsDialog>>() {
+                                    open_settings.set(crate::state::OpenSettingsDialog(true));
+                                }
+                            },
+                            crate::icons::SettingsIcon { class: "size-4 text-muted-foreground" }
+                            span { class: "sidebar-text", "API Settings" }
+                        }
+                    }
+                }
             }
 
             SidebarRail {}

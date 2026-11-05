@@ -25,7 +25,7 @@
 use futures_channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::{Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::api::{ApiClient, ApiConfig, ApiError, ServerReminder, ServerTicket};
@@ -148,7 +148,7 @@ pub fn subscribe_status() -> UnboundedReceiver<SyncStatus> {
 static WAKE: Mutex<bool> = Mutex::new(false);
 static WAKE_CV: Condvar = Condvar::new();
 static STARTED: OnceLock<()> = OnceLock::new();
-static CLIENT: OnceLock<ApiClient> = OnceLock::new();
+static CLIENT: RwLock<Option<Arc<ApiClient>>> = RwLock::new(None);
 
 /// Wake the worker for an immediate sync cycle (called after every local
 /// ticket mutation). Safe from any thread; coalesces — multiple kicks
@@ -260,19 +260,66 @@ pub fn run_cycle_blocking() {
     rt.block_on(run_cycle());
 }
 
-pub fn get_client() -> Result<&'static ApiClient, String> {
+pub fn get_client() -> Result<Arc<ApiClient>, String> {
     ensure_client()
 }
 
-fn ensure_client() -> Result<&'static ApiClient, String> {
-    if let Some(client) = CLIENT.get() {
-        return Ok(client);
+pub fn reload_client() -> Result<Arc<ApiClient>, String> {
+    let cfg = ApiConfig::load()?;
+    let client = Arc::new(ApiClient::new(cfg)?);
+    if let Ok(mut guard) = CLIENT.write() {
+        *guard = Some(client.clone());
+    }
+    kick();
+    Ok(client)
+}
+
+fn ensure_client() -> Result<Arc<ApiClient>, String> {
+    if let Ok(guard) = CLIENT.read() {
+        if let Some(client) = guard.as_ref() {
+            return Ok(client.clone());
+        }
     }
     // Configuration problems are retried next cycle (e.g. the collection
-    // file appearing later); successes are cached forever.
+    // file appearing later); successes are cached.
     let cfg = ApiConfig::load()?;
-    let client = ApiClient::new(cfg)?;
-    Ok(CLIENT.get_or_init(|| client))
+    let client = Arc::new(ApiClient::new(cfg)?);
+    if let Ok(mut guard) = CLIENT.write() {
+        *guard = Some(client.clone());
+    }
+    Ok(client)
+}
+
+/// Tests connection and authorization with the specified URL and API key.
+pub async fn test_connection(base_url: &str, api_key: &str) -> Result<String, String> {
+    let base_url = base_url.trim();
+    let api_key = api_key.trim();
+    if base_url.is_empty() {
+        return Err("API Web App URL cannot be empty".to_string());
+    }
+    if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
+        return Err("URL must start with http:// or https://".to_string());
+    }
+    let cfg = ApiConfig {
+        base_url: base_url.to_string(),
+        api_key: api_key.to_string(),
+        employee_code: None,
+    };
+    let client = ApiClient::new(cfg).map_err(|e| format!("Client setup error: {e}"))?;
+
+    // 1. Health check (tests server reachability & Apps Script responsiveness)
+    let health_res = client.health().await.map_err(|e| format!("Server unreachable: {e}"))?;
+    let server_status = health_res.get("status").and_then(|s| s.as_str()).unwrap_or("ok");
+
+    // 2. Authenticated probe if API key is provided
+    if !api_key.is_empty() {
+        client.tickets_list(0, 1).await.map_err(|e| {
+            format!("Server is online ({server_status}), but API Key authorization failed: {e}")
+        })?;
+        Ok(format!("Connected & authorized successfully! (Server status: {server_status})"))
+    } else {
+        Ok(format!("Server is reachable (status: {server_status}). API Key not provided."))
+    }
 }
 
 pub fn now_epoch() -> i64 {
@@ -323,7 +370,7 @@ pub async fn run_cycle() {
         let op_count = merged.len();
         for (idx, op) in merged.into_iter().enumerate() {
             let _ = db::mark_op_in_flight(op.op_id);
-            match execute_op(client, &op).await {
+            match execute_op(&client, &op).await {
                 Ok(ExecOutcome::Synced) => {
                     let _ = db::mark_op_synced(op.op_id);
                 }
@@ -369,7 +416,7 @@ pub async fn run_cycle() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     if now.saturating_sub(last_pull) >= MIN_PULL_GAP_SECS {
-        match pull(client).await {
+        match pull(&client).await {
             Ok(changed) => {
                 let _ = db::sync_meta_set("last_pull_at", &now.to_string());
                 if changed > 0 {
@@ -386,7 +433,7 @@ pub async fn run_cycle() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     if now.saturating_sub(last_emp_pull) >= EMPLOYEE_PULL_GAP_SECS {
-        match pull_employees(client).await {
+        match pull_employees(&client).await {
             Ok(count) => {
                 let _ = db::sync_meta_set("last_employee_pull_at", &now.to_string());
                 if count > 0 {
@@ -409,7 +456,7 @@ pub async fn run_cycle() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     if now.saturating_sub(last_rem_pull) >= REMINDER_PULL_GAP_SECS {
-        match pull_reminders(client).await {
+        match pull_reminders(&client).await {
             Ok(count) => {
                 let _ = db::sync_meta_set("last_reminder_pull_at", &now.to_string());
                 if count > 0 {
@@ -1037,7 +1084,7 @@ pub fn invalidate_employee_cache() {
 /// Fetches all employees from Google Sheets immediately in real-time.
 pub async fn pull_employees_now() -> Result<usize, ApiError> {
     let client = ensure_client().map_err(ApiError::Network)?;
-    let count = pull_employees(client).await?;
+    let count = pull_employees(&client).await?;
     let now = now_epoch();
     let _ = db::sync_meta_set("last_employee_pull_at", &now.to_string());
     if count > 0 {
@@ -1099,50 +1146,41 @@ pub fn enqueue_delete(local_ticket_id: i64) {
 /// employee_code, service_category, reminder_message, send_at.
 /// All other fields (employee_name, email_address, etc.) are auto-resolved
 /// by the Apps Script from the Employees sheet and trigger UNKNOWN_FIELD if passed.
+/// Normalizes any input timestamp into a standard ISO 8601 timestamp with an explicit +05:30
+/// offset as required by the TMS Apps Script API (e.g. "2026-11-05T12:30:00+05:30").
 pub fn parse_to_iso8601(raw: &str) -> String {
     let trimmed = raw.trim();
-    // Valid ISO 8601 starts with a 4-digit year e.g. 2026-
-    if trimmed.len() >= 10
-        && trimmed.as_bytes()[0..4].iter().all(|b| b.is_ascii_digit())
-        && trimmed.as_bytes()[4] == b'-'
-    {
-        if trimmed.contains('T') {
-            return trimmed.to_string();
-        }
-        if trimmed.len() >= 19 && trimmed.as_bytes()[10] == b' ' {
-            return format!("{}T{}Z", &trimmed[..10], &trimmed[11..19]);
-        }
-        if trimmed.len() == 10 {
-            return format!("{}T09:00:00Z", trimmed);
-        }
+    if trimmed.is_empty() {
+        let (y, m, d, h, mi) = crate::components::ui::clock_date_picker::now_local_parts();
+        return format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:00+05:30");
     }
 
-    let now = now_epoch();
     let lower = trimmed.to_lowercase();
-    let target_epoch = if lower.contains("tomorrow") {
-        now + 86_400
-    } else if lower.contains("next week") {
-        now + 7 * 86_400
-    } else {
-        now
-    };
+    if lower.contains("tomorrow") || lower.contains("next week") {
+        let now_local = now_epoch() + crate::state::LOCAL_TZ_OFFSET_SECS;
+        let target_epoch = if lower.contains("tomorrow") {
+            now_local + 86_400
+        } else {
+            now_local + 7 * 86_400
+        };
+        let (y, m, d) = crate::state::civil_from_epoch(target_epoch);
+        let time_part = if lower.contains("2:00 pm") || lower.contains("14:00") {
+            "14:00:00"
+        } else if lower.contains("5:00 pm") || lower.contains("5:21 pm") || lower.contains("17:00") {
+            "17:00:00"
+        } else if lower.contains("4:30 pm") || lower.contains("16:30") {
+            "16:30:00"
+        } else if lower.contains("9:00 am") || lower.contains("09:00") {
+            "09:00:00"
+        } else if lower.contains("10:00 am") || lower.contains("10:00") {
+            "10:00:00"
+        } else {
+            "09:00:00"
+        };
+        return format!("{y:04}-{m:02}-{d:02}T{time_part}+05:30");
+    }
 
-    let utc = crate::state::format_utc(target_epoch);
-    let time_part = if lower.contains("2:00 pm") || lower.contains("14:00") {
-        "14:00:00"
-    } else if lower.contains("5:00 pm") || lower.contains("5:21 pm") || lower.contains("17:00") {
-        "17:00:00"
-    } else if lower.contains("4:30 pm") || lower.contains("16:30") {
-        "16:30:00"
-    } else if lower.contains("9:00 am") || lower.contains("09:00") {
-        "09:00:00"
-    } else if lower.contains("10:00 am") || lower.contains("10:00") {
-        "10:00:00"
-    } else {
-        &utc[11..19]
-    };
-
-    format!("{}T{time_part}Z", &utc[..10])
+    crate::state::to_ist_iso8601(trimmed)
 }
 
 fn ensure_iso8601(val: Option<&Value>) -> Value {

@@ -1658,8 +1658,13 @@ fn render_assignee_cell(t: &TicketItem) -> Element {
 
 fn render_created_cell(t: &TicketItem) -> Element {
     let created = t.created_at.clone();
+    let disp = crate::state::format_display_12hr(&created);
     rsx! {
-        span { class: "text-[11px] text-muted-foreground font-mono", "{created}" }
+        span {
+            title: "{created}",
+            class: "text-[11px] text-muted-foreground font-medium",
+            "{disp}"
+        }
     }
 }
 
@@ -1668,17 +1673,26 @@ fn ticket_row_id(t: &TicketItem) -> String {
 }
 
 fn ticket_search_text(t: &TicketItem) -> String {
+    let emp_code = t.emp_code_only();
+    let emp_name = t.emp_name();
+    let emp_email = t.emp_email();
+    let digits: String = emp_code.chars().filter(|c| c.is_ascii_digit()).collect();
+    let prefixed = if !digits.is_empty() { format!("EMP-{digits}") } else { String::new() };
     format!(
-        "{} {} {} {} {} {} {} {} {}",
+        "{} {} {} {} {} {} {} {} {} {} {} {} {}",
         t.id,
         t.subject,
         t.employee_code,
-        t.email_address,
+        emp_code,
+        prefixed,
+        emp_name,
+        emp_email,
         t.category,
         t.priority,
         t.assigned_to,
         t.customer,
-        t.sla_status
+        t.sla_status,
+        t.problem_description
     )
 }
 
@@ -2472,14 +2486,12 @@ pub fn Tickets() -> Element {
                                         }
                                     })
                                     .filter(|t| {
-                                        let match_q = q.is_empty() || t.id.to_lowercase().contains(&q)
+                                        let match_q = q.is_empty()
+                                            || t.id.to_lowercase().contains(&q)
                                             || t.title.to_lowercase().contains(&q)
-                                            || t.employee.to_lowercase().contains(&q)
-                                            || t.emp_name().to_lowercase().contains(&q)
-                                            || t.emp_code_only().to_lowercase().contains(&q)
-                                            || t.email_address.to_lowercase().contains(&q)
                                             || t.category.to_lowercase().contains(&q)
-                                            || t.assignee.to_lowercase().contains(&q);
+                                            || t.assignee.to_lowercase().contains(&q)
+                                            || crate::db::matches_emp_query(&t.employee_code, &t.emp_name(), &t.email_address, &q);
                                         let match_prio = filter_prio == "All" || t.priority == filter_prio;
                                         match_q && match_prio
                                     })
@@ -2584,6 +2596,7 @@ pub fn Tickets() -> Element {
                                                         let ticket_status = ticket.status.clone();
                                                         let sla_status = ticket.sla_status.clone();
                                                         let deadline = ticket.deadline.clone();
+                                                        let disp_due = crate::state::format_display_12hr(&deadline);
 
                                                         let is_dragged = dragged_id.read().as_deref() == Some(&id);
                                                         let is_card_over = drag_over_card.read().as_deref() == Some(&id) && !is_dragged;
@@ -2738,7 +2751,7 @@ pub fn Tickets() -> Element {
 
                                                                             if !deadline.is_empty() {
                                                                                 div { class: "flex items-center justify-between text-[10px] text-muted-foreground/80 pt-1 border-t border-border/30",
-                                                                                    span { class: "font-mono text-warning font-medium", "Due: {deadline}" }
+                                                                                    span { class: "font-mono text-warning font-medium", title: "{deadline}", "Due: {disp_due}" }
                                                                                 }
                                                                             }
                                                                         }
@@ -2874,6 +2887,8 @@ pub fn Tickets() -> Element {
                             let prio_variant = priority_badge(&ticket.priority);
                             let sla_cls = sla_badge_class(&ticket.sla_status);
                             let initial_letter = ticket.emp_name().chars().next().unwrap_or('U');
+                            let disp_deadline = if ticket.deadline.is_empty() { "None set".to_string() } else { crate::state::format_display_12hr(&ticket.deadline) };
+                            let disp_sla_deadline = if ticket.sla_deadline.is_empty() { "None set".to_string() } else { crate::state::format_display_12hr(&ticket.sla_deadline) };
 
                             rsx! {
                                 DialogHeader {
@@ -2913,8 +2928,14 @@ pub fn Tickets() -> Element {
                                     // 6. Activities & My Activity
 
                                     DialogTitle { class: "text-lg font-bold text-foreground mt-3 leading-snug", "{ticket.subject}" }
-                                    DialogDescription { class: "text-xs text-muted-foreground mt-0.5",
-                                        "Reported on {ticket.created_on} · Last updated: {ticket.last_updated_on}"
+                                    {
+                                        let disp_c = crate::state::format_display_12hr(&ticket.created_on);
+                                        let disp_u = crate::state::format_display_12hr(&ticket.last_updated_on);
+                                        rsx! {
+                                            DialogDescription { class: "text-xs text-muted-foreground mt-0.5",
+                                                "Reported on {disp_c} · Last updated: {disp_u}"
+                                            }
+                                        }
                                     }
                                 }
 
@@ -3074,12 +3095,8 @@ pub fn Tickets() -> Element {
                                             span { class: "text-[9px] font-semibold text-muted-foreground uppercase tracking-wider",
                                                 "Target Deadline"
                                             }
-                                            span { class: "font-mono font-semibold text-foreground text-xs truncate",
-                                                if ticket.deadline.is_empty() {
-                                                    "None set"
-                                                } else {
-                                                    "{ticket.deadline}"
-                                                }
+                                            span { class: "font-mono font-semibold text-foreground text-xs truncate", title: "{ticket.deadline}",
+                                                "{disp_deadline}"
                                             }
                                             span { class: "text-[10px] text-muted-foreground", "Resolution Target" }
                                         }
@@ -3087,12 +3104,8 @@ pub fn Tickets() -> Element {
                                             span { class: "text-[9px] font-semibold text-muted-foreground uppercase tracking-wider",
                                                 "SLA Deadline"
                                             }
-                                            span { class: "font-mono font-semibold text-foreground text-xs truncate",
-                                                if ticket.sla_deadline.is_empty() {
-                                                    "None set"
-                                                } else {
-                                                    "{ticket.sla_deadline}"
-                                                }
+                                            span { class: "font-mono font-semibold text-foreground text-xs truncate", title: "{ticket.sla_deadline}",
+                                                "{disp_sla_deadline}"
                                             }
                                             span { class: "text-[10px] text-muted-foreground", "SLA Breach Target" }
                                         }

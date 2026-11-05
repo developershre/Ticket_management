@@ -18,7 +18,7 @@ use crate::components::ui::select::SimpleSelect;
 use crate::components::ui::separator::Separator;
 use crate::components::ui::toast::ToastState;
 use crate::icons::{
-    ArrowDownIcon, ArrowUpIcon, BellIcon, CheckIcon, ClockIcon, CopyIcon, EyeIcon, FilterIcon,
+    ArrowDownIcon, ArrowUpIcon, BellIcon, CalendarIcon, CheckIcon, ClockIcon, CopyIcon, EyeIcon, FilterIcon,
     GripVerticalIcon, PencilIcon, PlusIcon, SearchIcon, TicketIcon, TrashIcon,
 };
 
@@ -1082,9 +1082,8 @@ pub fn Reminders() -> Element {
                 || item.title().to_lowercase().contains(&q)
                 || item.when().to_lowercase().contains(&q)
                 || item.tag().to_lowercase().contains(&q)
-                || item.employee_code.to_lowercase().contains(&q)
-                || item.employee_name.to_lowercase().contains(&q)
-                || item.ticket_id.to_lowercase().contains(&q);
+                || item.ticket_id.to_lowercase().contains(&q)
+                || crate::db::matches_emp_query(&item.employee_code, &item.employee_name, &item.email_address, &q);
             let match_cat = cat == "All" || item.tag() == cat;
             match_q && match_cat
         })
@@ -1392,7 +1391,7 @@ pub fn Reminders() -> Element {
                                                     div { class: "flex items-center justify-between text-xs text-muted-foreground pt-0.5",
                                                         div { class: "flex items-center gap-1.5",
                                                             ClockIcon { class: "size-3.5 text-muted-foreground" }
-                                                            span { "{when}" }
+                                                            span { title: "{when}", "{crate::state::format_display_12hr(&when)}" }
                                                         }
                                                         span { class: "text-[11px] font-medium text-foreground truncate max-w-[140px]",
                                                             "{reminder.display_name()}"
@@ -1722,25 +1721,32 @@ pub fn Reminders() -> Element {
                 Dialog {
                     open: Some(is_detail_open),
                     DialogContent {
-                        class: "max-w-2xl max-h-[90vh] overflow-y-auto",
+                        class: "max-w-4xl w-full max-h-[92vh] overflow-y-auto p-6 sm:p-8 rounded-2xl border border-border/80 shadow-2xl",
                         DialogHeader {
-                            div { class: "flex items-center justify-between",
-                                div { class: "flex items-center gap-2",
-                                    div { class: "flex size-8 items-center justify-center rounded bg-primary/10 text-primary",
-                                        BellIcon { class: "size-4" }
+                            div { class: "flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-4 mb-2",
+                                div { class: "flex items-center gap-3",
+                                    div { class: "flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary shadow-2xs",
+                                        BellIcon { class: "size-5" }
                                     }
-                                    div {
-                                        DialogTitle { "{r.id}" }
-                                        DialogDescription { "Full reminder specifications, recipient identity, and delivery tracking." }
+                                    div { class: "flex flex-col gap-0.5",
+                                        div { class: "flex items-center gap-2",
+                                            DialogTitle { class: "font-mono text-base sm:text-lg font-bold text-foreground tracking-tight", "{r.id}" }
+                                            span { class: "text-[10px] font-mono px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/60",
+                                                "#{r.reminder_id}"
+                                            }
+                                        }
+                                        DialogDescription { class: "text-xs text-muted-foreground",
+                                            "Full reminder specifications, recipient identity, scheduling & delivery tracking"
+                                        }
                                     }
                                 }
-                                div { class: "flex items-center gap-1.5",
-                                    Badge { variant: "{category_badge_variant(&r.service_category)}", "{r.service_category}" }
-                                    Badge { variant: "{status_badge_variant(&r.status)}", "{r.status}" }
+                                div { class: "flex items-center gap-2",
+                                    Badge { variant: "{category_badge_variant(&r.service_category)}", class: "text-xs px-2.5 py-0.5", "{r.service_category}" }
+                                    Badge { variant: "{status_badge_variant(&r.status)}", class: "text-xs px-2.5 py-0.5", "{r.status}" }
                                     if r.status.eq_ignore_ascii_case("pending") {
                                         Button {
                                             variant: if is_editing() { "secondary" } else { "outline" },
-                                            class: "h-7 text-xs px-2.5 ml-1",
+                                            class: "h-8 text-xs px-3 ml-1 cursor-pointer font-medium shadow-2xs",
                                             onclick: move |_| is_editing.toggle(),
                                             if is_editing() { "Cancel Editing" } else { "Edit" }
                                         }
@@ -1883,23 +1889,40 @@ pub fn Reminders() -> Element {
                                 }
                             }
                         } else {
-                            div { class: "flex flex-col gap-3 py-2 text-xs",
-                                // Message
-                                div { class: "p-3 rounded-md bg-card border border-border/80",
-                                    span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1", "Reminder Message" }
-                                    p { class: "text-sm font-semibold text-foreground leading-relaxed", "{r.reminder_message}" }
+                            div { class: "flex flex-col gap-4 py-3 text-xs",
+                                // Reminder Message Card
+                                div { class: "p-4 rounded-xl bg-muted/30 border border-border/70 flex flex-col gap-2 shadow-2xs",
+                                    span { class: "text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5",
+                                        svg {
+                                            class: "size-3.5 text-primary",
+                                            view_box: "0 0 24 24",
+                                            fill: "none",
+                                            stroke: "currentColor",
+                                            stroke_width: "2",
+                                            stroke_linecap: "round",
+                                            stroke_linejoin: "round",
+                                            path { d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" }
+                                        }
+                                        "Reminder Message"
+                                    }
+                                    p { class: "text-sm sm:text-base font-semibold text-foreground leading-relaxed whitespace-pre-wrap pl-1",
+                                        "{r.reminder_message}"
+                                    }
                                 }
 
                                 if !r.cc_emails.is_empty() {
-                                    div { class: "p-3 rounded-md bg-card border border-border/80 flex flex-col gap-1.5",
-                                        span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider", "CC Recipients" }
-                                        div { class: "flex flex-wrap gap-1.5",
+                                    div { class: "p-3.5 rounded-xl bg-muted/20 border border-border/60 flex flex-col gap-2 shadow-2xs",
+                                        span { class: "text-[10px] font-bold text-muted-foreground uppercase tracking-wider", "CC Recipients" }
+                                        div { class: "flex flex-wrap gap-2",
                                             for email in r.cc_emails.split([',', ';']) {
                                                 {
                                                     let email_t = email.trim();
                                                     if !email_t.is_empty() {
                                                         rsx! {
-                                                            span { class: "font-mono text-xs px-2 py-0.5 rounded-md bg-muted text-foreground border border-border/60", "{email_t}" }
+                                                            span { class: "font-mono text-xs px-2.5 py-1 rounded-md bg-card text-foreground border border-border/70 flex items-center gap-1.5 shadow-2xs",
+                                                                span { class: "text-muted-foreground text-[10px]", "@" }
+                                                                "{email_t}"
+                                                            }
                                                         }
                                                     } else {
                                                         rsx! {}
@@ -1910,55 +1933,159 @@ pub fn Reminders() -> Element {
                                     }
                                 }
 
-                                // Recipient & Ticket
-                                div { class: "grid grid-cols-1 sm:grid-cols-2 gap-2.5",
-                                    div { class: "p-3 rounded-md bg-muted/20 border border-border/60 flex flex-col gap-1.5",
-                                        span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider", "Recipient" }
-                                        span { class: "font-semibold text-foreground text-xs", "{r.display_name()}" }
-                                        span { class: "font-mono text-muted-foreground text-[11px]", "Code: {r.employee_code}" }
-                                        span { class: "text-muted-foreground text-[11px]", "Email: {r.display_email()}" }
+                                // Recipient & Associated Ticket (2 spacious cards)
+                                div { class: "grid grid-cols-1 sm:grid-cols-2 gap-4",
+                                    // Recipient Card
+                                    div { class: "p-4 rounded-xl bg-muted/20 border border-border/60 flex flex-col justify-between gap-3 shadow-2xs",
+                                        div { class: "flex items-center justify-between",
+                                            span { class: "text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5",
+                                                BellIcon { class: "size-3.5 text-primary" }
+                                                "Recipient Employee"
+                                            }
+                                            span { class: "font-mono text-[10px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-md border border-primary/20",
+                                                "Code: {r.employee_code}"
+                                            }
+                                        }
+                                        div { class: "flex items-center gap-3 pt-1",
+                                            div { class: "flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-sm border border-primary/20",
+                                                "{r.display_name().chars().next().unwrap_or('U')}"
+                                            }
+                                            div { class: "flex flex-col min-w-0",
+                                                span { class: "font-bold text-sm text-foreground truncate", "{r.display_name()}" }
+                                                span { class: "font-mono text-xs text-muted-foreground truncate", "{r.display_email()}" }
+                                            }
+                                        }
                                     }
-                                    div { class: "p-3 rounded-md bg-muted/20 border border-border/60 flex flex-col gap-1.5",
-                                        span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider", "Associated Ticket" }
+
+                                    // Associated Ticket Card
+                                    div { class: "p-4 rounded-xl bg-muted/20 border border-border/60 flex flex-col justify-between gap-3 shadow-2xs",
+                                        div { class: "flex items-center justify-between",
+                                            span { class: "text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5",
+                                                TicketIcon { class: "size-3.5 text-primary" }
+                                                "Associated IT Ticket"
+                                            }
+                                            if !r.ticket_id.is_empty() {
+                                                span { class: "font-mono text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20",
+                                                    "Linked"
+                                                }
+                                            } else {
+                                                span { class: "text-[10px] font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-md border border-border/60",
+                                                    "Standalone"
+                                                }
+                                            }
+                                        }
                                         if r.ticket_id.is_empty() {
-                                            span { class: "text-muted-foreground italic text-xs", "No ticket linked (Standalone Reminder)" }
+                                            div { class: "flex items-center gap-2 pt-1 text-xs text-muted-foreground",
+                                                span { class: "italic", "No ticket linked (Standalone Reminder)" }
+                                            }
                                         } else {
-                                            div { class: "flex items-center gap-2 mt-1",
-                                                TicketIcon { class: "size-4 text-primary" }
-                                                span { class: "font-mono font-bold text-foreground text-xs", "{r.ticket_id}" }
+                                            div { class: "flex items-center gap-2.5 pt-1",
+                                                div { class: "flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary",
+                                                    TicketIcon { class: "size-4" }
+                                                }
+                                                div { class: "flex flex-col",
+                                                    span { class: "font-mono font-bold text-sm text-foreground", "{r.ticket_id}" }
+                                                    span { class: "text-[11px] text-muted-foreground", "Linked Support Ticket" }
+                                                }
                                             }
                                         }
                                     }
                                 }
 
-                                // Delivery & Timestamps & Repeat Frequency
-                                div { class: "grid grid-cols-2 sm:grid-cols-5 gap-2.5 p-3 rounded-md bg-muted/20 border border-border/60",
-                                    div { class: "flex flex-col gap-0.5",
-                                        span { class: "text-[10px] text-muted-foreground uppercase tracking-wider font-semibold", "Send At" }
-                                        span { class: "font-semibold text-foreground", "{r.send_at}" }
+                                // Delivery & Timestamps (4 spacious columns)
+                                div { class: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5",
+                                    // 1. Scheduled Send At
+                                    div { class: "p-3.5 rounded-xl bg-card border border-border/70 flex flex-col gap-1.5 shadow-2xs",
+                                        div { class: "flex items-center justify-between",
+                                            span { class: "text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1",
+                                                ClockIcon { class: "size-3 text-primary" }
+                                                "Scheduled Send At"
+                                            }
+                                            span { class: "rounded px-1.5 py-0.2 text-[9px] font-bold border bg-muted/80 text-muted-foreground uppercase",
+                                                "{r.repeat_frequency}"
+                                            }
+                                        }
+                                        span { class: "font-medium text-foreground text-xs leading-snug", title: "{r.send_at}",
+                                            "{crate::state::format_display_12hr(&r.send_at)}"
+                                        }
+                                        span { class: "text-[10px] text-muted-foreground", "Target schedule timing" }
                                     }
-                                    div { class: "flex flex-col gap-0.5",
-                                        span { class: "text-[10px] text-muted-foreground uppercase tracking-wider font-semibold", "Frequency" }
-                                        span { class: "font-semibold text-foreground uppercase text-[11px]", "{r.repeat_frequency}" }
+
+                                    // 2. Email Delivery Sent At
+                                    div { class: "p-3.5 rounded-xl bg-card border border-border/70 flex flex-col gap-1.5 shadow-2xs",
+                                        span { class: "text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1",
+                                            svg {
+                                                class: "size-3 text-primary",
+                                                view_box: "0 0 24 24",
+                                                fill: "none",
+                                                stroke: "currentColor",
+                                                stroke_width: "2",
+                                                stroke_linecap: "round",
+                                                stroke_linejoin: "round",
+                                                line { x1: "22", y1: "2", x2: "11", y2: "13" }
+                                                polygon { points: "22 2 15 22 11 13 2 9 22 2" }
+                                            }
+                                            "Email Sent At"
+                                        }
+                                        {
+                                            let sent_disp = crate::state::format_display_12hr(&r.email_sent_at);
+                                            let is_sent = !r.email_sent_at.is_empty() && r.email_sent_at != "Not sent yet" && r.email_sent_at != "Not sent";
+                                            rsx! {
+                                                span {
+                                                    class: format!("font-medium text-xs leading-snug {}", if is_sent { "text-foreground" } else { "text-muted-foreground italic" }),
+                                                    title: "{r.email_sent_at}",
+                                                    if is_sent { "{sent_disp}" } else { "Not sent yet" }
+                                                }
+                                                span { class: "text-[10px] text-muted-foreground",
+                                                    if is_sent { "Notification delivered" } else { "Awaiting dispatch trigger" }
+                                                }
+                                            }
+                                        }
                                     }
-                                    div { class: "flex flex-col gap-0.5",
-                                        span { class: "text-[10px] text-muted-foreground uppercase tracking-wider font-semibold", "Email Sent At" }
-                                        span { class: "text-foreground font-mono text-[11px]", "{r.email_sent_at}" }
+
+                                    // 3. Created At
+                                    div { class: "p-3.5 rounded-xl bg-card border border-border/70 flex flex-col gap-1.5 shadow-2xs",
+                                        span { class: "text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1",
+                                            CalendarIcon { class: "size-3 text-primary" }
+                                            "Created At"
+                                        }
+                                        span { class: "font-medium text-foreground text-xs leading-snug", title: "{r.created_at}",
+                                            "{crate::state::format_display_12hr(&r.created_at)}"
+                                        }
+                                        span { class: "text-[10px] text-muted-foreground", "Initial creation record" }
                                     }
-                                    div { class: "flex flex-col gap-0.5",
-                                        span { class: "text-[10px] text-muted-foreground uppercase tracking-wider font-semibold", "Created At" }
-                                        span { class: "text-muted-foreground font-mono text-[11px]", "{r.created_at}" }
-                                    }
-                                    div { class: "flex flex-col gap-0.5",
-                                        span { class: "text-[10px] text-muted-foreground uppercase tracking-wider font-semibold", "Last Updated" }
-                                        span { class: "text-muted-foreground font-mono text-[11px]", "{r.last_updated_at}" }
+
+                                    // 4. Last Updated
+                                    div { class: "p-3.5 rounded-xl bg-card border border-border/70 flex flex-col gap-1.5 shadow-2xs",
+                                        span { class: "text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1",
+                                            svg {
+                                                class: "size-3 text-primary",
+                                                view_box: "0 0 24 24",
+                                                fill: "none",
+                                                stroke: "currentColor",
+                                                stroke_width: "2",
+                                                stroke_linecap: "round",
+                                                stroke_linejoin: "round",
+                                                path { d: "M21 2v6h-6" }
+                                                path { d: "M3 12a9 9 0 0 1 15-6.7L21 8" }
+                                                path { d: "M3 22v-6h6" }
+                                                path { d: "M21 12a9 9 0 0 1-15 6.7L3 16" }
+                                            }
+                                            "Last Updated"
+                                        }
+                                        span { class: "font-medium text-foreground text-xs leading-snug", title: "{r.last_updated_at}",
+                                            "{crate::state::format_display_12hr(&r.last_updated_at)}"
+                                        }
+                                        span { class: "text-[10px] text-muted-foreground", "Most recent status sync" }
                                     }
                                 }
                             }
 
                             DialogFooter {
+                                class: "flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-border/60 mt-2",
                                 Button {
                                     variant: "destructive",
+                                    class: "h-9 text-xs px-4 font-semibold cursor-pointer shadow-xs",
                                     onclick: {
                                         let id_del = r.id.clone();
                                         move |_| {
@@ -1969,54 +2096,59 @@ pub fn Reminders() -> Element {
                                     TrashIcon { class: "size-3.5 mr-1.5" }
                                     "Delete"
                                 }
-                                if r.status.eq_ignore_ascii_case("pending") {
-                                    Button {
-                                        variant: "secondary",
-                                        onclick: move |_| is_editing.set(true),
-                                        PencilIcon { class: "size-3.5 mr-1.5" }
-                                        "Edit Details"
-                                    }
-                                }
-                                Button {
-                                    variant: "outline",
-                                    onclick: move |_| is_detail_open.set(false),
-                                    "Close"
-                                }
-                                Button {
-                                    variant: "default",
-                                    onclick: {
-                                        let r_send = r.clone();
-                                        move |_| {
-                                            send_now(r_send.clone(), false);
-                                            is_detail_open.set(false);
+                                div { class: "flex flex-wrap items-center gap-2",
+                                    if r.status.eq_ignore_ascii_case("pending") {
+                                        Button {
+                                            variant: "secondary",
+                                            class: "h-9 text-xs px-4 font-semibold cursor-pointer shadow-2xs",
+                                            onclick: move |_| is_editing.set(true),
+                                            PencilIcon { class: "size-3.5 mr-1.5" }
+                                            "Edit Details"
                                         }
-                                    },
-                                    svg {
-                                        class: "size-3.5 mr-1.5",
-                                        view_box: "0 0 24 24",
-                                        fill: "none",
-                                        stroke: "currentColor",
-                                        stroke_width: "2",
-                                        stroke_linecap: "round",
-                                        stroke_linejoin: "round",
-                                        line { x1: "22", y1: "2", x2: "11", y2: "13" }
-                                        polygon { points: "22 2 15 22 11 13 2 9 22 2" }
                                     }
-                                    "Send Email Now"
-                                }
-                                if !r.email_sent_at.is_empty() && r.email_sent_at != "Not sent yet" && r.email_sent_at != "Not sent" {
                                     Button {
                                         variant: "outline",
-                                        title: "Bypasses once-per-calendar-day guard to re-send reminder email",
-                                        class: "text-amber-600 border-amber-500/30 hover:bg-amber-500/10",
+                                        class: "h-9 text-xs px-4 cursor-pointer",
+                                        onclick: move |_| is_detail_open.set(false),
+                                        "Close"
+                                    }
+                                    Button {
+                                        variant: "default",
+                                        class: "h-9 text-xs px-4 font-semibold cursor-pointer shadow-xs gap-1.5",
                                         onclick: {
                                             let r_send = r.clone();
                                             move |_| {
-                                                send_now(r_send.clone(), true);
+                                                send_now(r_send.clone(), false);
                                                 is_detail_open.set(false);
                                             }
                                         },
-                                        "Force Resend"
+                                        svg {
+                                            class: "size-3.5 mr-1",
+                                            view_box: "0 0 24 24",
+                                            fill: "none",
+                                            stroke: "currentColor",
+                                            stroke_width: "2",
+                                            stroke_linecap: "round",
+                                            stroke_linejoin: "round",
+                                            line { x1: "22", y1: "2", x2: "11", y2: "13" }
+                                            polygon { points: "22 2 15 22 11 13 2 9 22 2" }
+                                        }
+                                        "Send Email Now"
+                                    }
+                                    if !r.email_sent_at.is_empty() && r.email_sent_at != "Not sent yet" && r.email_sent_at != "Not sent" {
+                                        Button {
+                                            variant: "outline",
+                                            title: "Bypasses once-per-calendar-day guard to re-send reminder email",
+                                            class: "h-9 text-xs px-3.5 font-semibold text-amber-600 dark:text-amber-400 border-amber-500/40 hover:bg-amber-500/10 cursor-pointer shadow-2xs",
+                                            onclick: {
+                                                let r_send = r.clone();
+                                                move |_| {
+                                                    send_now(r_send.clone(), true);
+                                                    is_detail_open.set(false);
+                                                }
+                                            },
+                                            "Force Resend"
+                                        }
                                     }
                                 }
                             }

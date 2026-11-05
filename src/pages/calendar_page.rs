@@ -208,9 +208,9 @@ pub fn CalendarPage() -> Element {
         for r in reminders {
             let date = parse_date_ymd(&r.created_at).unwrap_or(today);
             let time_str = if !r.send_at.is_empty() {
-                format!("Due: {}", r.send_at)
+                format!("Due: {}", crate::state::format_display_12hr(&r.send_at))
             } else {
-                extract_time_str(&r.created_at)
+                crate::state::format_display_12hr(&r.created_at)
             };
             let display_id = if !r.server_reminder_id.is_empty() {
                 r.server_reminder_id.clone()
@@ -1058,7 +1058,7 @@ pub fn CalendarPage() -> Element {
                                                 }
                                                 div { class: "flex flex-col gap-0.5",
                                                     span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Scheduled Send Time" }
-                                                    span { class: "font-mono font-medium text-foreground", "{r.send_at}" }
+                                                    span { class: "font-mono font-medium text-foreground", title: "{r.send_at}", "{crate::state::format_display_12hr(&r.send_at)}" }
                                                 }
                                                 div { class: "flex flex-col gap-0.5",
                                                     span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Repeat Frequency" }
@@ -1066,7 +1066,7 @@ pub fn CalendarPage() -> Element {
                                                 }
                                                 div { class: "flex flex-col gap-0.5",
                                                     span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Created At" }
-                                                    span { class: "font-mono font-medium text-foreground", "{r.created_at}" }
+                                                    span { class: "font-mono font-medium text-foreground", title: "{r.created_at}", "{crate::state::format_display_12hr(&r.created_at)}" }
                                                 }
                                                 div { class: "flex flex-col gap-0.5",
                                                     span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Recipient Email" }
