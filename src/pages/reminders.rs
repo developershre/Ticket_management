@@ -1217,11 +1217,11 @@ pub fn Reminders() -> Element {
                                 let is_dragged = dragged_id.read().as_deref() == Some(&id);
                                 let is_card_over = drag_over_id.read().as_deref() == Some(&id) && !is_dragged;
                                 let card_cls = if is_dragged {
-                                    "opacity-40 scale-[0.99] border-dashed border-primary ring-1 ring-primary/40 bg-muted/40 cursor-grabbing rounded-md p-3.5 flex flex-col justify-between gap-3 shadow-xs"
+                                    "opacity-40 scale-[0.99] border-dashed border-primary ring-1 ring-primary/40 bg-muted/40 cursor-grabbing rounded-md p-3.5 flex flex-col justify-between gap-3 shadow-xs transition-all duration-200"
                                 } else if is_done {
-                                    "group flex cursor-grab active:cursor-grabbing flex-col justify-between gap-3 rounded-md border border-border/50 bg-card/50 opacity-70 p-3.5 transition-colors duration-150 hover:opacity-100 hover:border-primary/40 shadow-xs"
+                                    "group flex cursor-grab active:cursor-grabbing flex-col justify-between gap-3 rounded-md border border-border/50 bg-card/50 opacity-70 p-3.5 transition-all duration-200 ease-out hover:opacity-100 hover:border-primary/40 hover:-translate-y-0.5 hover:shadow-md shadow-xs"
                                 } else {
-                                    "group flex cursor-grab active:cursor-grabbing flex-col justify-between gap-3 rounded-md border border-border/80 bg-card p-3.5 transition-colors duration-150 hover:border-primary/60 hover:bg-accent/15 shadow-xs"
+                                    "group flex cursor-grab active:cursor-grabbing flex-col justify-between gap-3 rounded-md border border-border/80 bg-card p-3.5 transition-all duration-200 ease-out hover:border-primary/60 hover:bg-accent/15 hover:-translate-y-0.5 hover:shadow-md shadow-xs"
                                 };
                                 let title_cls = if is_done {
                                     "line-through text-muted-foreground"
@@ -1330,7 +1330,7 @@ pub fn Reminders() -> Element {
                                                                 button {
                                                                     r#type: "button",
                                                                     title: "Move up in priority",
-                                                                    class: "flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer text-xs font-bold",
+                                                                    class: "flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground active:scale-90 transition-all duration-150 cursor-pointer text-xs font-bold",
                                                                     onclick: move |e: MouseEvent| {
                                                                         e.stop_propagation();
                                                                         let mut list = reminders.write();
@@ -1347,7 +1347,7 @@ pub fn Reminders() -> Element {
                                                                 button {
                                                                     r#type: "button",
                                                                     title: "Move down in priority",
-                                                                    class: "flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer text-xs font-bold",
+                                                                    class: "flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground active:scale-90 transition-all duration-150 cursor-pointer text-xs font-bold",
                                                                     onclick: move |e: MouseEvent| {
                                                                         e.stop_propagation();
                                                                         let mut list = reminders.write();
@@ -1418,7 +1418,7 @@ pub fn Reminders() -> Element {
                                                         button {
                                                             r#type: "button",
                                                             title: "Send secure ticket form link email now",
-                                                            class: "flex items-center gap-1 rounded-md border border-border/80 bg-background px-2 py-1 text-xs text-muted-foreground hover:border-primary hover:text-primary transition-colors cursor-pointer",
+                                                            class: "flex items-center gap-1 rounded-md border border-border/80 bg-background px-2 py-1 text-xs text-muted-foreground hover:border-primary hover:text-primary active:scale-95 transition-all duration-150 cursor-pointer shadow-2xs",
                                                             onclick: {
                                                                 let r_send = reminder_c.clone();
                                                                 move |e: MouseEvent| {
@@ -1443,7 +1443,7 @@ pub fn Reminders() -> Element {
                                                             r#type: "button",
                                                             disabled: is_done,
                                                             title: if is_done { "Completed (finalized)" } else { "Mark complete" },
-                                                            class: format!("flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors {check_btn_cls} {}", if is_done { "opacity-75 cursor-default" } else { "cursor-pointer" }),
+                                                            class: format!("flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs active:scale-95 transition-all duration-150 {check_btn_cls} {}", if is_done { "opacity-75 cursor-default" } else { "cursor-pointer shadow-2xs" }),
                                                             onclick: move |e: MouseEvent| {
                                                                 e.stop_propagation();
                                                                 if !is_done {
@@ -1473,7 +1473,7 @@ pub fn Reminders() -> Element {
                                                         button {
                                                             r#type: "button",
                                                             title: "Delete reminder & sync with Google Sheets",
-                                                            class: "flex items-center gap-1 rounded-md border border-border/80 bg-background px-2 py-1 text-xs text-muted-foreground hover:border-destructive hover:text-destructive hover:bg-destructive/10 transition-colors cursor-pointer",
+                                                            class: "flex items-center gap-1 rounded-md border border-border/80 bg-background px-2 py-1 text-xs text-muted-foreground hover:border-destructive hover:text-destructive hover:bg-destructive/10 active:scale-95 transition-all duration-150 cursor-pointer shadow-2xs",
                                                             onclick: {
                                                                 let id_del = reminder_c.id.clone();
                                                                 move |e: MouseEvent| {
@@ -1509,10 +1509,10 @@ pub fn Reminders() -> Element {
                     DialogHeader {
                         class: "space-y-1 pb-3 text-left",
                         DialogTitle { class: "text-2xl font-bold tracking-tight text-foreground",
-                            "Create Support Ticket"
+                            "Create Scheduled Reminder"
                         }
                         DialogDescription { class: "text-sm text-muted-foreground",
-                            "Enter your employee details and describe the issue."
+                            "Enter employee details and schedule automatic delivery timing."
                         }
                     }
 
@@ -1698,13 +1698,13 @@ pub fn Reminders() -> Element {
                         class: "flex items-center justify-start gap-3 pt-3",
                         button {
                             r#type: "button",
-                            class: "inline-flex items-center justify-center rounded-md bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-2.5 text-sm shadow-xs transition-colors cursor-pointer",
+                            class: "inline-flex items-center justify-center rounded-md bg-blue-600 hover:bg-blue-700 hover:scale-[1.02] active:scale-[0.98] text-white font-medium px-6 py-2.5 text-sm shadow-xs transition-all duration-150 cursor-pointer",
                             onclick: move |_| save_new_reminder(),
                             "Create Reminder"
                         }
                         button {
                             r#type: "button",
-                            class: "inline-flex items-center justify-center rounded-md border border-border bg-card hover:bg-muted text-foreground font-medium px-4 py-2.5 text-sm transition-colors cursor-pointer",
+                            class: "inline-flex items-center justify-center rounded-md border border-border bg-card hover:bg-muted active:scale-[0.98] text-foreground font-medium px-4 py-2.5 text-sm transition-all duration-150 cursor-pointer",
                             onclick: move |_| is_create_open.set(false),
                             "Cancel"
                         }

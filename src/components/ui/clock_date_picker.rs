@@ -284,19 +284,16 @@ pub fn ClockDateTimePicker(props: ClockDateTimePickerProps) -> Element {
         date_type_input.set(format!("{y:04}-{m:02}-{d:02}"));
     };
 
-    // Calculate hand coordinates for SVG
+    // Calculate hand rotation and length for SVG
     let mode = *clock_mode.read();
     let hand_angle_deg = match mode {
         ClockMode::Hour => (hour12 as f64) * 30.0,
         ClockMode::Minute => (current_minute as f64) * 6.0,
     };
-    let hand_rad = hand_angle_deg.to_radians();
     let hand_length = match mode {
         ClockMode::Hour => 56.0,
         ClockMode::Minute => 68.0,
     };
-    let hand_tip_x = 100.0 + hand_length * hand_rad.sin();
-    let hand_tip_y = 100.0 - hand_length * hand_rad.cos();
 
     // Trigger display text
     let current_raw_val = props.value.read().clone();
@@ -362,11 +359,11 @@ pub fn ClockDateTimePicker(props: ClockDateTimePickerProps) -> Element {
             // CLOCK & DATE PICKER MODAL POPUP
             if *is_open.read() {
                 div {
-                    class: "fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in-0 duration-150",
+                    class: "fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-dialog-overlay",
                     onclick: move |_| is_open.set(false),
 
                     div {
-                        class: "relative w-full max-w-md rounded-xl border border-border/80 bg-popover p-5 text-popover-foreground shadow-2xl animate-in zoom-in-95 duration-150 flex flex-col gap-4 max-h-[92vh] overflow-y-auto",
+                        class: "relative w-full max-w-md rounded-2xl border border-border/80 bg-popover p-5 sm:p-6 text-popover-foreground shadow-2xl animate-modal-pop flex flex-col gap-4 max-h-[92vh] overflow-y-auto",
                         onclick: move |e: MouseEvent| e.stop_propagation(),
 
                         // MODAL HEADER
@@ -406,7 +403,7 @@ pub fn ClockDateTimePicker(props: ClockDateTimePickerProps) -> Element {
                             div { class: "grid grid-cols-3 gap-2 py-0.5",
                                 // Day Scroll Pill
                                 div {
-                                    class: "flex flex-col items-center justify-center rounded-md border border-border/80 bg-background/90 py-1.5 px-2 select-none cursor-ns-resize hover:border-primary/80 transition-colors shadow-2xs",
+                                    class: "flex flex-col items-center justify-center rounded-xl border border-border/80 bg-background/90 py-1.5 px-2 select-none cursor-ns-resize hover:border-primary/80 hover:scale-[1.02] active:scale-[0.98] transition-all duration-150 shadow-2xs",
                                     title: "Hover and scroll mouse wheel up/down to change day",
                                     onwheel: move |e: WheelEvent| {
                                         scroll_day(get_wheel_delta_y(&e));
@@ -423,7 +420,7 @@ pub fn ClockDateTimePicker(props: ClockDateTimePickerProps) -> Element {
 
                                 // Month Scroll Pill
                                 div {
-                                    class: "flex flex-col items-center justify-center rounded-md border border-border/80 bg-background/90 py-1.5 px-2 select-none cursor-ns-resize hover:border-primary/80 transition-colors shadow-2xs",
+                                    class: "flex flex-col items-center justify-center rounded-xl border border-border/80 bg-background/90 py-1.5 px-2 select-none cursor-ns-resize hover:border-primary/80 hover:scale-[1.02] active:scale-[0.98] transition-all duration-150 shadow-2xs",
                                     title: "Hover and scroll mouse wheel up/down to change month",
                                     onwheel: move |e: WheelEvent| {
                                         scroll_month(get_wheel_delta_y(&e));
@@ -440,7 +437,7 @@ pub fn ClockDateTimePicker(props: ClockDateTimePickerProps) -> Element {
 
                                 // Year Scroll Pill
                                 div {
-                                    class: "flex flex-col items-center justify-center rounded-md border border-border/80 bg-background/90 py-1.5 px-2 select-none cursor-ns-resize hover:border-primary/80 transition-colors shadow-2xs",
+                                    class: "flex flex-col items-center justify-center rounded-xl border border-border/80 bg-background/90 py-1.5 px-2 select-none cursor-ns-resize hover:border-primary/80 hover:scale-[1.02] active:scale-[0.98] transition-all duration-150 shadow-2xs",
                                     title: "Hover and scroll mouse wheel up/down to change year",
                                     onwheel: move |e: WheelEvent| {
                                         scroll_year(get_wheel_delta_y(&e));
@@ -461,25 +458,25 @@ pub fn ClockDateTimePicker(props: ClockDateTimePickerProps) -> Element {
                                 div { class: "flex items-center gap-1 flex-wrap",
                                     button {
                                         r#type: "button",
-                                        class: "rounded px-2 py-0.5 text-[10px] font-medium border border-border/80 bg-card hover:border-primary hover:text-primary transition-colors cursor-pointer",
+                                        class: "rounded px-2 py-0.5 text-[10px] font-medium border border-border/80 bg-card hover:border-primary hover:text-primary active:scale-95 transition-all duration-150 cursor-pointer shadow-2xs",
                                         onclick: move |_| set_preset_days(0),
                                         "Today"
                                     }
                                     button {
                                         r#type: "button",
-                                        class: "rounded px-2 py-0.5 text-[10px] font-medium border border-border/80 bg-card hover:border-primary hover:text-primary transition-colors cursor-pointer",
+                                        class: "rounded px-2 py-0.5 text-[10px] font-medium border border-border/80 bg-card hover:border-primary hover:text-primary active:scale-95 transition-all duration-150 cursor-pointer shadow-2xs",
                                         onclick: move |_| set_preset_days(1),
                                         "Tomorrow"
                                     }
                                     button {
                                         r#type: "button",
-                                        class: "rounded px-2 py-0.5 text-[10px] font-medium border border-border/80 bg-card hover:border-primary hover:text-primary transition-colors cursor-pointer",
+                                        class: "rounded px-2 py-0.5 text-[10px] font-medium border border-border/80 bg-card hover:border-primary hover:text-primary active:scale-95 transition-all duration-150 cursor-pointer shadow-2xs",
                                         onclick: move |_| set_preset_days(2),
                                         "+2 Days"
                                     }
                                     button {
                                         r#type: "button",
-                                        class: "rounded px-2 py-0.5 text-[10px] font-medium border border-border/80 bg-card hover:border-primary hover:text-primary transition-colors cursor-pointer",
+                                        class: "rounded px-2 py-0.5 text-[10px] font-medium border border-border/80 bg-card hover:border-primary hover:text-primary active:scale-95 transition-all duration-150 cursor-pointer shadow-2xs",
                                         onclick: move |_| set_preset_days(7),
                                         "+1 Week"
                                     }
@@ -525,7 +522,7 @@ pub fn ClockDateTimePicker(props: ClockDateTimePickerProps) -> Element {
                                     button {
                                         r#type: "button",
                                         class: format!(
-                                            "rounded-md px-2.5 py-1 font-mono text-base font-bold transition-all cursor-pointer border {}",
+                                            "rounded-md px-2.5 py-1 font-mono text-base font-bold transition-all duration-150 active:scale-95 cursor-pointer border {}",
                                             if mode == ClockMode::Hour {
                                                 "bg-primary text-primary-foreground border-primary shadow-xs scale-105"
                                             } else {
@@ -546,7 +543,7 @@ pub fn ClockDateTimePicker(props: ClockDateTimePickerProps) -> Element {
                                     button {
                                         r#type: "button",
                                         class: format!(
-                                            "rounded-md px-2.5 py-1 font-mono text-base font-bold transition-all cursor-pointer border {}",
+                                            "rounded-md px-2.5 py-1 font-mono text-base font-bold transition-all duration-150 active:scale-95 cursor-pointer border {}",
                                             if mode == ClockMode::Minute {
                                                 "bg-primary text-primary-foreground border-primary shadow-xs scale-105"
                                             } else {
@@ -566,8 +563,8 @@ pub fn ClockDateTimePicker(props: ClockDateTimePickerProps) -> Element {
                                         button {
                                             r#type: "button",
                                             class: format!(
-                                                "rounded px-2 py-0.5 transition-colors cursor-pointer {}",
-                                                if !is_pm { "bg-primary text-primary-foreground" } else { "text-muted-foreground hover:text-foreground" }
+                                                "rounded px-2 py-0.5 active:scale-95 transition-all duration-150 cursor-pointer {}",
+                                                if !is_pm { "bg-primary text-primary-foreground shadow-2xs" } else { "text-muted-foreground hover:text-foreground" }
                                             ),
                                             onclick: move |_| toggle_meridiem(false),
                                             "AM"
@@ -575,8 +572,8 @@ pub fn ClockDateTimePicker(props: ClockDateTimePickerProps) -> Element {
                                         button {
                                             r#type: "button",
                                             class: format!(
-                                                "rounded px-2 py-0.5 transition-colors cursor-pointer {}",
-                                                if is_pm { "bg-primary text-primary-foreground" } else { "text-muted-foreground hover:text-foreground" }
+                                                "rounded px-2 py-0.5 active:scale-95 transition-all duration-150 cursor-pointer {}",
+                                                if is_pm { "bg-primary text-primary-foreground shadow-2xs" } else { "text-muted-foreground hover:text-foreground" }
                                             ),
                                             onclick: move |_| toggle_meridiem(true),
                                             "PM"
@@ -691,7 +688,7 @@ pub fn ClockDateTimePicker(props: ClockDateTimePickerProps) -> Element {
                                                                 cx: "{x}",
                                                                 cy: "{y}",
                                                                 r: "13",
-                                                                class: "fill-primary text-primary shadow-md",
+                                                                class: "fill-primary text-primary shadow-md transition-all duration-200 animate-in zoom-in-95",
                                                             }
                                                         }
                                                         text {
@@ -723,7 +720,7 @@ pub fn ClockDateTimePicker(props: ClockDateTimePickerProps) -> Element {
                                                                 cx: "{x}",
                                                                 cy: "{y}",
                                                                 r: "13",
-                                                                class: "fill-primary text-primary shadow-md",
+                                                                class: "fill-primary text-primary shadow-md transition-all duration-200 animate-in zoom-in-95",
                                                             }
                                                         }
                                                         text {
@@ -742,24 +739,26 @@ pub fn ClockDateTimePicker(props: ClockDateTimePickerProps) -> Element {
                                         }
                                     }
 
-                                    // CLOCK HAND (POINTER TO HANDLE)
-                                    line {
-                                        x1: "100",
-                                        y1: "100",
-                                        x2: "{hand_tip_x}",
-                                        y2: "{hand_tip_y}",
-                                        stroke: "currentColor",
-                                        class: "text-primary stroke-primary",
-                                        stroke_width: if mode == ClockMode::Hour { "3.5" } else { "2.5" },
-                                        stroke_linecap: "round",
-                                    }
-
-                                    // Tip of hand selector knob
-                                    circle {
-                                        cx: "{hand_tip_x}",
-                                        cy: "{hand_tip_y}",
-                                        r: if mode == ClockMode::Hour { "4" } else { "3.5" },
-                                        class: "fill-primary",
+                                    // CLOCK HAND (POINTER TO HANDLE) WITH SMOOTH ROTATION
+                                    g {
+                                        class: if *is_dragging.read() { "clock-hand-dragging" } else { "clock-hand-smooth" },
+                                        style: "transform-origin: 100px 100px; transform: rotate({hand_angle_deg}deg);",
+                                        line {
+                                            x1: "100",
+                                            y1: "100",
+                                            x2: "100",
+                                            y2: "{100.0 - hand_length}",
+                                            stroke: "currentColor",
+                                            class: "text-primary stroke-primary",
+                                            stroke_width: if mode == ClockMode::Hour { "3.5" } else { "2.5" },
+                                            stroke_linecap: "round",
+                                        }
+                                        circle {
+                                            cx: "100",
+                                            cy: "{100.0 - hand_length}",
+                                            r: if mode == ClockMode::Hour { "4" } else { "3.5" },
+                                            class: "fill-primary",
+                                        }
                                     }
 
                                     // Center Pivot Pin
@@ -813,13 +812,13 @@ pub fn ClockDateTimePicker(props: ClockDateTimePickerProps) -> Element {
                             div { class: "flex items-center gap-1.5",
                                 button {
                                     r#type: "button",
-                                    class: "rounded-md border border-border/80 bg-card px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors cursor-pointer",
+                                    class: "rounded-md border border-border/80 bg-card px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-muted active:scale-95 transition-all duration-150 cursor-pointer shadow-2xs",
                                     onclick: move |_| set_to_now(),
                                     "Now"
                                 }
                                 button {
                                     r#type: "button",
-                                    class: "rounded-md border border-border/80 bg-card px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-destructive hover:border-destructive transition-colors cursor-pointer",
+                                    class: "rounded-md border border-border/80 bg-card px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-destructive hover:border-destructive active:scale-95 transition-all duration-150 cursor-pointer shadow-2xs",
                                     onclick: move |_| clear_datetime(),
                                     "Clear"
                                 }
@@ -828,13 +827,13 @@ pub fn ClockDateTimePicker(props: ClockDateTimePickerProps) -> Element {
                             div { class: "flex items-center gap-2",
                                 button {
                                     r#type: "button",
-                                    class: "rounded-md border border-border/80 bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors cursor-pointer",
+                                    class: "rounded-md border border-border/80 bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted active:scale-95 transition-all duration-150 cursor-pointer shadow-2xs",
                                     onclick: move |_| is_open.set(false),
                                     "Cancel"
                                 }
                                 button {
                                     r#type: "button",
-                                    class: "inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-4 py-1.5 text-xs font-bold hover:bg-primary/90 shadow-xs transition-colors cursor-pointer",
+                                    class: "inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-4 py-1.5 text-xs font-bold hover:bg-primary/90 hover:scale-[1.02] active:scale-[0.98] shadow-xs transition-all duration-150 cursor-pointer",
                                     onclick: move |_| apply_datetime(),
                                     CheckIcon { class: "size-3.5" }
                                     "Set Schedule"

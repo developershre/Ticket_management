@@ -2602,13 +2602,13 @@ pub fn Tickets() -> Element {
                                                         let is_card_over = drag_over_card.read().as_deref() == Some(&id) && !is_dragged;
 
                                                         let card_cls = if is_dragged {
-                                                            "opacity-40 scale-[0.99] border-dashed border-primary ring-1 ring-primary/40 bg-muted/40 cursor-grabbing rounded-md border p-3 flex flex-col gap-2"
+                                                            "opacity-40 scale-[0.99] border-dashed border-primary ring-1 ring-primary/40 bg-muted/40 cursor-grabbing rounded-md border p-3 flex flex-col gap-2 transition-all duration-200"
                                                         } else if ticket_status == "Completed" {
-                                                            "group flex cursor-grab active:cursor-grabbing flex-col gap-2 rounded-md border border-success/30 bg-card p-3 transition-colors duration-150 hover:border-success/60 hover:bg-success/5 shadow-xs"
+                                                            "group flex cursor-grab active:cursor-grabbing flex-col gap-2 rounded-md border border-success/30 bg-card p-3 transition-all duration-200 ease-out hover:border-success/60 hover:bg-success/5 hover:-translate-y-0.5 hover:shadow-md shadow-xs"
                                                         } else if ticket_status == "InProgress" {
-                                                            "group flex cursor-grab active:cursor-grabbing flex-col gap-2 rounded-md border border-primary/40 bg-card p-3 transition-colors duration-150 hover:border-primary/70 hover:bg-primary/5 shadow-xs"
+                                                            "group flex cursor-grab active:cursor-grabbing flex-col gap-2 rounded-md border border-primary/40 bg-card p-3 transition-all duration-200 ease-out hover:border-primary/70 hover:bg-primary/5 hover:-translate-y-0.5 hover:shadow-md shadow-xs"
                                                         } else {
-                                                            "group flex cursor-grab active:cursor-grabbing flex-col gap-2 rounded-md border border-border/70 bg-card p-3 transition-colors duration-150 hover:border-primary/50 hover:bg-accent/20 shadow-xs"
+                                                            "group flex cursor-grab active:cursor-grabbing flex-col gap-2 rounded-md border border-border/70 bg-card p-3 transition-all duration-200 ease-out hover:border-primary/50 hover:bg-accent/20 hover:-translate-y-0.5 hover:shadow-md shadow-xs"
                                                         };
 
                                                         let id_for_start = id.clone();

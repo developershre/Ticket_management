@@ -1189,7 +1189,7 @@ fn ensure_iso8601(val: Option<&Value>) -> Value {
 }
 
 /// `reminders.create` accepts only `employee_code`, `service_category`,
-/// `reminder_message`, `send_at` (required) and `cc_emails` (optional).
+/// `reminder_message`, `send_at`, `repeat_frequency` and `cc_emails` (optional).
 /// Everything else in a local row — `employee_name`, `email_address`,
 /// `email_sent_at`, `ticket_id`, timestamps and the local
 /// `server_*` mapping columns — is sheet-only or local-only and is dropped.
@@ -1199,10 +1199,10 @@ pub fn sanitize_reminder_create_payload(payload: &Value) -> Value {
         if let Some(v) = obj.get("employee_code") {
             out.insert("employee_code".to_string(), v.clone());
         }
-        if let Some(v) = obj.get("service_category") {
+        if let Some(v) = obj.get("service_category").or_else(|| obj.get("category")) {
             out.insert("service_category".to_string(), v.clone());
         }
-        if let Some(v) = obj.get("reminder_message") {
+        if let Some(v) = obj.get("reminder_message").or_else(|| obj.get("message")) {
             out.insert("reminder_message".to_string(), v.clone());
         }
         out.insert("send_at".to_string(), ensure_iso8601(obj.get("send_at")));
@@ -1212,11 +1212,9 @@ pub fn sanitize_reminder_create_payload(payload: &Value) -> Value {
             .unwrap_or("daily")
             .trim()
             .to_ascii_lowercase();
-        // Only forward "once" to avoid breaking older Google Apps Script deployments
-        // where repeat_frequency is not recognized (blank/omitted defaults to daily anyway).
-        if freq == "once" {
-            out.insert("repeat_frequency".to_string(), json!("once"));
-        }
+        let freq_val = if freq == "once" { "once" } else { "daily" };
+        out.insert("repeat_frequency".to_string(), json!(freq_val));
+
         // Omitted when empty: a create without `cc_emails` means "no CC".
         if let Some(Value::String(cc)) = cc_field(obj) {
             if !cc.is_empty() {
@@ -1261,10 +1259,10 @@ pub fn sanitize_reminder_update_payload(payload: &Value) -> Value {
         if let Some(v) = obj.get("employee_code") {
             out.insert("employee_code".to_string(), v.clone());
         }
-        if let Some(v) = obj.get("service_category") {
+        if let Some(v) = obj.get("service_category").or_else(|| obj.get("category")) {
             out.insert("service_category".to_string(), v.clone());
         }
-        if let Some(v) = obj.get("reminder_message") {
+        if let Some(v) = obj.get("reminder_message").or_else(|| obj.get("message")) {
             out.insert("reminder_message".to_string(), v.clone());
         }
         if let Some(v) = obj.get("send_at") {
@@ -1295,8 +1293,23 @@ async fn execute_reminder_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutc
                     return Ok(ExecOutcome::Synced);
                 }
             }
-            let sanitized = sanitize_reminder_create_payload(&op.payload);
-            let remote = client.reminders_create(&sanitized).await?;
+            let mut sanitized = sanitize_reminder_create_payload(&op.payload);
+            let remote = match client.reminders_create(&sanitized).await {
+                Ok(remote) => remote,
+                Err(ApiError::Api { ref code, ref message, .. })
+                    if code == "UNKNOWN_FIELD" =>
+                {
+                    eprintln!("[sync] Remote Google Apps Script rejected optional field in create: {message}. Stripping and retrying.");
+                    if let Some(obj) = sanitized.as_object_mut() {
+                        obj.remove("repeat_frequency");
+                        if message.contains("cc_emails") || message.contains("cc") {
+                            obj.remove("cc_emails");
+                        }
+                    }
+                    client.reminders_create(&sanitized).await?
+                }
+                Err(e) => return Err(e),
+            };
             if !remote.reminder_id.is_empty() {
                 db::set_reminder_mapping(
                     op.local_ticket_id,

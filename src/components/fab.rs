@@ -598,13 +598,13 @@ pub fn Fab() -> Element {
                             class: "flex items-center justify-start gap-3 pt-3",
                             button {
                                 r#type: "button",
-                                class: "inline-flex items-center justify-center rounded-md bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-2.5 text-sm shadow-xs transition-colors cursor-pointer",
+                                class: "inline-flex items-center justify-center rounded-md bg-blue-600 hover:bg-blue-700 hover:scale-[1.02] active:scale-[0.98] text-white font-medium px-6 py-2.5 text-sm shadow-xs transition-all duration-150 cursor-pointer",
                                 onclick: move |_| save_ticket(),
                                 "Submit Ticket"
                             }
                             button {
                                 r#type: "button",
-                                class: "inline-flex items-center justify-center rounded-md border border-border bg-card hover:bg-muted text-foreground font-medium px-4 py-2.5 text-sm transition-colors cursor-pointer",
+                                class: "inline-flex items-center justify-center rounded-md border border-border bg-card hover:bg-muted active:scale-[0.98] text-foreground font-medium px-4 py-2.5 text-sm transition-all duration-150 cursor-pointer",
                                 onclick: move |_| dialog_open.set(false),
                                 "Cancel"
                             }
@@ -804,13 +804,13 @@ pub fn Fab() -> Element {
                             class: "flex items-center justify-start gap-3 pt-3",
                             button {
                                 r#type: "button",
-                                class: "inline-flex items-center justify-center rounded-md bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-2.5 text-sm shadow-xs transition-colors cursor-pointer",
+                                class: "inline-flex items-center justify-center rounded-md bg-blue-600 hover:bg-blue-700 hover:scale-[1.02] active:scale-[0.98] text-white font-medium px-6 py-2.5 text-sm shadow-xs transition-all duration-150 cursor-pointer",
                                 onclick: move |_| save_reminder(),
                                 "Submit Reminder"
                             }
                             button {
                                 r#type: "button",
-                                class: "inline-flex items-center justify-center rounded-md border border-border bg-card hover:bg-muted text-foreground font-medium px-4 py-2.5 text-sm transition-colors cursor-pointer",
+                                class: "inline-flex items-center justify-center rounded-md border border-border bg-card hover:bg-muted active:scale-[0.98] text-foreground font-medium px-4 py-2.5 text-sm transition-all duration-150 cursor-pointer",
                                 onclick: move |_| dialog_open.set(false),
                                 "Cancel"
                             }

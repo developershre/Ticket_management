@@ -112,15 +112,15 @@ pub fn DialogContent(props: DialogContentProps) -> Element {
     };
     let class = format!(
         "fixed left-1/2 top-1/2 z-50 grid w-[calc(100%-2rem)] {max_w_fallback} -translate-x-1/2 -translate-y-1/2 \
-         gap-4 border border-border/80 bg-card p-5 sm:p-6 rounded-md shadow-2xl duration-150 \
-         animate-in fade-in-0 zoom-in-95 outline-none {}",
+         gap-4 border border-border/80 bg-card p-5 sm:p-6 rounded-xl shadow-2xl \
+         animate-dialog-content outline-none {}",
         props.class
     );
 
     rsx! {
         // Backdrop overlay
         div {
-            class: "fixed inset-0 z-50 bg-black/75 backdrop-blur-sm animate-in fade-in-0",
+            class: "fixed inset-0 z-50 bg-black/75 backdrop-blur-sm animate-dialog-overlay",
             onmousedown: move |e| {
                 e.stop_propagation();
                 ctx.open.set(false);

@@ -109,9 +109,9 @@ pub fn Button(props: ButtonProps) -> Element {
     let size = ButtonSize::from_str_name(&props.size);
 
     let base_class = "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md \
-                      text-sm font-medium transition-colors cursor-pointer select-none \
+                      text-sm font-medium transition-all duration-150 ease-out active:scale-[0.98] cursor-pointer select-none \
                       focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring \
-                      disabled:pointer-events-none disabled:opacity-50 \
+                      disabled:pointer-events-none disabled:opacity-50 disabled:active:scale-100 \
                       [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0";
 
     let classes = format!(
