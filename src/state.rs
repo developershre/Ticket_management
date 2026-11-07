@@ -52,6 +52,48 @@ fn civil_from_days(z: i64) -> (u32, u32, u32) {
 #[derive(Clone, Copy, PartialEq, Default, Debug)]
 pub struct OpenSettingsDialog(pub bool);
 
+/// Global application appearance and behavior settings.
+#[derive(Clone, PartialEq, Debug)]
+pub struct AppSettings {
+    pub sidebar_position: String,
+    pub card_density: String,
+    pub animations_enabled: bool,
+    pub date_format: String,
+    pub font_scale: String,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self::load_from_db()
+    }
+}
+
+impl AppSettings {
+    pub fn load_from_db() -> Self {
+        let is_24 = crate::db::sync_meta_get("ui_date_format")
+            .map(|v| v == "24hr")
+            .unwrap_or(false);
+        set_time_format_24hr(is_24);
+
+        Self {
+            sidebar_position: crate::db::sync_meta_get("ui_sidebar_position").unwrap_or_else(|| "left".to_string()),
+            card_density: crate::db::sync_meta_get("ui_card_density").unwrap_or_else(|| "default".to_string()),
+            animations_enabled: crate::db::sync_meta_get("ui_animations_enabled").map(|v| v != "false").unwrap_or(true),
+            date_format: if is_24 { "24hr".to_string() } else { "12hr".to_string() },
+            font_scale: crate::db::sync_meta_get("ui_font_scale").unwrap_or_else(|| "auto".to_string()),
+        }
+    }
+}
+
+static TIME_FORMAT_24HR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_time_format_24hr(is_24hr: bool) {
+    TIME_FORMAT_24HR.store(is_24hr, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn is_time_format_24hr() -> bool {
+    TIME_FORMAT_24HR.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// Global reactive revision counter to signal when SQLite database tables
 /// (like NOTES or tickets) have been modified by FAB or dialogs.
@@ -169,8 +211,19 @@ pub fn parse_datetime_flexible(s: &str) -> Option<(u32, u32, u32, u32, u32)> {
                         return Some((ly, lm, ld, lh, lmi));
                     }
                     None => {
-                        // No timezone indicator provided -> already local time
-                        return Some((y, m, d, h, mi));
+                        // No timezone indicator provided -> default to UTC since SQLite
+                        // CURRENT_TIMESTAMP and Google Sheets/Apps Script server values are in UTC.
+                        let civil_epoch = epoch_from_civil(y, m, d)
+                            + (h as i64 * 3600)
+                            + (mi as i64 * 60)
+                            + (sec as i64);
+                        let local_epoch = civil_epoch + LOCAL_TZ_OFFSET_SECS;
+
+                        let (ly, lm, ld) = civil_from_epoch(local_epoch);
+                        let lsecs = local_epoch.rem_euclid(86_400);
+                        let lh = (lsecs / 3600) as u32;
+                        let lmi = ((lsecs % 3600) / 60) as u32;
+                        return Some((ly, lm, ld, lh, lmi));
                     }
                 }
             }
@@ -196,32 +249,40 @@ pub fn to_ist_iso8601(raw: &str) -> String {
     }
 }
 
-/// Formats any ISO 8601 or SQL timestamp into 12-hour format with AM/PM for the UI.
-/// Examples:
-/// - "2026-11-06T14:30:00+05:30" -> "Nov 06, 2026 · 02:30 PM"
-/// - "2026-11-05T07:00:00.000Z"   -> "Nov 05, 2026 · 12:30 PM" (UTC -> IST)
-/// - "2026-11-06 14:30:00"        -> "Nov 06, 2026 · 02:30 PM"
-/// - "2026-11-06"                 -> "Nov 06, 2026"
+/// Formats any ISO 8601 or SQL timestamp for display, obeying the user's
+/// 12-hour or 24-hour preference configured in Settings.
 pub fn format_display_12hr(raw: &str) -> String {
+    format_display_time(raw)
+}
+
+/// Formats any ISO 8601 or SQL timestamp for the UI according to current settings.
+/// Examples:
+/// - In 12-hour mode: "2026-11-06T14:30:00+05:30" -> "Nov 06, 2026 · 02:30 PM"
+/// - In 24-hour mode: "2026-11-06T14:30:00+05:30" -> "Nov 06, 2026 · 14:30"
+pub fn format_display_time(raw: &str) -> String {
     let s = raw.trim();
     if s.is_empty() {
         return String::new();
     }
-    // If it's already formatted with AM/PM, return as is
-    if s.contains(" AM") || s.contains(" PM") || s.contains("am") || s.contains("pm") {
+    // If it's already a relative word, return as-is
+    if s.starts_with("Today") || s.starts_with("Tomorrow") || s.starts_with("Next Week") || s == "Not sent yet" || s == "Not sent" {
         return s.to_string();
     }
 
     if let Some((y, m, d, h, mi)) = parse_datetime_flexible(s) {
         let month_idx = (m.saturating_sub(1) as usize).min(11);
         let month_name = SHORT_MONTH_NAMES[month_idx];
-        let am_pm = if h >= 12 { "PM" } else { "AM" };
-        let h12 = match h % 12 {
-            0 => 12,
-            other => other,
-        };
         if s.len() >= 16 || s.contains('T') || s.contains(':') {
-            format!("{} {:02}, {:04} · {:02}:{:02} {}", month_name, d, y, h12, mi, am_pm)
+            if is_time_format_24hr() {
+                format!("{} {:02}, {:04} · {:02}:{:02}", month_name, d, y, h, mi)
+            } else {
+                let am_pm = if h >= 12 { "PM" } else { "AM" };
+                let h12 = match h % 12 {
+                    0 => 12,
+                    other => other,
+                };
+                format!("{} {:02}, {:04} · {:02}:{:02} {}", month_name, d, y, h12, mi, am_pm)
+            }
         } else {
             format!("{} {:02}, {:04}", month_name, d, y)
         }

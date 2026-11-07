@@ -83,6 +83,8 @@ pub struct SettingsModalProps {
 pub fn SettingsModal(props: SettingsModalProps) -> Element {
     let toast = use_context::<ToastState>();
     let on_close = props.on_close;
+    let app_settings = try_use_context::<Signal<crate::state::AppSettings>>();
+    let db_sync = try_use_context::<Signal<crate::state::AppDbRevision>>();
 
     // Active tab
     let mut active_tab = use_signal(|| SettingsTab::Api);
@@ -121,6 +123,10 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
     // Date format preference
     let initial_date_fmt = crate::db::sync_meta_get("ui_date_format").unwrap_or_else(|| "12hr".to_string());
     let mut date_format = use_signal(|| initial_date_fmt);
+
+    // Font scale preference (auto, compact, default, comfortable, large)
+    let initial_font_scale = crate::db::sync_meta_get("ui_font_scale").unwrap_or_else(|| "auto".to_string());
+    let mut font_scale = use_signal(|| initial_font_scale);
 
     // ---- Sync Tab State ----
     let initial_sync_interval = crate::db::sync_meta_get("sync_cycle_secs").unwrap_or_else(|| "25".to_string());
@@ -172,6 +178,10 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         match crate::sync::reload_client() {
             Ok(_) => {
                 is_saving.set(false);
+                crate::sync::kick();
+                if let Some(mut r) = db_sync {
+                    r.with_mut(|rev| rev.0 += 1);
+                }
                 toast.success("Settings Saved", "API credentials stored in system. Sync refreshed!");
             }
             Err(e) => {
@@ -191,11 +201,61 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
     };
 
     let save_appearance = move |_| {
-        let _ = crate::db::sync_meta_set("ui_sidebar_position", &sidebar_position.read());
-        let _ = crate::db::sync_meta_set("ui_card_density", &card_density.read());
-        let _ = crate::db::sync_meta_set("ui_animations_enabled", if *animations_enabled.read() { "true" } else { "false" });
-        let _ = crate::db::sync_meta_set("ui_date_format", &date_format.read());
-        toast.success("Appearance Saved", "UI preferences updated.");
+        let pos = sidebar_position.read().clone();
+        let density = card_density.read().clone();
+        let anim_val = *animations_enabled.read();
+        let fmt = date_format.read().clone();
+        let scale = font_scale.read().clone();
+
+        let _ = crate::db::sync_meta_set("ui_sidebar_position", &pos);
+        let _ = crate::db::sync_meta_set("ui_card_density", &density);
+        let _ = crate::db::sync_meta_set("ui_animations_enabled", if anim_val { "true" } else { "false" });
+        let _ = crate::db::sync_meta_set("ui_date_format", &fmt);
+        let _ = crate::db::sync_meta_set("ui_font_scale", &scale);
+
+        if let Some(mut s) = app_settings {
+            s.set(crate::state::AppSettings {
+                sidebar_position: pos,
+                card_density: density.clone(),
+                animations_enabled: anim_val,
+                date_format: fmt.clone(),
+                font_scale: scale.clone(),
+            });
+        }
+        crate::state::set_time_format_24hr(fmt == "24hr");
+        if let Some(mut r) = db_sync {
+            r.with_mut(|rev| rev.0 += 1);
+        }
+
+        spawn(async move {
+            let js = format!(
+                r#"
+                if ('{scale}' === 'auto') {{
+                    document.documentElement.removeAttribute('data-font-scale');
+                    localStorage.removeItem('bpsl-font-scale');
+                }} else {{
+                    document.documentElement.setAttribute('data-font-scale', '{scale}');
+                    localStorage.setItem('bpsl-font-scale', '{scale}');
+                }}
+                if ('{density}' === 'default') {{
+                    document.documentElement.removeAttribute('data-card-density');
+                    localStorage.removeItem('bpsl-card-density');
+                }} else {{
+                    document.documentElement.setAttribute('data-card-density', '{density}');
+                    localStorage.setItem('bpsl-card-density', '{density}');
+                }}
+                if (!{anim_val}) {{
+                    document.documentElement.setAttribute('data-animations', 'false');
+                    localStorage.setItem('bpsl-animations', 'false');
+                }} else {{
+                    document.documentElement.removeAttribute('data-animations');
+                    localStorage.removeItem('bpsl-animations');
+                }}
+                "#
+            );
+            let _ = document::eval(&js);
+        });
+        toast.success("Appearance Saved", "UI preferences, sidebar, density, and typography updated.");
     };
 
     let save_sync_settings = move |_| {
@@ -206,7 +266,8 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         let _ = crate::db::sync_meta_set("sync_cycle_secs", &clamped.to_string());
         let _ = crate::db::sync_meta_set("sync_auto_enabled", if *auto_sync_enabled.read() { "true" } else { "false" });
         let _ = crate::db::sync_meta_set("sync_notify_on_pull", if *notify_on_pull.read() { "true" } else { "false" });
-        toast.success("Sync Settings Saved", format!("Sync interval set to {clamped}s."));
+        crate::sync::kick();
+        toast.success("Sync Settings Saved", format!("Sync interval set to {clamped}s and background worker refreshed."));
     };
 
     let handle_reset_sync_queue = move |_| {
@@ -488,6 +549,7 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                         for (val, label) in [("12hr", "12-Hour (AM/PM)"), ("24hr", "24-Hour")] {
                                             {
                                                 let is_active = *date_format.read() == val;
+                                                let val_str = val.to_string();
                                                 rsx! {
                                                     button {
                                                         r#type: "button",
@@ -495,7 +557,70 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                                             "rounded-md px-3 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
                                                             if is_active { "bg-primary text-primary-foreground border-primary shadow-xs" } else { "bg-card text-foreground border-border hover:border-primary/50" }
                                                         ),
-                                                        onclick: move |_| date_format.set(val.to_string()),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| {
+                                                                date_format.set(v.clone());
+                                                                crate::state::set_time_format_24hr(v == "24hr");
+                                                                if let Some(mut s) = app_settings {
+                                                                    s.write().date_format = v.clone();
+                                                                }
+                                                                if let Some(mut r) = db_sync {
+                                                                    r.with_mut(|rev| rev.0 += 1);
+                                                                }
+                                                            }
+                                                        },
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Divider
+                                div { class: "border-t border-border/50" }
+
+                                // Typography & Font Scale
+                                SettingRow {
+                                    title: "Typography & Font Scaling",
+                                    description: "Responsive fluid font scale across different window sizes and DPI displays.",
+                                    div { class: "flex flex-wrap gap-1.5",
+                                        for (val, label) in [
+                                            ("auto", "Auto (Fluid)"),
+                                            ("compact", "Compact (90%)"),
+                                            ("default", "Default (100%)"),
+                                            ("comfortable", "Comfortable (110%)"),
+                                            ("large", "Large (120%)"),
+                                        ] {
+                                            {
+                                                let is_active = *font_scale.read() == val;
+                                                let val_str = val.to_string();
+                                                rsx! {
+                                                    button {
+                                                        r#type: "button",
+                                                        class: format!(
+                                                            "rounded-md px-3 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
+                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs" } else { "bg-card text-foreground border-border hover:border-primary/50" }
+                                                        ),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| {
+                                                                font_scale.set(v.clone());
+                                                                if let Some(mut s) = app_settings {
+                                                                    s.write().font_scale = v.clone();
+                                                                }
+                                                                let target = v.clone();
+                                                                spawn(async move {
+                                                                    let js = if target == "auto" {
+                                                                        "document.documentElement.removeAttribute('data-font-scale'); localStorage.removeItem('bpsl-font-scale');".to_string()
+                                                                    } else {
+                                                                        format!("document.documentElement.setAttribute('data-font-scale', '{target}'); localStorage.setItem('bpsl-font-scale', '{target}');")
+                                                                    };
+                                                                    let _ = document::eval(&js);
+                                                                });
+                                                            }
+                                                        },
                                                         "{label}"
                                                     }
                                                 }
@@ -515,6 +640,7 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                         for (val, label) in [("compact", "Compact"), ("default", "Default"), ("comfortable", "Comfortable")] {
                                             {
                                                 let is_active = *card_density.read() == val;
+                                                let val_str = val.to_string();
                                                 rsx! {
                                                     button {
                                                         r#type: "button",
@@ -522,7 +648,24 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                                             "rounded-md px-3 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
                                                             if is_active { "bg-primary text-primary-foreground border-primary shadow-xs" } else { "bg-card text-foreground border-border hover:border-primary/50" }
                                                         ),
-                                                        onclick: move |_| card_density.set(val.to_string()),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| {
+                                                                card_density.set(v.clone());
+                                                                if let Some(mut s) = app_settings {
+                                                                    s.write().card_density = v.clone();
+                                                                }
+                                                                let target = v.clone();
+                                                                spawn(async move {
+                                                                    let js = if target == "default" {
+                                                                        "document.documentElement.removeAttribute('data-card-density'); localStorage.removeItem('bpsl-card-density');".to_string()
+                                                                    } else {
+                                                                        format!("document.documentElement.setAttribute('data-card-density', '{target}'); localStorage.setItem('bpsl-card-density', '{target}');")
+                                                                    };
+                                                                    let _ = document::eval(&js);
+                                                                });
+                                                            }
+                                                        },
                                                         "{label}"
                                                     }
                                                 }
@@ -542,6 +685,17 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                     on_toggle: move |_| {
                                         let next = !*animations_enabled.read();
                                         animations_enabled.set(next);
+                                        if let Some(mut s) = app_settings {
+                                            s.write().animations_enabled = next;
+                                        }
+                                        spawn(async move {
+                                            let js = if next {
+                                                "document.documentElement.removeAttribute('data-animations'); localStorage.removeItem('bpsl-animations');".to_string()
+                                            } else {
+                                                "document.documentElement.setAttribute('data-animations', 'false'); localStorage.setItem('bpsl-animations', 'false');".to_string()
+                                            };
+                                            let _ = document::eval(&js);
+                                        });
                                     },
                                 }
 
@@ -556,6 +710,7 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                         for (val, label) in [("left", "Left"), ("right", "Right")] {
                                             {
                                                 let is_active = *sidebar_position.read() == val;
+                                                let val_str = val.to_string();
                                                 rsx! {
                                                     button {
                                                         r#type: "button",
@@ -563,7 +718,15 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                                             "rounded-md px-3 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
                                                             if is_active { "bg-primary text-primary-foreground border-primary shadow-xs" } else { "bg-card text-foreground border-border hover:border-primary/50" }
                                                         ),
-                                                        onclick: move |_| sidebar_position.set(val.to_string()),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| {
+                                                                sidebar_position.set(v.clone());
+                                                                if let Some(mut s) = app_settings {
+                                                                    s.write().sidebar_position = v.clone();
+                                                                }
+                                                            }
+                                                        },
                                                         "{label}"
                                                     }
                                                 }

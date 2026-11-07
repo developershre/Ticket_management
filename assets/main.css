@@ -5,6 +5,143 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100..900;1,100..900&family=Roboto+Mono:ital,wght@0,100..700;1,100..700&display=swap');
 
+/* ============================================================
+ * Responsive Fluid Typography
+ * Dynamically scales base rem units across window sizes & display DPIs
+ * Calibrated specifically to eliminate font overlap on 19-inch
+ * monitors (1366x768, 1440x900, 1280x1024 at 100% or 125% DPI scale).
+ * ============================================================ */
+:root {
+    --fluid-font-base: clamp(13px, 0.74rem + 0.28vw, 15.5px);
+}
+
+html {
+    font-size: var(--fluid-font-base);
+    font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    line-height: 1.5;
+    letter-spacing: -0.006em;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: geometricPrecision;
+}
+
+/* User-configurable font scale presets */
+html[data-font-scale="compact"] {
+    --fluid-font-base: clamp(11.5px, 0.65rem + 0.24vw, 13.5px);
+}
+html[data-font-scale="default"] {
+    --fluid-font-base: clamp(12.5px, 0.72rem + 0.26vw, 15px);
+}
+html[data-font-scale="comfortable"] {
+    --fluid-font-base: clamp(13.5px, 0.78rem + 0.3vw, 16.5px);
+}
+html[data-font-scale="large"] {
+    --fluid-font-base: clamp(15px, 0.86rem + 0.35vw, 18px);
+}
+
+/* Breakpoint responsiveness calibrated for window scaling & 19-inch monitors */
+@media screen and (max-width: 1024px) {
+    :root {
+        --fluid-font-base: clamp(12px, 0.68rem + 0.25vw, 13.5px);
+    }
+}
+
+/* 19-inch displays (typically 1366x768, 1440x900, 1280x1024; logical width 1025-1440px) */
+@media screen and (min-width: 1025px) and (max-width: 1440px) {
+    :root {
+        --fluid-font-base: clamp(12.5px, 0.72rem + 0.24vw, 14.5px);
+    }
+}
+
+@media screen and (min-width: 1441px) and (max-width: 1920px) {
+    :root {
+        --fluid-font-base: clamp(13.5px, 0.78rem + 0.28vw, 15.8px);
+    }
+}
+
+@media screen and (min-width: 1921px) {
+    :root {
+        --fluid-font-base: clamp(15px, 0.88rem + 0.3vw, 18px);
+    }
+}
+
+/* ============================================================
+ * Safe Typography & Line Height Rules
+ * Prevents letter glyph overlapping on multi-line text and compact badges
+ * ============================================================ */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+p, span, h1, h2, h3, h4, h5, h6, label, button, input, select, textarea {
+    line-height: inherit;
+}
+
+/* Overrides for aggressive Tailwind leading classes that cause text collision */
+.leading-none {
+    line-height: 1.25 !important;
+}
+.leading-tight {
+    line-height: 1.35 !important;
+}
+.leading-snug {
+    line-height: 1.45 !important;
+}
+.leading-normal {
+    line-height: 1.55 !important;
+}
+.leading-relaxed {
+    line-height: 1.65 !important;
+}
+
+/* Ensure single-line and multi-line clamps don't clip descenders (g, j, p, q, y) */
+.truncate {
+    padding-bottom: 1px;
+}
+.line-clamp-1,
+.line-clamp-2,
+.line-clamp-3 {
+    padding-bottom: 2px;
+}
+
+/* ============================================================
+ * Card Density Presets
+ * ============================================================ */
+html[data-card-density="compact"] .p-3,
+html[data-card-density="compact"] .p-3\.5,
+html[data-card-density="compact"] .p-4 {
+    padding: 0.55rem !important;
+}
+html[data-card-density="compact"] .gap-3,
+html[data-card-density="compact"] .gap-3\.5,
+html[data-card-density="compact"] .gap-4 {
+    gap: 0.5rem !important;
+}
+
+html[data-card-density="comfortable"] .p-3,
+html[data-card-density="comfortable"] .p-3\.5 {
+    padding: 1.15rem !important;
+}
+html[data-card-density="comfortable"] .gap-3,
+html[data-card-density="comfortable"] .gap-3\.5 {
+    gap: 1.15rem !important;
+}
+
+/* ============================================================
+ * Animations & Transitions Toggle
+ * ============================================================ */
+html[data-animations="false"] *,
+html[data-animations="false"] *::before,
+html[data-animations="false"] *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+}
+
 html,
 body {
     height: 100%;
@@ -13,7 +150,6 @@ body {
     overflow: hidden;
     background-color: var(--background, #0b0d13);
     color: var(--foreground, #e6e9f0);
-    font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
     transition: background-color 0.15s ease, color 0.15s ease;

@@ -8,6 +8,7 @@
 use dioxus::prelude::*;
 use futures_util::StreamExt;
 
+use crate::components::ui::sidebar::SidebarTrigger;
 use crate::components::ui::theme::ThemeToggle;
 use crate::icons::AppLogo;
 use crate::Route;
@@ -66,7 +67,8 @@ pub fn Titlebar(props: TitlebarProps) -> Element {
             "data-slot": "titlebar",
             class: "flex py-4 shrink-0 select-none items-center gap-1 border-b border-sidebar-border/60 bg-sidebar",
             // Branding + current page
-            div { class: "flex min-w-0 items-center gap-2.5 pl-1.5 pr-2",
+            div { class: "flex min-w-0 items-center gap-2 pl-2 pr-2",
+                SidebarTrigger { class: "size-7 border border-sidebar-border/60 bg-sidebar hover:bg-sidebar-accent text-sidebar-foreground" }
                 // Logo mark
                 div { class: "flex size-6 shrink-0 items-center justify-center rounded-lg bg-white p-0.5 border border-sidebar-border/60 shadow-xs",
                     AppLogo { class: "size-4" }

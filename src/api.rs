@@ -927,6 +927,26 @@ impl ApiClient {
                 .await
                 .map_err(|e| ApiError::Network(format!("failed to read response: {e}")))?;
 
+            let text_trimmed = text.trim();
+            if text_trimmed.is_empty() {
+                if attempts < MAX_LOCK_ATTEMPTS {
+                    let delay = retry_after.unwrap_or(2 * attempts as u64);
+                    tokio::time::sleep(Duration::from_secs(delay)).await;
+                    continue;
+                }
+                return Err(ApiError::Decode("empty response from Google Apps Script (transient script cold start or reset)".to_string()));
+            }
+
+            if text_trimmed.starts_with('<') {
+                if attempts < MAX_LOCK_ATTEMPTS {
+                    let delay = retry_after.unwrap_or(2 * attempts as u64);
+                    tokio::time::sleep(Duration::from_secs(delay)).await;
+                    continue;
+                }
+                let preview: String = text_trimmed.chars().take(200).collect();
+                return Err(ApiError::Decode(format!("server returned HTML error instead of JSON: {preview}")));
+            }
+
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
                 if attempts < MAX_LOCK_ATTEMPTS {
                     let delay = retry_after.unwrap_or(2 * attempts as u64);
@@ -1072,13 +1092,13 @@ impl ApiClient {
         Ok(())
     }
 
-    /// `employees.listAll` â€” fetches all employee data at once.
-    /// Falls back to `employees.list` if the server returns UNKNOWN_ACTION.
+    /// `employees.list` — fetches directory data (per TMS_API.postman_collection.json).
+    /// Falls back to `employees.listAll` if the server returns UNKNOWN_ACTION.
     pub async fn employees_list(&self) -> Result<Vec<Employee>, ApiError> {
-        let data = match self.post("employees.listAll", json!({})).await {
+        let data = match self.post("employees.list", json!({})).await {
             Ok(d) => d,
             Err(ApiError::Api { ref code, .. }) if code == "UNKNOWN_ACTION" => {
-                self.post("employees.list", json!({})).await?
+                self.post("employees.listAll", json!({})).await?
             }
             Err(e) => return Err(e),
         };

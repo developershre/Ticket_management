@@ -225,15 +225,20 @@ fn AppShell() -> Element {
     let db_sync = use_signal(state::AppDbRevision::default);
     use_context_provider(|| db_sync);
 
+    let app_settings = use_signal(state::AppSettings::load_from_db);
+    use_context_provider(|| app_settings);
+
     let mut open_settings = use_signal(state::OpenSettingsDialog::default);
     use_context_provider(|| open_settings);
+
+    let is_sidebar_right = app_settings.read().sidebar_position == "right";
 
     rsx! {
         ToastProvider {
             SidebarProvider {
                 div { class: "{dark_cls} flex h-screen w-full flex-col overflow-hidden bg-background text-foreground transition-colors duration-200",
                     Titlebar { app_name: "BPSL IT Support".to_string() }
-                    div { class: "flex flex-1 overflow-hidden",
+                    div { class: format!("flex flex-1 overflow-hidden {}", if is_sidebar_right { "flex-row-reverse" } else { "" }),
                         AppSidebar {}
                         main { class: "relative flex flex-1 flex-col overflow-hidden min-h-0 w-full",
                             Outlet::<Route> {}

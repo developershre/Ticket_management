@@ -268,12 +268,24 @@ pub fn ThemeProvider(props: ThemeProviderProps) -> Element {
     let ctx = ThemeContext { mode, system_dark };
     use_context_provider(|| ctx);
 
-    // Initial load: check localStorage for any user explicit choice ('light', 'dark', 'system')
+    // Initial load: restore user explicit choices from localStorage (theme, font scale, density, animations)
     use_hook(|| {
         spawn(async move {
             let mut eval = document::eval(
                 r#"
                 const saved = localStorage.getItem('bpsl-theme') || localStorage.getItem('taskflow-theme') || '';
+                const savedFont = localStorage.getItem('bpsl-font-scale') || '';
+                if (savedFont && savedFont !== 'auto') {
+                    document.documentElement.setAttribute('data-font-scale', savedFont);
+                }
+                const savedDensity = localStorage.getItem('bpsl-card-density') || '';
+                if (savedDensity && savedDensity !== 'default') {
+                    document.documentElement.setAttribute('data-card-density', savedDensity);
+                }
+                const savedAnim = localStorage.getItem('bpsl-animations') || '';
+                if (savedAnim === 'false') {
+                    document.documentElement.setAttribute('data-animations', 'false');
+                }
                 dioxus.send(saved);
                 "#,
             );

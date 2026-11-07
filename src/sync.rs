@@ -200,9 +200,22 @@ fn worker_loop() {
 
     let mut deadline = Instant::now() + Duration::from_secs(CYCLE_SECS);
     loop {
+        let cycle_secs: u64 = db::sync_meta_get("sync_cycle_secs")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(CYCLE_SECS)
+            .clamp(5, 300);
+        let auto_sync = db::sync_meta_get("sync_auto_enabled")
+            .map(|v| v != "false")
+            .unwrap_or(true);
+
         let was_kicked = {
             let mut wake = lock(&WAKE);
             while !*wake {
+                if !auto_sync {
+                    let guard = WAKE_CV.wait(wake).unwrap_or_else(|e| e.into_inner());
+                    wake = guard;
+                    continue;
+                }
                 let now = Instant::now();
                 if now >= deadline {
                     break;
@@ -243,7 +256,7 @@ fn worker_loop() {
             }
         }
 
-        deadline = Instant::now() + Duration::from_secs(CYCLE_SECS);
+        deadline = Instant::now() + Duration::from_secs(cycle_secs);
         rt.block_on(run_cycle());
     }
 }
@@ -433,6 +446,8 @@ pub async fn run_cycle() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     if now.saturating_sub(last_emp_pull) >= EMPLOYEE_PULL_GAP_SECS {
+        // Pacing delay after tickets pull prevents lock collisions on Google Apps Script
+        tokio::time::sleep(Duration::from_millis(PHASE_DELAY_MS)).await;
         match pull_employees(&client).await {
             Ok(count) => {
                 let _ = db::sync_meta_set("last_employee_pull_at", &now.to_string());
@@ -443,7 +458,7 @@ pub async fn run_cycle() {
             }
             // Directory failure never fails the cycle — tickets synced.
             Err(e) => {
-                let backoff = if e.is_retryable() { 10 } else { 60 };
+                let backoff = if e.is_retryable() { 20 } else { 120 };
                 let next_attempt = now - EMPLOYEE_PULL_GAP_SECS + backoff;
                 let _ = db::sync_meta_set("last_employee_pull_at", &next_attempt.to_string());
                 eprintln!("[sync] employee pull failed: {}", e.short());

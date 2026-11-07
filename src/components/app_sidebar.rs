@@ -6,8 +6,8 @@ use dioxus::prelude::*;
 
 use crate::components::ui::sidebar::{
     Sidebar, SidebarCollapsible, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent,
-    SidebarGroupLabel, SidebarMenu, SidebarMenuBadge, SidebarMenuButton,
-    SidebarMenuItem, SidebarRail,
+    SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuBadge, SidebarMenuButton,
+    SidebarMenuItem, SidebarRail, SidebarTrigger,
 };
 use crate::Route;
 
@@ -43,6 +43,12 @@ pub fn AppSidebar() -> Element {
     rsx! {
         Sidebar {
             collapsible: SidebarCollapsible::Icon,
+            SidebarHeader {
+                div { class: "flex w-full items-center justify-between px-1",
+                    span { class: "sidebar-text text-xs font-semibold tracking-wider uppercase text-sidebar-foreground/70", "Navigation" }
+                    SidebarTrigger { class: "size-7 border border-sidebar-border/50 hover:bg-sidebar-accent" }
+                }
+            }
             SidebarContent {
                 SidebarGroup {
                     SidebarGroupLabel { "Overview" }

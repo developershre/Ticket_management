@@ -17,7 +17,7 @@ use crate::db::{
 };
 use crate::icons::{
     BellIcon, CalendarIcon, ChevronLeftIcon, ChevronRightIcon, ClockIcon, EyeIcon, FilterIcon,
-    GridIcon, ListIcon, SearchIcon, StickyNoteIcon, TicketIcon, UsersIcon, XIcon,
+    GridIcon, ListIcon, PanelRightIcon, SearchIcon, StickyNoteIcon, TicketIcon, UsersIcon, XIcon,
 };
 use crate::pages::tickets::{assignee_color_classes, get_assignee_initials};
 use crate::state::AppDbRevision;
@@ -145,6 +145,10 @@ pub fn CalendarPage() -> Element {
     // Detail modal state
     let mut inspect_item = use_signal(|| None::<CalendarEntityData>);
 
+    // Responsive workstation state
+    let mut show_side_panel = use_signal(|| true);
+    let mut mobile_tab = use_signal(|| 0u8); // 0 = Calendar, 1 = Activities list
+
     let cur_y = view_year();
     let cur_m = view_month();
     let sel_d = selected_date();
@@ -208,9 +212,9 @@ pub fn CalendarPage() -> Element {
         for r in reminders {
             let date = parse_date_ymd(&r.created_at).unwrap_or(today);
             let time_str = if !r.send_at.is_empty() {
-                format!("Due: {}", crate::state::format_display_12hr(&r.send_at))
+                format!("Due: {}", crate::state::format_display_time(&r.send_at))
             } else {
-                crate::state::format_display_12hr(&r.created_at)
+                crate::state::format_display_time(&r.created_at)
             };
             let display_id = if !r.server_reminder_id.is_empty() {
                 r.server_reminder_id.clone()
@@ -551,26 +555,73 @@ pub fn CalendarPage() -> Element {
                     }
                 }
 
-                // Right: Search Input
-                div { class: "relative w-full sm:w-64",
-                    div { class: "pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground",
-                        SearchIcon { class: "size-3.5" }
-                    }
-                    input {
-                        r#type: "text",
-                        placeholder: "Search created items...",
-                        class: "h-8 w-full rounded-md border border-border/80 bg-background/80 pl-8 pr-7 text-xs text-foreground placeholder:text-muted-foreground/70 focus:border-primary focus:outline-none transition-colors",
-                        value: "{search_query}",
-                        oninput: move |e| search_query.set(e.value()),
-                    }
-                    if !search_query.read().is_empty() {
-                        button {
-                            r#type: "button",
-                            class: "absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer",
-                            onclick: move |_| search_query.set(String::new()),
-                            XIcon { class: "size-3" }
+                // Right: Search Input & Panel Toggle
+                div { class: "flex items-center gap-2 w-full sm:w-auto",
+                    div { class: "relative flex-1 sm:w-60 md:w-64",
+                        div { class: "pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground",
+                            SearchIcon { class: "size-3.5" }
+                        }
+                        input {
+                            r#type: "text",
+                            placeholder: "Search created items...",
+                            class: "h-8 w-full rounded-md border border-border/80 bg-background/80 pl-8 pr-7 text-xs text-foreground placeholder:text-muted-foreground/70 focus:border-primary focus:outline-none transition-colors",
+                            value: "{search_query}",
+                            oninput: move |e| search_query.set(e.value()),
+                        }
+                        if !search_query.read().is_empty() {
+                            button {
+                                r#type: "button",
+                                class: "absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer",
+                                onclick: move |_| search_query.set(String::new()),
+                                XIcon { class: "size-3" }
+                            }
                         }
                     }
+
+                    // Side Panel / Activity Details Toggle Button
+                    button {
+                        r#type: "button",
+                        class: if show_side_panel() {
+                            "flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 text-primary font-semibold px-2.5 py-1.5 text-xs hover:bg-primary/20 transition-all cursor-pointer shrink-0 shadow-2xs"
+                        } else {
+                            "flex items-center gap-1.5 rounded-md border border-border/70 bg-card text-muted-foreground hover:text-foreground hover:bg-muted px-2.5 py-1.5 text-xs transition-all cursor-pointer shrink-0 shadow-2xs"
+                        },
+                        title: if show_side_panel() { "Hide activity panel (Expand Calendar)" } else { "Show activity panel" },
+                        onclick: move |_| show_side_panel.toggle(),
+                        PanelRightIcon { class: "size-3.5" }
+                        span { class: "hidden xl:inline", if show_side_panel() { "Hide Panel" } else { "Show Panel" } }
+                        span { class: "rounded-full bg-primary/15 text-primary border border-primary/25 px-1.5 py-0 text-[10px] font-bold",
+                            "{filtered_items.len()}"
+                        }
+                    }
+                }
+            }
+
+            // ========================================================
+            // Mobile Responsive Tab Selector (< md screens)
+            // ========================================================
+            div { class: "flex md:hidden border-b border-border/70 bg-card/90 px-4 py-1.5 gap-2 shrink-0 backdrop-blur-xs",
+                button {
+                    r#type: "button",
+                    class: if mobile_tab() == 0 {
+                        "flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-bold rounded-md bg-primary text-primary-foreground shadow-2xs transition-all cursor-pointer"
+                    } else {
+                        "flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-medium rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-all cursor-pointer"
+                    },
+                    onclick: move |_| mobile_tab.set(0),
+                    CalendarIcon { class: "size-3.5" }
+                    span { "Calendar Grid" }
+                }
+                button {
+                    r#type: "button",
+                    class: if mobile_tab() == 1 {
+                        "flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-bold rounded-md bg-primary text-primary-foreground shadow-2xs transition-all cursor-pointer"
+                    } else {
+                        "flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-medium rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-all cursor-pointer"
+                    },
+                    onclick: move |_| mobile_tab.set(1),
+                    ListIcon { class: "size-3.5" }
+                    span { "Activities ({filtered_items.len()})" }
                 }
             }
 
@@ -655,12 +706,20 @@ pub fn CalendarPage() -> Element {
             // ========================================================
             // Main Responsive Split-Screen Workstation
             // ========================================================
-            div { class: "flex flex-1 overflow-hidden min-h-0",
+            div { class: "flex flex-1 overflow-hidden min-h-0 relative",
 
                 // ----------------------------------------------------
                 // LEFT: Interactive Calendar Grid / Timeline
                 // ----------------------------------------------------
-                div { class: "flex flex-1 flex-col overflow-y-auto p-4 min-h-0 border-r border-border/60",
+                div {
+                    class: {
+                        let is_mobile_items = mobile_tab() == 1;
+                        if is_mobile_items {
+                            "hidden md:flex flex-1 flex-col overflow-y-auto p-3 sm:p-4 min-h-0".to_string()
+                        } else {
+                            "flex flex-1 flex-col overflow-y-auto p-3 sm:p-4 min-h-0".to_string()
+                        }
+                    },
                     match view_mode() {
                         CalendarViewMode::Month => rsx! {
                             MonthCalendarView {
@@ -693,10 +752,34 @@ pub fn CalendarPage() -> Element {
                     }
                 }
 
+                // Floating Expand Button for Activity Sidebar (when collapsed)
+                if !show_side_panel() && mobile_tab() == 0 {
+                    button {
+                        r#type: "button",
+                        class: "absolute right-4 top-4 z-20 hidden md:flex items-center gap-1.5 rounded-lg border border-border/80 bg-card/95 px-3 py-1.5 text-xs font-semibold text-foreground shadow-md backdrop-blur-md hover:bg-card hover:border-primary/50 transition-all cursor-pointer animate-in fade-in-0 duration-150",
+                        title: "Open Activity Sidebar",
+                        onclick: move |_| show_side_panel.set(true),
+                        ChevronLeftIcon { class: "size-3.5" }
+                        span { "Activity Panel" }
+                        span { class: "rounded-full bg-primary/15 text-primary border border-primary/25 px-1.5 py-0 text-[10px] font-bold",
+                            "{filtered_items.len()}"
+                        }
+                    }
+                }
+
                 // ----------------------------------------------------
                 // RIGHT: Created Activity Panel (Tickets, Reminders, Notes)
                 // ----------------------------------------------------
-                div { class: "flex w-full md:w-[460px] lg:w-[500px] shrink-0 flex-col overflow-hidden bg-card/40 backdrop-blur-xs",
+                if show_side_panel() || mobile_tab() == 1 {
+                    div {
+                        class: {
+                            let is_mobile_items = mobile_tab() == 1;
+                            if is_mobile_items {
+                                "flex w-full md:w-[380px] lg:w-[420px] xl:w-[460px] shrink-0 flex-col overflow-hidden bg-card/50 backdrop-blur-xs border-l border-border/60 transition-all".to_string()
+                            } else {
+                                "hidden md:flex md:w-[380px] lg:w-[420px] xl:w-[460px] shrink-0 flex-col overflow-hidden bg-card/50 backdrop-blur-xs border-l border-border/60 transition-all".to_string()
+                            }
+                        },
 
                     // Panel Header & Active Date/Range Title
                     div { class: "shrink-0 border-b border-border/70 bg-card/80 p-4",
@@ -727,8 +810,20 @@ pub fn CalendarPage() -> Element {
                                 }
                             }
 
-                            span { class: "rounded-full bg-primary/10 text-primary border border-primary/20 px-2.5 py-0.5 text-xs font-bold shrink-0",
-                                "{filtered_items.len()} items"
+                            div { class: "flex items-center gap-1.5 shrink-0",
+                                span { class: "rounded-full bg-primary/10 text-primary border border-primary/20 px-2.5 py-0.5 text-xs font-bold shrink-0",
+                                    "{filtered_items.len()} items"
+                                }
+                                button {
+                                    r#type: "button",
+                                    class: "flex size-7 items-center justify-center rounded-md border border-border/70 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer",
+                                    title: "Collapse Activity Sidebar",
+                                    onclick: move |_| {
+                                        show_side_panel.set(false);
+                                        mobile_tab.set(0);
+                                    },
+                                    ChevronRightIcon { class: "size-4" }
+                                }
                             }
                         }
 
@@ -915,6 +1010,7 @@ pub fn CalendarPage() -> Element {
                     }
                 }
             }
+        }
 
             // ========================================================
             // Detail Inspection Modal Dialog
@@ -924,7 +1020,7 @@ pub fn CalendarPage() -> Element {
                     onclick: move |_| inspect_item.set(None),
 
                     div {
-                        class: "relative w-full max-w-lg rounded-lg border border-border/80 bg-background p-6 shadow-2xl transition-all",
+                        class: "relative w-full max-w-2xl max-h-[88vh] overflow-y-auto rounded-xl border border-border/80 bg-card p-6 shadow-2xl transition-all",
                         onclick: move |e| e.stop_propagation(),
 
                         match detail {
@@ -1058,7 +1154,7 @@ pub fn CalendarPage() -> Element {
                                                 }
                                                 div { class: "flex flex-col gap-0.5",
                                                     span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Scheduled Send Time" }
-                                                    span { class: "font-mono font-medium text-foreground", title: "{r.send_at}", "{crate::state::format_display_12hr(&r.send_at)}" }
+                                                    span { class: "font-mono font-medium text-foreground", title: "{r.send_at}", "{crate::state::format_display_time(&r.send_at)}" }
                                                 }
                                                 div { class: "flex flex-col gap-0.5",
                                                     span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Repeat Frequency" }
@@ -1066,7 +1162,7 @@ pub fn CalendarPage() -> Element {
                                                 }
                                                 div { class: "flex flex-col gap-0.5",
                                                     span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Created At" }
-                                                    span { class: "font-mono font-medium text-foreground", title: "{r.created_at}", "{crate::state::format_display_12hr(&r.created_at)}" }
+                                                    span { class: "font-mono font-medium text-foreground", title: "{r.created_at}", "{crate::state::format_display_time(&r.created_at)}" }
                                                 }
                                                 div { class: "flex flex-col gap-0.5",
                                                     span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Recipient Email" }
@@ -1213,7 +1309,7 @@ fn MonthCalendarView(props: MonthGridProps) -> Element {
                         rsx! {
                             div {
                                 key: "prev-{day_num}",
-                                class: "min-h-[105px] p-2 bg-muted/15 opacity-40 hover:opacity-75 transition-opacity cursor-pointer flex flex-col justify-between",
+                                class: "min-h-[68px] sm:min-h-[82px] lg:min-h-[92px] xl:min-h-[104px] p-1.5 sm:p-2 bg-muted/15 opacity-40 hover:opacity-75 transition-opacity cursor-pointer flex flex-col justify-between",
                                 onclick: move |_| on_click.call(day_date),
                                 span { class: "text-xs font-mono text-muted-foreground", "{day_num}" }
                             }
@@ -1250,7 +1346,7 @@ fn MonthCalendarView(props: MonthGridProps) -> Element {
                         } else if is_single_selected {
                             "bg-primary/10 ring-2 ring-inset ring-primary/80"
                         } else if is_today {
-                            "bg-primary/[0.03]"
+                            "bg-primary/[0.04]"
                         } else {
                             "hover:bg-muted/30"
                         };
@@ -1263,17 +1359,17 @@ fn MonthCalendarView(props: MonthGridProps) -> Element {
                         rsx! {
                             div {
                                 key: "cur-{day}",
-                                class: "relative min-h-[110px] p-2 flex flex-col justify-between transition-colors cursor-pointer {cell_cls}",
+                                class: "relative min-h-[68px] sm:min-h-[82px] lg:min-h-[92px] xl:min-h-[104px] p-1.5 sm:p-2 flex flex-col justify-between transition-colors cursor-pointer {cell_cls}",
                                 onclick: move |_| on_click.call(day_date),
 
                                 // Day Header
                                 div { class: "flex items-center justify-between",
                                     if is_today {
-                                        span { class: "flex size-6 items-center justify-center rounded-full bg-primary font-bold text-xs text-primary-foreground shadow-2xs",
+                                        span { class: "flex size-5.5 sm:size-6 items-center justify-center rounded-full bg-primary font-bold text-xs text-primary-foreground shadow-2xs",
                                             "{day}"
                                         }
                                     } else if is_single_selected || is_range_start || is_range_end {
-                                        span { class: "flex size-6 items-center justify-center rounded-full border-2 border-primary font-bold text-xs text-primary bg-background shadow-2xs",
+                                        span { class: "flex size-5.5 sm:size-6 items-center justify-center rounded-full border-2 border-primary font-bold text-xs text-primary bg-background shadow-2xs",
                                             "{day}"
                                         }
                                     } else {
@@ -1291,14 +1387,14 @@ fn MonthCalendarView(props: MonthGridProps) -> Element {
                                 }
 
                                 // Badges stack for created items
-                                div { class: "flex flex-col gap-1 mt-1.5",
+                                div { class: "flex flex-col gap-0.5 sm:gap-1 mt-1 overflow-hidden",
                                     if tickets_count > 0 {
                                         {
                                             let s_suffix = if tickets_count > 1 { "s" } else { "" };
                                             rsx! {
-                                                span { class: "inline-flex items-center gap-1 rounded bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/25 px-1.5 py-0.5 text-[10px] font-semibold truncate",
-                                                    TicketIcon { class: "size-2.5 shrink-0" }
-                                                    span { "{tickets_count} ticket{s_suffix}" }
+                                                span { class: "inline-flex items-center gap-1 rounded bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/25 px-1 sm:px-1.5 py-0.5 text-[9px] sm:text-[10px] font-semibold truncate",
+                                                    TicketIcon { class: "size-2.5 shrink-0 hidden sm:inline" }
+                                                    span { class: "truncate", "{tickets_count} ticket{s_suffix}" }
                                                 }
                                             }
                                         }
@@ -1307,9 +1403,9 @@ fn MonthCalendarView(props: MonthGridProps) -> Element {
                                         {
                                             let s_suffix = if reminders_count > 1 { "s" } else { "" };
                                             rsx! {
-                                                span { class: "inline-flex items-center gap-1 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/25 px-1.5 py-0.5 text-[10px] font-semibold truncate",
-                                                    BellIcon { class: "size-2.5 shrink-0" }
-                                                    span { "{reminders_count} reminder{s_suffix}" }
+                                                span { class: "inline-flex items-center gap-1 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/25 px-1 sm:px-1.5 py-0.5 text-[9px] sm:text-[10px] font-semibold truncate",
+                                                    BellIcon { class: "size-2.5 shrink-0 hidden sm:inline" }
+                                                    span { class: "truncate", "{reminders_count} reminder{s_suffix}" }
                                                 }
                                             }
                                         }
@@ -1318,9 +1414,9 @@ fn MonthCalendarView(props: MonthGridProps) -> Element {
                                         {
                                             let s_suffix = if notes_count > 1 { "s" } else { "" };
                                             rsx! {
-                                                span { class: "inline-flex items-center gap-1 rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25 px-1.5 py-0.5 text-[10px] font-semibold truncate",
-                                                    StickyNoteIcon { class: "size-2.5 shrink-0" }
-                                                    span { "{notes_count} note{s_suffix}" }
+                                                span { class: "inline-flex items-center gap-1 rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25 px-1 sm:px-1.5 py-0.5 text-[9px] sm:text-[10px] font-semibold truncate",
+                                                    StickyNoteIcon { class: "size-2.5 shrink-0 hidden sm:inline" }
+                                                    span { class: "truncate", "{notes_count} note{s_suffix}" }
                                                 }
                                             }
                                         }
@@ -1340,7 +1436,7 @@ fn MonthCalendarView(props: MonthGridProps) -> Element {
                         rsx! {
                             div {
                                 key: "next-{day_num}",
-                                class: "min-h-[105px] p-2 bg-muted/15 opacity-40 hover:opacity-75 transition-opacity cursor-pointer flex flex-col justify-between",
+                                class: "min-h-[68px] sm:min-h-[82px] lg:min-h-[92px] xl:min-h-[104px] p-1.5 sm:p-2 bg-muted/15 opacity-40 hover:opacity-75 transition-opacity cursor-pointer flex flex-col justify-between",
                                 onclick: move |_| on_click.call(day_date),
                                 span { class: "text-xs font-mono text-muted-foreground", "{day_num}" }
                             }

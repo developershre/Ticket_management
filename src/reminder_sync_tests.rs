@@ -532,9 +532,12 @@ mod tests {
         let out2 = format_display_12hr("2026-11-06T09:15:00Z");
         assert_eq!(out2, "Nov 06, 2026 · 02:45 PM");
 
-        // SQL timestamp without timezone defaults to local time
+        // SQL/Google Sheets timestamps without explicit timezone default to UTC and convert to IST (+05:30)
+        let out_sheet = format_display_12hr("2026-11-05 07:00:00");
+        assert_eq!(out_sheet, "Nov 05, 2026 · 12:30 PM");
+
         let out3 = format_display_12hr("2026-11-04 18:24:26");
-        assert_eq!(out3, "Nov 04, 2026 · 06:24 PM");
+        assert_eq!(out3, "Nov 04, 2026 · 11:54 PM");
 
         // Date only
         let out4 = format_display_12hr("2026-11-06");
@@ -545,7 +548,14 @@ mod tests {
         assert_eq!(out5, "Today · 2:00 PM");
 
         // parse_to_iso8601 ensures explicit +05:30 offset is sent to Google Sheets
-        assert_eq!(crate::sync::parse_to_iso8601("2026-11-05 12:30:00"), "2026-11-05T12:30:00+05:30");
+        assert_eq!(crate::sync::parse_to_iso8601("2026-11-05 07:00:00"), "2026-11-05T12:30:00+05:30");
         assert_eq!(crate::sync::parse_to_iso8601("2026-11-05T07:00:00.000Z"), "2026-11-05T12:30:00+05:30");
+        assert_eq!(crate::sync::parse_to_iso8601("2026-11-05T12:30:00+05:30"), "2026-11-05T12:30:00+05:30");
+
+        // 24-Hour format toggle in Settings dynamically reflects in UI
+        crate::state::set_time_format_24hr(true);
+        let out_24hr = format_display_12hr("2026-11-05T14:30:00+05:30");
+        assert_eq!(out_24hr, "Nov 05, 2026 · 14:30");
+        crate::state::set_time_format_24hr(false); // Reset back to default 12-hour
     }
 }
