@@ -105,6 +105,8 @@ pub fn Fab() -> Element {
     let mut ticket_priority = use_signal(|| "Low".to_string());
     let mut ticket_subject = use_signal(String::new);
     let mut ticket_problem_description = use_signal(String::new);
+    let mut ticket_attachment_name = use_signal(String::new);
+    let mut ticket_attachment_url = use_signal(String::new);
 
     // --------------------------------------------------------
     // Reminder signals (matching src/pages/reminders.rs)
@@ -137,6 +139,8 @@ pub fn Fab() -> Element {
                 ticket_priority.set("Low".to_string());
                 ticket_subject.write().clear();
                 ticket_problem_description.write().clear();
+                ticket_attachment_name.write().clear();
+                ticket_attachment_url.write().clear();
             }
             QuickKind::Reminder => {
                 reminder_employee_code.write().clear();
@@ -230,8 +234,8 @@ pub fn Fab() -> Element {
             category: cat_val,
             subject: subj_val,
             problem_description: desc_val,
-            attachment_name: String::new(),
-            attachment_url: String::new(),
+            attachment_name: ticket_attachment_name.read().clone(),
+            attachment_url: ticket_attachment_url.read().clone(),
             priority: prio_val,
             assigned_to: "IT Support".to_string(),
             customer: "Internal".to_string(),
@@ -591,6 +595,12 @@ pub fn Fab() -> Element {
                                     value: "{ticket_problem_description}",
                                     oninput: move |e: FormEvent| ticket_problem_description.set(e.value()),
                                 }
+                            }
+
+                            // Row 6: Attachment (Optional, cached in temp folder & synced with Apps Script)
+                            crate::pages::tickets::AttachmentPicker {
+                                attachment_name: ticket_attachment_name,
+                                attachment_url: ticket_attachment_url,
                             }
                         }
 

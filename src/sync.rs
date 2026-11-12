@@ -582,6 +582,62 @@ fn ack_maybe_lost(last_error: &str) -> bool {
         || last_error.starts_with("DB")
 }
 
+/// If a ticket's `attachment_url` points to a local file saved in `temp_attachments`,
+/// attempts to upload it via `attachments.upload` to Apps Script, updates the ticket's
+/// `attachment_url` to the returned remote URL, and removes the temporary file.
+async fn resolve_temp_attachment(client: &ApiClient, local_ticket_id: i64, payload: &mut Value) {
+    let Some(att_url) = payload
+        .get("attachment_url")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+    else {
+        return;
+    };
+
+    if !db::is_temp_attachment_path(&att_url) {
+        return;
+    }
+
+    let att_name = payload
+        .get("attachment_name")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            std::path::Path::new(&att_url)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("attachment.bin")
+                .to_string()
+        });
+
+    let Ok(bytes) = std::fs::read(&att_url) else {
+        return;
+    };
+    let mime = db::guess_mime_type(&att_name);
+    let b64 = db::encode_base64(&bytes);
+
+    match client.attachments_upload(&att_name, mime, &b64).await {
+        Ok(remote_url) => {
+            if let Some(obj) = payload.as_object_mut() {
+                obj.insert("attachment_url".to_string(), json!(remote_url));
+            }
+            let _ = db::update_ticket_attachment_url(local_ticket_id, &remote_url);
+            db::remove_temp_attachment_if_managed(&att_url);
+        }
+        Err(ApiError::Api { code, .. }) => {
+            eprintln!(
+                "[sync] attachments.upload skipped ({code}); syncing ticket #{local_ticket_id} with local attachment metadata"
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "[sync] attachments.upload failed ({e}); syncing ticket #{local_ticket_id} with local attachment metadata"
+            );
+        }
+    }
+}
+
 async fn execute_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutcome, ApiError> {
     if op.entity_type == "reminder" {
         return execute_reminder_op(client, op).await;
@@ -599,7 +655,9 @@ async fn execute_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutcome, ApiE
                     return Ok(ExecOutcome::Synced);
                 }
             }
-            let sanitized = sanitize_ticket_payload(client, &op.payload, true);
+            let mut payload = op.payload.clone();
+            resolve_temp_attachment(client, op.local_ticket_id, &mut payload).await;
+            let sanitized = sanitize_ticket_payload(client, &payload, true);
             let remote = client.tickets_create(&sanitized).await?;
             db::set_ticket_mapping(
                 op.local_ticket_id,
@@ -618,9 +676,10 @@ async fn execute_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutcome, ApiE
             let Some(server_id) = server_id else {
                 // The ticket never reached the server — push the current
                 // row as a create instead (edits to pre-sync tickets).
-                let Some(row) = db::ticket_create_payload(op.local_ticket_id) else {
+                let Some(mut row) = db::ticket_create_payload(op.local_ticket_id) else {
                     return Ok(ExecOutcome::Superseded); // row is gone
                 };
+                resolve_temp_attachment(client, op.local_ticket_id, &mut row).await;
                 let sanitized = sanitize_ticket_payload(client, &row, true);
                 let remote = client.tickets_create(&sanitized).await?;
                 db::set_ticket_mapping(
@@ -631,7 +690,9 @@ async fn execute_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutcome, ApiE
                 return Ok(ExecOutcome::Synced);
             };
 
-            let sanitized = sanitize_ticket_payload(client, &op.payload, false);
+            let mut payload = op.payload.clone();
+            resolve_temp_attachment(client, op.local_ticket_id, &mut payload).await;
+            let sanitized = sanitize_ticket_payload(client, &payload, false);
             match client.tickets_update(&server_id, &sanitized).await {
                 Ok(remote) => {
                     db::set_server_last_updated(op.local_ticket_id, &remote.last_updated_on)?;

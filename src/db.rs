@@ -81,6 +81,138 @@ fn resolve_db_path() -> PathBuf {
     PathBuf::from("management.db")
 }
 
+/// Directory for storing temporary ticket attachments before/during Apps Script sync.
+pub fn temp_attachments_dir() -> PathBuf {
+    let base = db_path()
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let dir = base.join("temp_attachments");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+/// Saves uploaded attachment bytes to the temporary attachments folder with a
+/// collision-free timestamp prefix and returns the full local file path.
+pub fn save_temp_attachment(file_name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    let raw_name = Path::new(file_name)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("attachment.bin");
+    let clean_name: String = raw_name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ' ') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let clean_name = clean_name.trim();
+    let final_name = if clean_name.is_empty() {
+        "attachment.bin"
+    } else {
+        clean_name
+    };
+    let ts_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let target = temp_attachments_dir().join(format!("{ts_ms}_{final_name}"));
+    std::fs::write(&target, bytes)?;
+    Ok(target)
+}
+
+/// Returns true if `path_str` points to an existing file inside `temp_attachments_dir()`.
+pub fn is_temp_attachment_path(path_str: &str) -> bool {
+    let trimmed = path_str.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let path = Path::new(trimmed);
+    if !path.is_file() {
+        return false;
+    }
+    let dir = temp_attachments_dir();
+    if let (Ok(canon_file), Ok(canon_dir)) = (path.canonicalize(), dir.canonicalize()) {
+        canon_file.starts_with(canon_dir)
+    } else {
+        path.starts_with(&dir)
+    }
+}
+
+/// Deletes a temporary attachment file only if it lives inside `temp_attachments_dir()`.
+pub fn remove_temp_attachment_if_managed(path_str: &str) {
+    if is_temp_attachment_path(path_str) {
+        let _ = std::fs::remove_file(path_str.trim());
+    }
+}
+
+/// Guesses a MIME content type from a filename or path extension.
+pub fn guess_mime_type(file_name: &str) -> &'static str {
+    let lower = file_name.trim().to_lowercase();
+    if lower.ends_with(".png") {
+        "image/png"
+    } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        "image/jpeg"
+    } else if lower.ends_with(".gif") {
+        "image/gif"
+    } else if lower.ends_with(".webp") {
+        "image/webp"
+    } else if lower.ends_with(".svg") {
+        "image/svg+xml"
+    } else if lower.ends_with(".bmp") {
+        "image/bmp"
+    } else if lower.ends_with(".pdf") {
+        "application/pdf"
+    } else if lower.ends_with(".txt") || lower.ends_with(".log") {
+        "text/plain"
+    } else if lower.ends_with(".csv") {
+        "text/csv"
+    } else if lower.ends_with(".json") {
+        "application/json"
+    } else {
+        "application/octet-stream"
+    }
+}
+
+/// Standard RFC 4648 base64 encoder (no extra crate dependency required).
+pub fn encode_base64(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[((triple >> 18) & 0x3F) as usize] as char);
+        out.push(TABLE[((triple >> 12) & 0x3F) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            TABLE[((triple >> 6) & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[(triple & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+/// Updates only `attachment_url` for a local ticket (e.g. after uploading a temp file).
+pub fn update_ticket_attachment_url(local_ticket_id: i64, new_url: &str) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE tickets SET attachment_url = ?1 WHERE ticket_id = ?2",
+        params![new_url, local_ticket_id],
+    )?;
+    Ok(())
+}
+
 /// Open a connection with WAL mode enabled for smooth concurrency.
 /// A busy timeout is set because the background sync worker and the UI
 /// thread both write to the database.

@@ -1092,6 +1092,35 @@ impl ApiClient {
         Ok(())
     }
 
+    /// `attachments.upload` — uploads a local temporary attachment file (base64)
+    /// to Apps Script / Google Drive and returns the resulting shareable URL.
+    pub async fn attachments_upload(
+        &self,
+        file_name: &str,
+        mime_type: &str,
+        data_base64: &str,
+    ) -> Result<String, ApiError> {
+        let data = self
+            .post(
+                "attachments.upload",
+                json!({
+                    "file_name": file_name,
+                    "mime_type": mime_type,
+                    "data_base64": data_base64,
+                }),
+            )
+            .await?;
+        let url = data
+            .get("attachment_url")
+            .or_else(|| data.get("url"))
+            .or_else(|| data.get("file_url"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        url.ok_or_else(|| ApiError::Decode("attachments.upload returned no URL".to_string()))
+    }
+
     /// `employees.list` — fetches directory data (per TMS_API.postman_collection.json).
     /// Falls back to `employees.listAll` if the server returns UNKNOWN_ACTION.
     pub async fn employees_list(&self) -> Result<Vec<Employee>, ApiError> {

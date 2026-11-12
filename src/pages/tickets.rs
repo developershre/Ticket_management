@@ -69,10 +69,184 @@ fn get_image_preview_url(filename: &str, url: &str) -> Option<String> {
     }
 
     if is_img && !url_trimmed.is_empty() {
+        let local_path = std::path::Path::new(url_trimmed);
+        if local_path.is_file() {
+            if let Ok(bytes) = std::fs::read(local_path) {
+                let mime = crate::db::guess_mime_type(url_trimmed);
+                let b64 = crate::db::encode_base64(&bytes);
+                return Some(format!("data:{mime};base64,{b64}"));
+            }
+        }
         return Some(url_trimmed.to_string());
     }
 
     None
+}
+
+/// Reusable attachment upload & preview widget used by both Create and Modify Ticket modals.
+/// Saves picked files into the temporary attachments folder so they can be previewed locally
+/// and synced to Google Apps Script.
+#[component]
+pub fn AttachmentPicker(
+    mut attachment_name: Signal<String>,
+    mut attachment_url: Signal<String>,
+) -> Element {
+    let has_attachment =
+        !attachment_name.read().is_empty() || !attachment_url.read().is_empty();
+
+    rsx! {
+        div { class: "rounded-md border border-border/70 bg-muted/20 p-3.5 flex flex-col gap-2.5",
+            div { class: "flex items-center justify-between",
+                span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5",
+                    PaperclipIcon { class: "size-3.5 text-primary" }
+                    "Attachment (Optional)"
+                }
+                if has_attachment {
+                    button {
+                        r#type: "button",
+                        class: "text-[11px] text-destructive hover:underline flex items-center gap-1 cursor-pointer",
+                        onclick: move |_| {
+                            let old_url = attachment_url.read().clone();
+                            crate::db::remove_temp_attachment_if_managed(&old_url);
+                            attachment_name.set(String::new());
+                            attachment_url.set(String::new());
+                        },
+                        XIcon { class: "size-3" }
+                        "Clear Attachment"
+                    }
+                }
+            }
+
+            if !has_attachment {
+                div { class: "flex flex-col gap-2",
+                    label { class: "flex flex-col items-center justify-center border-2 border-dashed border-border/80 hover:border-primary/60 bg-card/60 hover:bg-card p-4 rounded-lg cursor-pointer transition-all duration-150 group",
+                        input {
+                            r#type: "file",
+                            class: "hidden",
+                            onchange: move |e: FormEvent| {
+                                let raw_val = e.value();
+                                let files = e.files();
+                                spawn(async move {
+                                    if let Some(file_data) = files.into_iter().next() {
+                                        let raw_name = file_data.name();
+                                        let clean_name = std::path::Path::new(&raw_name)
+                                            .file_name()
+                                            .map(|n| n.to_string_lossy().to_string())
+                                            .unwrap_or_else(|| raw_name.clone());
+                                        if let Ok(bytes) = file_data.read_bytes().await {
+                                            if let Ok(saved_path) = crate::db::save_temp_attachment(&clean_name, &bytes) {
+                                                attachment_name.set(clean_name);
+                                                attachment_url.set(saved_path.to_string_lossy().to_string());
+                                                return;
+                                            }
+                                        }
+                                        if !clean_name.is_empty() {
+                                            attachment_name.set(clean_name.clone());
+                                            attachment_url.set(format!("/attachments/{}", clean_name));
+                                        }
+                                        return;
+                                    }
+                                    let clean = raw_val
+                                        .split(['/', '\\'])
+                                        .next_back()
+                                        .unwrap_or(&raw_val)
+                                        .to_string();
+                                    if !clean.is_empty() {
+                                        attachment_name.set(clean.clone());
+                                        attachment_url.set(format!("/attachments/{}", clean));
+                                    }
+                                });
+                            },
+                        }
+                        UploadCloudIcon { class: "size-6 text-muted-foreground group-hover:text-primary transition-colors mb-1" }
+                        span { class: "text-xs font-medium text-foreground group-hover:text-primary transition-colors",
+                            "Click to browse and insert an attachment (optional)"
+                        }
+                        span { class: "text-[10px] text-muted-foreground",
+                            "Saved to temp folder and synced with Apps Script on submit"
+                        }
+                    }
+                    div { class: "grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1",
+                        Input {
+                            class: "text-xs h-8",
+                            placeholder: "Or specify attachment filename... (e.g. screenshot.png)".to_string(),
+                            value: attachment_name.read().clone(),
+                            oninput: move |e: FormEvent| attachment_name.set(e.value()),
+                        }
+                        Input {
+                            class: "text-xs h-8",
+                            placeholder: "Or attachment URL/Path... (e.g. https://drive.google.com/...)".to_string(),
+                            value: attachment_url.read().clone(),
+                            oninput: move |e: FormEvent| attachment_url.set(e.value()),
+                        }
+                    }
+                }
+            } else {
+                {
+                    let att_name = attachment_name.read().clone();
+                    let att_url = attachment_url.read().clone();
+                    let img_preview = get_image_preview_url(&att_name, &att_url);
+                    let is_temp = crate::db::is_temp_attachment_path(&att_url);
+                    rsx! {
+                        div { class: "flex flex-col gap-2 p-3 rounded-md border border-primary/30 bg-primary/5",
+                            div { class: "flex items-center justify-between gap-2",
+                                div { class: "flex items-center gap-2.5 min-w-0",
+                                    div { class: "flex size-8 shrink-0 items-center justify-center rounded bg-primary/10 text-primary",
+                                        FileTextIcon { class: "size-4" }
+                                    }
+                                    div { class: "flex flex-col min-w-0",
+                                        span { class: "font-mono text-xs font-semibold text-foreground truncate",
+                                            "{att_name}"
+                                        }
+                                        span { class: "text-[10px] text-muted-foreground font-mono truncate",
+                                            if att_url.is_empty() {
+                                                "Local attachment"
+                                            } else {
+                                                "{att_url}"
+                                            }
+                                        }
+                                    }
+                                }
+                                span { class: "text-[10px] bg-primary/20 text-primary px-2 py-0.5 rounded font-medium shrink-0",
+                                    if is_temp { "Temp Cached" } else { "Attached" }
+                                }
+                            }
+
+                            if let Some(preview_src) = img_preview {
+                                div { class: "mt-1 flex flex-col items-center justify-center rounded-md border border-border/70 bg-card p-2 shadow-xs",
+                                    img {
+                                        src: "{preview_src}",
+                                        alt: "{att_name}",
+                                        class: "max-h-72 max-w-full rounded object-contain transition-all hover:scale-[1.01]",
+                                        loading: "lazy",
+                                    }
+                                    if !att_url.is_empty() && !is_temp {
+                                        a {
+                                            href: "{att_url}",
+                                            target: "_blank",
+                                            class: "mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline",
+                                            ExternalLinkIcon { class: "size-3" }
+                                            "Open full image in browser"
+                                        }
+                                    }
+                                }
+                            } else if !att_url.is_empty() && !is_temp {
+                                div { class: "mt-1",
+                                    a {
+                                        href: "{att_url}",
+                                        target: "_blank",
+                                        class: "inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline",
+                                        ExternalLinkIcon { class: "size-3" }
+                                        "Open attachment link"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn remove_activity(mut value: Signal<String>, item: &str) {
@@ -1783,18 +1957,18 @@ pub fn Tickets() -> Element {
     let mut edit_category = use_signal(|| "General".to_string());
     let mut edit_subject = use_signal(String::new);
     let mut edit_problem_description = use_signal(String::new);
-    let mut edit_attachment_name = use_signal(String::new);
-    let mut edit_attachment_url = use_signal(String::new);
+    let edit_attachment_name = use_signal(String::new);
+    let edit_attachment_url = use_signal(String::new);
     let mut edit_priority = use_signal(|| "Medium".to_string());
     let mut edit_assigned_to = use_signal(|| "Shreyansh".to_string());
-    let mut edit_customer = use_signal(|| "Internal".to_string());
-    let mut edit_time_spent = use_signal(|| 0.0f64);
-    let mut edit_activities = use_signal(String::new);
+    let edit_customer = use_signal(|| "Internal".to_string());
+    let edit_time_spent = use_signal(|| 0.0f64);
+    let edit_activities = use_signal(String::new);
     let edit_my_activity = use_signal(String::new);
-    let mut edit_deadline = use_signal(String::new);
-    let mut edit_sla_status = use_signal(|| "Within SLA".to_string());
-    let mut edit_sla_deadline = use_signal(String::new);
-    let mut edit_rating_avg_text = use_signal(String::new);
+    let edit_deadline = use_signal(String::new);
+    let edit_sla_status = use_signal(|| "Within SLA".to_string());
+    let edit_sla_deadline = use_signal(String::new);
+    let edit_rating_avg_text = use_signal(String::new);
     let mut edit_kanban_state = use_signal(|| "Pending".to_string());
     let mut edit_stage = use_signal(|| "Pending".to_string());
     let mut edit_status = use_signal(|| "Pending".to_string());
@@ -3328,6 +3502,12 @@ pub fn Tickets() -> Element {
                                 oninput: move |e: FormEvent| create_problem_description.set(e.value()),
                             }
                         }
+
+                        // Row 6: Attachment (Optional, cached in temp folder & synced with Apps Script)
+                        AttachmentPicker {
+                            attachment_name: create_attachment_name,
+                            attachment_url: create_attachment_url,
+                        }
                     }
 
                     DialogFooter {
@@ -3382,7 +3562,7 @@ pub fn Tickets() -> Element {
                                         DialogTitle { class: "text-lg font-bold text-foreground", "Modify Ticket" }
                                     }
                                     DialogDescription { class: "text-xs text-muted-foreground mt-0.5",
-                                        "Update ticket details, requester information, assignment, SLA, and attachments."
+                                        "Update ticket details, requester information, assignment, and attachments."
                                     }
                                 }
 
@@ -3456,7 +3636,7 @@ pub fn Tickets() -> Element {
                                         }
                                     }
 
-                                    div { class: "grid grid-cols-2 sm:grid-cols-5 gap-2.5",
+                                    div { class: "grid grid-cols-2 sm:grid-cols-4 gap-2.5",
                                         div { class: "flex flex-col gap-1",
                                             label { class: "text-[11px] font-semibold text-foreground", "Category" }
                                             select {
@@ -3516,15 +3696,6 @@ pub fn Tickets() -> Element {
                                                 option { value: "Completed", "Completed" }
                                             }
                                         }
-                                        div { class: "flex flex-col gap-1",
-                                            label { class: "text-[11px] font-semibold text-foreground", "Customer / Dept" }
-                                            Input {
-                                                class: "text-xs h-9 w-full",
-                                                placeholder: "e.g. Internal, Operations".to_string(),
-                                                value: edit_customer.read().clone(),
-                                                oninput: move |e: FormEvent| edit_customer.set(e.value()),
-                                            }
-                                        }
                                     }
 
                                     div { class: "flex flex-col gap-1",
@@ -3537,195 +3708,9 @@ pub fn Tickets() -> Element {
                                         }
                                     }
 
-                                    div { class: "rounded-md border border-border/70 bg-muted/20 p-3.5 flex flex-col gap-2.5",
-                                        div { class: "flex items-center justify-between",
-                                            span { class: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5",
-                                                PaperclipIcon { class: "size-3.5 text-primary" }
-                                                "Attachment (Optional)"
-                                            }
-                                            if !edit_attachment_name.read().is_empty() || !edit_attachment_url.read().is_empty() {
-                                                button {
-                                                    r#type: "button",
-                                                    class: "text-[11px] text-destructive hover:underline flex items-center gap-1 cursor-pointer",
-                                                    onclick: move |_| {
-                                                        edit_attachment_name.set(String::new());
-                                                        edit_attachment_url.set(String::new());
-                                                    },
-                                                    XIcon { class: "size-3" }
-                                                    "Clear Attachment"
-                                                }
-                                            }
-                                        }
-
-                                        if edit_attachment_name.read().is_empty() && edit_attachment_url.read().is_empty() {
-                                            div { class: "flex flex-col gap-2",
-                                                label { class: "flex flex-col items-center justify-center border-2 border-dashed border-border/80 hover:border-primary/60 bg-card/60 hover:bg-card p-4 rounded-lg cursor-pointer transition-all duration-150 group",
-                                                    input {
-                                                        r#type: "file",
-                                                        class: "hidden",
-                                                        onchange: move |e: FormEvent| {
-                                                            let raw = e.value();
-                                                            let clean = raw.split(['/', '\\']).next_back().unwrap_or(&raw).to_string();
-                                                            if !clean.is_empty() {
-                                                                edit_attachment_name.set(clean.clone());
-                                                                edit_attachment_url.set(format!("/attachments/{}", clean));
-                                                            }
-                                                        },
-                                                    }
-                                                    UploadCloudIcon { class: "size-6 text-muted-foreground group-hover:text-primary transition-colors mb-1" }
-                                                    span { class: "text-xs font-medium text-foreground group-hover:text-primary transition-colors",
-                                                        "Click to browse and insert an attachment (optional)"
-                                                    }
-                                                    span { class: "text-[10px] text-muted-foreground",
-                                                        "Upload diagnostic logs, screenshots, checklists, or error traces"
-                                                    }
-                                                }
-                                                div { class: "grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1",
-                                                    Input {
-                                                        class: "text-xs h-8",
-                                                        placeholder: "Or specify attachment filename... (e.g. screenshot.png)".to_string(),
-                                                        value: edit_attachment_name.read().clone(),
-                                                        oninput: move |e: FormEvent| edit_attachment_name.set(e.value()),
-                                                    }
-                                                    Input {
-                                                        class: "text-xs h-8",
-                                                        placeholder: "Or attachment URL/Path... (e.g. https://drive.google.com/...)".to_string(),
-                                                        value: edit_attachment_url.read().clone(),
-                                                        oninput: move |e: FormEvent| edit_attachment_url.set(e.value()),
-                                                    }
-                                                }
-                                            }
-                                        } else {
-                                            {
-                                                let att_name = edit_attachment_name.read().clone();
-                                                let att_url = edit_attachment_url.read().clone();
-                                                let img_preview = get_image_preview_url(&att_name, &att_url);
-                                                rsx! {
-                                                    div { class: "flex flex-col gap-2 p-3 rounded-md border border-primary/30 bg-primary/5",
-                                                        div { class: "flex items-center justify-between",
-                                                            div { class: "flex items-center gap-2.5 min-w-0",
-                                                                div { class: "flex size-8 shrink-0 items-center justify-center rounded bg-primary/10 text-primary",
-                                                                    FileTextIcon { class: "size-4" }
-                                                                }
-                                                                div { class: "flex flex-col min-w-0",
-                                                                    span { class: "font-mono text-xs font-semibold text-foreground truncate",
-                                                                        "{att_name}"
-                                                                    }
-                                                                    span { class: "text-[10px] text-muted-foreground font-mono truncate",
-                                                                        if att_url.is_empty() {
-                                                                            "Local attachment"
-                                                                        } else {
-                                                                            "{att_url}"
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                            span { class: "text-[10px] bg-primary/20 text-primary px-2 py-0.5 rounded font-medium shrink-0",
-                                                                "Attached"
-                                                            }
-                                                        }
-
-                                                        // Actual image preview when attachment is an image or Google Drive image link
-                                                        if let Some(preview_src) = img_preview {
-                                                            div { class: "mt-1 flex flex-col items-center justify-center rounded-md border border-border/70 bg-card p-2 shadow-xs",
-                                                                img {
-                                                                    src: "{preview_src}",
-                                                                    alt: "{att_name}",
-                                                                    class: "max-h-72 max-w-full rounded object-contain transition-all hover:scale-[1.01]",
-                                                                    loading: "lazy",
-                                                                }
-                                                                if !att_url.is_empty() {
-                                                                    a {
-                                                                        href: "{att_url}",
-                                                                        target: "_blank",
-                                                                        class: "mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline",
-                                                                        ExternalLinkIcon { class: "size-3" }
-                                                                        "Open full image in browser"
-                                                                    }
-                                                                }
-                                                            }
-                                                        } else if !att_url.is_empty() {
-                                                            div { class: "mt-1",
-                                                                a {
-                                                                    href: "{att_url}",
-                                                                    target: "_blank",
-                                                                    class: "inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline",
-                                                                    ExternalLinkIcon { class: "size-3" }
-                                                                    "Open attachment link"
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    div { class: "grid grid-cols-2 sm:grid-cols-4 gap-3",
-                                        div { class: "flex flex-col gap-1",
-                                            label { class: "text-[11px] font-semibold text-foreground", "Target Deadline" }
-                                            Input {
-                                                class: "text-xs h-9 w-full",
-                                                placeholder: "e.g. Today · 05:00 PM or 2026-11-05".to_string(),
-                                                value: edit_deadline.read().clone(),
-                                                oninput: move |e: FormEvent| edit_deadline.set(e.value()),
-                                            }
-                                        }
-                                        div { class: "flex flex-col gap-1",
-                                            label { class: "text-[11px] font-semibold text-foreground", "SLA Status" }
-                                            select {
-                                                class: "h-9 rounded-md border border-border/80 bg-card px-2 text-xs text-foreground focus:border-primary focus:outline-none cursor-pointer",
-                                                value: "{edit_sla_status}",
-                                                onchange: move |e: FormEvent| edit_sla_status.set(e.value()),
-                                                option { value: "Within SLA", "Within SLA" }
-                                                option { value: "Approaching Breach", "Approaching Breach" }
-                                                option { value: "Breached", "Breached" }
-                                                option { value: "Excluded", "Excluded" }
-                                            }
-                                        }
-                                        div { class: "flex flex-col gap-1",
-                                            label { class: "text-[11px] font-semibold text-foreground", "SLA Deadline" }
-                                            Input {
-                                                class: "text-xs h-9 w-full",
-                                                placeholder: "e.g. 2026-11-04 12:00".to_string(),
-                                                value: edit_sla_deadline.read().clone(),
-                                                oninput: move |e: FormEvent| edit_sla_deadline.set(e.value()),
-                                            }
-                                        }
-                                        div { class: "flex flex-col gap-1",
-                                            label { class: "text-[11px] font-semibold text-foreground", "Time Spent (hrs)" }
-                                            Input {
-                                                class: "text-xs h-9 w-full",
-                                                placeholder: "0.0".to_string(),
-                                                value: edit_time_spent.read().to_string(),
-                                                oninput: move |e: FormEvent| {
-                                                    if let Ok(v) = e.value().parse::<f64>() {
-                                                        edit_time_spent.set(v);
-                                                    }
-                                                },
-                                            }
-                                        }
-                                    }
-
-                                    div { class: "grid grid-cols-1 sm:grid-cols-2 gap-3",
-                                        div { class: "flex flex-col gap-1",
-                                            label { class: "text-[11px] font-semibold text-foreground", "Activities Summary" }
-                                            Input {
-                                                class: "text-xs h-9 w-full",
-                                                placeholder: "e.g. Diagnostic logs analyzed...".to_string(),
-                                                value: edit_activities.read().clone(),
-                                                oninput: move |e: FormEvent| edit_activities.set(e.value()),
-                                            }
-                                        }
-                                        div { class: "flex flex-col gap-1",
-                                            label { class: "text-[11px] font-semibold text-foreground", "Rating Text" }
-                                            Input {
-                                                class: "text-xs h-9 w-full",
-                                                placeholder: "e.g. 4.9 / 5.0".to_string(),
-                                                value: edit_rating_avg_text.read().clone(),
-                                                oninput: move |e: FormEvent| edit_rating_avg_text.set(e.value()),
-                                            }
-                                        }
+                                    AttachmentPicker {
+                                        attachment_name: edit_attachment_name,
+                                        attachment_url: edit_attachment_url,
                                     }
 
                                     div { class: "flex flex-col gap-1.5 pt-1",
