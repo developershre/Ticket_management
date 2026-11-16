@@ -894,59 +894,83 @@ pub fn to_sheet_status(val: &str) -> &'static str {
     }
 }
 
-/// Maps Google Sheet's validated dropdown choices ("Open", "In Progress", "On Hold", "Done", "New", "Assigned", "Investigation", "Resolution")
-/// to internal Kanban column status ("Pending", "InProgress", "Onhold", "Completed").
+/// Maps Google Sheet's validated dropdown choices ("Open", "In Progress", "Hold", "Solved", "Solved(closed)", "Cancelled", etc.)
+/// to internal Kanban column status ("Pending", "InProgress", "Hold", "Solved", "Completed", "Cancelled").
 pub fn from_sheet_status(val: &str) -> &'static str {
     let trimmed = val.trim();
     match trimmed {
-        "Open" | "Pending" | "To Do" | "Todo" | "New" => "Pending",
+        "Pending" | "Open" | "To Do" | "Todo" | "New" => "Pending",
         "In Progress" | "InProgress" | "In-Progress" | "Investigation" => "InProgress",
-        "On Hold" | "Onhold" | "On-Hold" | "Hold" | "Assigned" | "Solved" => "Onhold",
-        "Done" | "Completed" | "Resolved" | "Closed" | "Close" | "Resolution" | "Solved(closed)"
-        | "Solved (closed)" => "Completed",
+        "Hold" | "On Hold" | "Onhold" | "On-Hold" | "Blocked" => "Hold",
+        "Solved" | "Assigned" => "Solved",
+        "Solved(closed)" | "Solved (closed)" | "Solved(Closed)" | "Solved (Closed)"
+        | "Completed" | "Done" | "Resolution" | "Resolved" | "Closed" | "Close" => "Completed",
+        "Cancelled" | "Canceled" | "Rejected" | "Duplicate" => "Cancelled",
         other => match other {
-            s if s.eq_ignore_ascii_case("open")
-                || s.eq_ignore_ascii_case("pending")
-                || s.eq_ignore_ascii_case("new") =>
+            s if s.eq_ignore_ascii_case("pending")
+                || s.eq_ignore_ascii_case("open")
+                || s.eq_ignore_ascii_case("new")
+                || s.eq_ignore_ascii_case("to do")
+                || s.eq_ignore_ascii_case("todo") =>
             {
                 "Pending"
             }
             s if s.eq_ignore_ascii_case("in progress")
                 || s.eq_ignore_ascii_case("inprogress")
+                || s.eq_ignore_ascii_case("in-progress")
                 || s.eq_ignore_ascii_case("investigation") =>
             {
                 "InProgress"
             }
-            s if s.eq_ignore_ascii_case("on hold")
+            s if s.eq_ignore_ascii_case("hold")
+                || s.eq_ignore_ascii_case("on hold")
                 || s.eq_ignore_ascii_case("onhold")
-                || s.eq_ignore_ascii_case("assigned")
-                || s.eq_ignore_ascii_case("solved") =>
+                || s.eq_ignore_ascii_case("on-hold")
+                || s.eq_ignore_ascii_case("blocked") =>
             {
-                "Onhold"
+                "Hold"
             }
-            s if s.eq_ignore_ascii_case("done")
+            s if s.eq_ignore_ascii_case("solved")
+                || s.eq_ignore_ascii_case("assigned") =>
+            {
+                "Solved"
+            }
+            s if s.eq_ignore_ascii_case("solved(closed)")
+                || s.eq_ignore_ascii_case("solved (closed)")
                 || s.eq_ignore_ascii_case("completed")
+                || s.eq_ignore_ascii_case("done")
+                || s.eq_ignore_ascii_case("resolution")
                 || s.eq_ignore_ascii_case("resolved")
                 || s.eq_ignore_ascii_case("closed")
-                || s.eq_ignore_ascii_case("close")
-                || s.eq_ignore_ascii_case("resolution")
-                || s.eq_ignore_ascii_case("solved(closed)")
-                || s.eq_ignore_ascii_case("solved (closed)") =>
+                || s.eq_ignore_ascii_case("close") =>
             {
                 "Completed"
+            }
+            s if s.eq_ignore_ascii_case("cancelled")
+                || s.eq_ignore_ascii_case("canceled")
+                || s.eq_ignore_ascii_case("rejected")
+                || s.eq_ignore_ascii_case("duplicate") =>
+            {
+                "Cancelled"
             }
             _ => "Pending",
         },
     }
 }
 
-fn to_bpsl_stage(val: &str) -> &'static str {
+pub fn to_bpsl_kanban_state(val: &str) -> &'static str {
     match from_sheet_status(val) {
         "InProgress" => "In Progress",
-        "Onhold" => "Solved",
+        "Hold" => "Hold",
+        "Solved" => "Solved",
         "Completed" => "Solved(closed)",
+        "Cancelled" => "Cancelled",
         _ => "Pending",
     }
+}
+
+pub fn to_bpsl_stage(val: &str) -> &'static str {
+    to_bpsl_kanban_state(val)
 }
 
 fn to_bpsl_status(val: &str) -> &'static str {
@@ -958,6 +982,8 @@ fn to_bpsl_status(val: &str) -> &'static str {
         || trimmed.eq_ignore_ascii_case("resolved")
         || trimmed.eq_ignore_ascii_case("solved(closed)")
         || trimmed.eq_ignore_ascii_case("solved (closed)")
+        || trimmed.eq_ignore_ascii_case("cancelled")
+        || trimmed.eq_ignore_ascii_case("canceled")
     {
         "Closed"
     } else {
@@ -991,9 +1017,14 @@ pub fn sanitize_ticket_payload(client: &ApiClient, payload: &Value, for_create: 
         }
         if let Some(stage) = obj.get("stage").and_then(|v| v.as_str()) {
             let mapped = if client.protocol() == crate::api::ApiProtocol::BpslRest {
-                to_bpsl_stage(stage)
+                let trimmed = stage.trim();
+                if trimmed.is_empty() {
+                    "Triage".to_string()
+                } else {
+                    trimmed.to_string()
+                }
             } else {
-                to_sheet_stage(stage)
+                to_sheet_stage(stage).to_string()
             };
             obj.insert("stage".to_string(), json!(mapped));
         }
@@ -1129,14 +1160,16 @@ async fn pull(client: &ApiClient) -> Result<usize, ApiError> {
         let normalized_col = from_sheet_status(raw_kanban).to_string();
         t_norm.kanban_state = normalized_col.clone();
         t_norm.stage = if !t.stage.trim().is_empty() {
-            from_sheet_status(&t.stage).to_string()
+            t.stage.trim().to_string()
         } else {
-            normalized_col.clone()
+            "Triage".to_string()
         };
         t_norm.status = if !t.status.trim().is_empty() {
             to_bpsl_status(&t.status).to_string()
+        } else if normalized_col == "Completed" || normalized_col == "Cancelled" {
+            "Closed".to_string()
         } else {
-            normalized_col
+            "Open".to_string()
         };
         let t = &t_norm;
         // Never re-insert a row that has a queued DELETE.

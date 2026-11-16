@@ -9,8 +9,8 @@ use crate::components::ui::dropdown_menu::{
 use crate::components::ui::input::Input;
 use crate::components::ui::toast::ToastState;
 use crate::icons::{
-    CheckIcon, EyeIcon, EyeOffIcon, GripVerticalIcon, PanelRightIcon, PencilIcon, PlusIcon,
-    SearchIcon, TrashIcon,
+    CheckIcon, EyeIcon, EyeOffIcon, GripVerticalIcon, PanelRightIcon, PaperclipIcon, PencilIcon,
+    PlusIcon, SearchIcon, TrashIcon,
 };
 
 use super::components::{ColumnContextMenu, TicketContextMenu};
@@ -24,6 +24,7 @@ use super::types::{
 pub struct KanbanBoardProps {
     pub search_query: Signal<String>,
     pub selected_priority: Signal<String>,
+    pub selected_status: Signal<String>,
     pub col_limits: Signal<std::collections::HashMap<String, usize>>,
     pub hidden_views: Signal<std::collections::HashSet<String>>,
     pub hide_empty_views: Signal<bool>,
@@ -46,6 +47,8 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
     let mut search_query = props.search_query;
     let mut selected_priority = props.selected_priority;
     let filter_prio = selected_priority.read().clone();
+    let mut selected_status = props.selected_status;
+    let filter_status = selected_status.read().clone();
     let mut col_limits = props.col_limits;
     let mut hidden_views = props.hidden_views;
     let mut hide_empty_views = props.hide_empty_views;
@@ -70,27 +73,37 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
     };
 
     let mut move_to_column_end = move |src_id: String, target_col: String| {
+        let (sheet_kanban, sheet_status) = match target_col.as_str() {
+            "Pending" => ("Pending", "Open"),
+            "InProgress" => ("In Progress", "Open"),
+            "Hold" | "Onhold" => ("Hold", "Open"),
+            "Solved" => ("Solved", "Open"),
+            "Completed" => ("Solved(closed)", "Closed"),
+            "Cancelled" => ("Cancelled", "Closed"),
+            _ => (target_col.as_str(), "Open"),
+        };
+
         let mut list = state.tickets.write();
         if let Some(pos) = list.iter().position(|t| t.id == src_id) {
             let mut item = list.remove(pos);
             let num = item.ticket_id;
-            let old_status = item.status.clone();
-            item.status = target_col.clone();
+            let old_kanban = item.kanban_state.clone();
+            item.status = sheet_status.to_string();
             item.kanban_state = target_col.clone();
-            item.stage = target_col.clone();
-            list.push(item);
+            // stage is preserved
+            list.push(item.clone());
 
             let _ = crate::db::update_ticket_status(num, &target_col);
-            crate::sync::enqueue_update(
-                num,
-                serde_json::json!({
-                    "kanban_state": target_col.clone(),
-                    "stage": target_col.clone(),
-                    "status": target_col.clone(),
-                }),
-            );
+            let mut payload = serde_json::json!({
+                "kanban_state": sheet_kanban,
+                "status": sheet_status,
+            });
+            if !item.stage.is_empty() {
+                payload["stage"] = serde_json::json!(item.stage.clone());
+            }
+            crate::sync::enqueue_update(num, payload);
 
-            if old_status != target_col {
+            if old_kanban != target_col {
                 let label = column_display_label(&target_col);
                 toast.success("Status Updated", format!("{src_id} moved to {label}"));
             }
@@ -101,31 +114,41 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
         if src_id == target_card_id {
             return;
         }
+        let (sheet_kanban, sheet_status) = match target_col.as_str() {
+            "Pending" => ("Pending", "Open"),
+            "InProgress" => ("In Progress", "Open"),
+            "Hold" | "Onhold" => ("Hold", "Open"),
+            "Solved" => ("Solved", "Open"),
+            "Completed" => ("Solved(closed)", "Closed"),
+            "Cancelled" => ("Cancelled", "Closed"),
+            _ => (target_col.as_str(), "Open"),
+        };
+
         let mut list = state.tickets.write();
         if let Some(src_pos) = list.iter().position(|t| t.id == src_id) {
             let mut item = list.remove(src_pos);
             let num = item.ticket_id;
-            let old_status = item.status.clone();
-            item.status = target_col.clone();
+            let old_kanban = item.kanban_state.clone();
+            item.status = sheet_status.to_string();
             item.kanban_state = target_col.clone();
-            item.stage = target_col.clone();
+            // stage is preserved
             if let Some(target_pos) = list.iter().position(|t| t.id == target_card_id) {
-                list.insert(target_pos, item);
+                list.insert(target_pos, item.clone());
             } else {
-                list.push(item);
+                list.push(item.clone());
             }
 
             let _ = crate::db::update_ticket_status(num, &target_col);
-            crate::sync::enqueue_update(
-                num,
-                serde_json::json!({
-                    "kanban_state": target_col.clone(),
-                    "stage": target_col.clone(),
-                    "status": target_col.clone(),
-                }),
-            );
+            let mut payload = serde_json::json!({
+                "kanban_state": sheet_kanban,
+                "status": sheet_status,
+            });
+            if !item.stage.is_empty() {
+                payload["stage"] = serde_json::json!(item.stage.clone());
+            }
+            crate::sync::enqueue_update(num, payload);
 
-            if old_status != target_col {
+            if old_kanban != target_col {
                 let label = column_display_label(&target_col);
                 toast.success("Moved & Reordered", format!("{src_id} moved to {label}"));
             } else {
@@ -152,6 +175,30 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                 }
 
                 div { class: "flex flex-wrap items-center gap-2",
+                    div { class: "flex items-center gap-1.5",
+                        span { class: "text-xs font-medium text-muted-foreground mr-1",
+                            "Status:"
+                        }
+                        for st in ["All", "Open", "Closed"] {
+                            {
+                                let is_sel = filter_status == st;
+                                let btn_variant = if is_sel { "default" } else { "outline" };
+                                rsx! {
+                                    Button {
+                                        variant: "{btn_variant}",
+                                        size: "sm",
+                                        key: "st-{st}",
+                                        class: "h-7 px-2.5 text-xs",
+                                        onclick: move |_| selected_status.set(st.to_string()),
+                                        "{st}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    div { class: "h-4 w-px bg-border/60 mx-1 hidden sm:block" }
+
                     div { class: "flex items-center gap-1.5",
                         span { class: "text-xs font-medium text-muted-foreground mr-1",
                             "Priority:"
@@ -626,10 +673,25 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                                                                 }
                                                                             }
                                                                             div { class: "flex items-center gap-1 shrink-0",
+                                                                                span {
+                                                                                    class: if ticket.status.eq_ignore_ascii_case("Open") {
+                                                                                        "inline-flex items-center gap-1 text-[9px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded px-1.5 py-0.2"
+                                                                                    } else {
+                                                                                        "inline-flex items-center gap-1 text-[9px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-500/10 border border-slate-500/30 rounded px-1.5 py-0.2"
+                                                                                    },
+                                                                                    span {
+                                                                                        class: if ticket.status.eq_ignore_ascii_case("Open") {
+                                                                                            "size-1.5 rounded-full bg-emerald-500 animate-pulse"
+                                                                                        } else {
+                                                                                            "size-1.5 rounded-full bg-slate-400"
+                                                                                        }
+                                                                                    }
+                                                                                    "{ticket.status}"
+                                                                                }
                                                                                 Badge {
-                                                                                    variant: "{status_badge_variant(&ticket_status)}",
-                                                                                    class: "text-[10px] font-semibold {status_badge_class(&ticket_status)}",
-                                                                                    "{column_display_label(&ticket_status)}"
+                                                                                    variant: "{status_badge_variant(&ticket.kanban_state)}",
+                                                                                    class: "text-[10px] font-semibold {status_badge_class(&ticket.kanban_state)}",
+                                                                                    "{column_display_label(&ticket.kanban_state)}"
                                                                                 }
                                                                                 Badge {
                                                                                     variant: "{priority_badge(&priority)}",
@@ -671,6 +733,16 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                                                             "{title}"
                                                                         }
 
+                                                                        if !ticket.stage.is_empty() && ticket.stage != "Triage" && ticket.stage != ticket.kanban_state {
+                                                                            div { class: "flex items-center gap-1",
+                                                                                span {
+                                                                                    class: "inline-flex items-center rounded bg-secondary/80 border border-border/60 px-1.5 py-0.5 text-[10px] font-mono font-medium text-foreground/80 truncate max-w-full",
+                                                                                    title: "Action / Stage: {ticket.stage}",
+                                                                                    "{ticket.stage}"
+                                                                                }
+                                                                            }
+                                                                        }
+
                                                                         div { class: "flex flex-col gap-0.5 text-[11px] pt-0.5",
                                                                             div { class: "flex items-center justify-between gap-1.5 text-muted-foreground",
                                                                                 span { class: "font-medium text-foreground truncate", "{ticket.emp_name()}" }
@@ -693,9 +765,22 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                                                     }
 
                                                                     div { class: "mt-1 flex items-center justify-between pt-2 border-t border-border/40 text-xs",
-                                                                        div { class: "flex items-center gap-1 pointer-events-auto",
-                                                                            span { class: "rounded-md bg-muted/80 px-2 py-0.5 text-[10px] font-medium text-muted-foreground mr-1",
+                                                                        div { class: "flex items-center gap-1.5 pointer-events-auto flex-wrap",
+                                                                            span { class: "rounded-md bg-muted/80 px-2 py-0.5 text-[10px] font-medium text-muted-foreground",
                                                                                 "{category}"
+                                                                            }
+                                                                            if !ticket.rating_avg_text.is_empty() && ticket.rating_avg_text != "Unrated" {
+                                                                                span {
+                                                                                    class: "inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-500 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.2",
+                                                                                    "★ {ticket.rating_avg_text}"
+                                                                                }
+                                                                            }
+                                                                            if !ticket.attachment_name.is_empty() || !ticket.attachment_url.is_empty() {
+                                                                                span {
+                                                                                    class: "inline-flex items-center text-muted-foreground hover:text-primary transition-colors cursor-pointer",
+                                                                                    title: if !ticket.attachment_name.is_empty() { "{ticket.attachment_name}" } else { "{ticket.attachment_url}" },
+                                                                                    PaperclipIcon { class: "size-3 text-muted-foreground/80" }
+                                                                                }
                                                                             }
                                                                         }
                                                                         {

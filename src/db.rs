@@ -598,17 +598,76 @@ pub fn get_all_tickets() -> Vec<DbTicket> {
     }
 }
 
-/// Updates the kanban_state, stage, status, and last_updated_on of a ticket in `tickets` table.
+/// Updates the kanban_state, status, and last_updated_on of a ticket in `tickets` table without overwriting stage.
 pub fn update_ticket_status(ticket_id: i64, new_kanban_state: &str) -> Result<()> {
     let conn = get_connection()?;
+    let new_status = if new_kanban_state.eq_ignore_ascii_case("Completed")
+        || new_kanban_state.eq_ignore_ascii_case("Solved(closed)")
+        || new_kanban_state.eq_ignore_ascii_case("Solved (closed)")
+        || new_kanban_state.eq_ignore_ascii_case("Closed")
+        || new_kanban_state.eq_ignore_ascii_case("Cancelled")
+        || new_kanban_state.eq_ignore_ascii_case("Canceled")
+    {
+        "Closed"
+    } else {
+        "Open"
+    };
+
     conn.execute(
         r#"
         UPDATE tickets
-        SET kanban_state = ?1, stage = ?1, status = ?1, last_updated_on = CURRENT_TIMESTAMP
-        WHERE ticket_id = ?2
+        SET kanban_state = ?1, status = ?2, last_updated_on = CURRENT_TIMESTAMP
+        WHERE ticket_id = ?3
         "#,
-        params![new_kanban_state, ticket_id],
+        params![new_kanban_state, new_status, ticket_id],
     )?;
+    Ok(())
+}
+
+/// Updates kanban_state, optional stage, and optional status of a ticket in `tickets` table.
+pub fn update_ticket_kanban_and_stage(
+    ticket_id: i64,
+    new_kanban_state: &str,
+    new_stage: Option<&str>,
+    new_status: Option<&str>,
+) -> Result<()> {
+    let conn = get_connection()?;
+    let status_str = match new_status {
+        Some(s) => s.to_string(),
+        None => {
+            if new_kanban_state.eq_ignore_ascii_case("Completed")
+                || new_kanban_state.eq_ignore_ascii_case("Solved(closed)")
+                || new_kanban_state.eq_ignore_ascii_case("Solved (closed)")
+                || new_kanban_state.eq_ignore_ascii_case("Closed")
+                || new_kanban_state.eq_ignore_ascii_case("Cancelled")
+                || new_kanban_state.eq_ignore_ascii_case("Canceled")
+            {
+                "Closed".to_string()
+            } else {
+                "Open".to_string()
+            }
+        }
+    };
+
+    if let Some(stg) = new_stage {
+        conn.execute(
+            r#"
+            UPDATE tickets
+            SET kanban_state = ?1, stage = ?2, status = ?3, last_updated_on = CURRENT_TIMESTAMP
+            WHERE ticket_id = ?4
+            "#,
+            params![new_kanban_state, stg, status_str, ticket_id],
+        )?;
+    } else {
+        conn.execute(
+            r#"
+            UPDATE tickets
+            SET kanban_state = ?1, status = ?2, last_updated_on = CURRENT_TIMESTAMP
+            WHERE ticket_id = ?3
+            "#,
+            params![new_kanban_state, status_str, ticket_id],
+        )?;
+    }
     Ok(())
 }
 

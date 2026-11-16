@@ -126,15 +126,25 @@ pub fn EditTicketDialog(mut props: EditTicketDialogProps) -> Element {
                         api_fields.insert("time_spent".to_string(), serde_json::Value::Number(n));
                     }
                 }
-                if current.kanban_state != kanban_val {
+                if current.kanban_state != kanban_val || current.stage != stage_val || current.status != status_val {
+                    let sheet_kanban = match kanban_val.as_str() {
+                        "InProgress" => "In Progress",
+                        "Hold" => "Hold",
+                        "Solved" => "Solved",
+                        "Completed" => "Solved(closed)",
+                        "Cancelled" => "Cancelled",
+                        other => other,
+                    };
                     api_fields.insert(
                         "kanban_state".to_string(),
-                        serde_json::Value::String(kanban_val.clone()),
+                        serde_json::Value::String(sheet_kanban.to_string()),
                     );
-                    api_fields.insert(
-                        "stage".to_string(),
-                        serde_json::Value::String(stage_val.clone()),
-                    );
+                    if !stage_val.is_empty() {
+                        api_fields.insert(
+                            "stage".to_string(),
+                            serde_json::Value::String(stage_val.clone()),
+                        );
+                    }
                     api_fields.insert(
                         "status".to_string(),
                         serde_json::Value::String(status_val.clone()),
@@ -163,7 +173,7 @@ pub fn EditTicketDialog(mut props: EditTicketDialogProps) -> Element {
             current.sla_deadline = sla_dead_val.clone();
             current.rating_avg_text = rating_val.clone();
             current.kanban_state = kanban_val.clone();
-            current.status = kanban_val.clone();
+            current.status = status_val.clone();
             current.stage = stage_val.clone();
             current.last_updated_on = "Just now".to_string();
 
@@ -343,20 +353,44 @@ pub fn EditTicketDialog(mut props: EditTicketDialogProps) -> Element {
                                         }
                                     }
                                     div { class: "flex flex-col gap-1",
-                                        label { class: "text-[11px] font-semibold text-foreground", "Status" }
+                                        label { class: "text-[11px] font-semibold text-foreground", "Kanban Column" }
                                         select {
                                             class: "h-9 rounded-md border border-border/80 bg-card px-2 text-xs text-foreground focus:border-primary focus:outline-none cursor-pointer",
                                             value: "{edit_kanban_state}",
                                             onchange: move |e: FormEvent| {
                                                 let val = e.value();
                                                 edit_kanban_state.set(val.clone());
-                                                edit_stage.set(val.clone());
-                                                edit_status.set(val);
+                                                let st = if val == "Completed" || val == "Cancelled" { "Closed" } else { "Open" };
+                                                edit_status.set(st.to_string());
                                             },
                                             option { value: "Pending", "Pending" }
                                             option { value: "InProgress", "In Progress" }
-                                            option { value: "Onhold", "Solved" }
+                                            option { value: "Hold", "On Hold" }
+                                            option { value: "Solved", "Solved" }
                                             option { value: "Completed", "Solved (Closed)" }
+                                            option { value: "Cancelled", "Cancelled" }
+                                        }
+                                    }
+                                }
+
+                                div { class: "grid grid-cols-1 sm:grid-cols-2 gap-3",
+                                    div { class: "flex flex-col gap-1",
+                                        label { class: "text-[11px] font-semibold text-foreground", "Action / Stage Tag" }
+                                        input {
+                                            class: "h-9 rounded-md border border-border/80 bg-card px-2.5 text-xs text-foreground focus:border-primary focus:outline-none font-mono",
+                                            placeholder: "e.g. WB,SALE ORDER,AMD, Backend...",
+                                            value: "{edit_stage}",
+                                            oninput: move |e: FormEvent| edit_stage.set(e.value()),
+                                        }
+                                    }
+                                    div { class: "flex flex-col gap-1",
+                                        label { class: "text-[11px] font-semibold text-foreground", "Status (Lifecycle)" }
+                                        select {
+                                            class: "h-9 rounded-md border border-border/80 bg-card px-2 text-xs text-foreground focus:border-primary focus:outline-none cursor-pointer",
+                                            value: "{edit_status}",
+                                            onchange: move |e: FormEvent| edit_status.set(e.value()),
+                                            option { value: "Open", "Open" }
+                                            option { value: "Closed", "Closed" }
                                         }
                                     }
                                 }

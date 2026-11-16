@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::components::ui::button::Button;
-use crate::components::ui::data_table::{DataTable, DataTableFilter};
+use crate::components::ui::data_table::DataTable;
 use crate::components::ui::tabs::{Tabs, TabsContent, TabsList, TabsTrigger};
 use crate::components::ui::toast::ToastState;
 use crate::icons::PlusIcon;
@@ -13,9 +13,10 @@ pub mod table_view;
 pub mod types;
 
 // Re-export items for backwards compatibility across the project
-pub use components::AttachmentPicker;
+pub use components::{AdvancedFilterBar, AdvancedFilterState, AttachmentPicker};
 pub use dialogs::{AddCustomViewDialog, CreateTicketDialog, EditTicketDialog, ViewTicketDialog};
 pub use kanban::KanbanBoard;
+#[allow(unused_imports)]
 pub use table_view::{
     ticket_columns, ticket_filter_value, ticket_priority_filter_value, ticket_row_id,
     ticket_search_text,
@@ -42,6 +43,7 @@ pub fn Tickets() -> Element {
 
     let search_query = use_signal(String::new);
     let selected_priority = use_signal(|| "All".to_string());
+    let selected_status = use_signal(|| "All".to_string());
     let col_limits = use_signal(std::collections::HashMap::<String, usize>::new);
 
     let mut custom_views = use_signal(load_custom_kanban_views);
@@ -70,7 +72,14 @@ pub fn Tickets() -> Element {
                 is_custom: false,
             },
             KanbanViewDef {
-                id: "Onhold".to_string(),
+                id: "Hold".to_string(),
+                title: "On Hold".to_string(),
+                subtitle: "Waiting / paused".to_string(),
+                dot_color: "bg-orange-500".to_string(),
+                is_custom: false,
+            },
+            KanbanViewDef {
+                id: "Solved".to_string(),
                 title: "Solved".to_string(),
                 subtitle: "Solved, awaiting close".to_string(),
                 dot_color: "bg-purple-500".to_string(),
@@ -81,6 +90,13 @@ pub fn Tickets() -> Element {
                 title: "Solved (Closed)".to_string(),
                 subtitle: "Resolved & closed".to_string(),
                 dot_color: "bg-success".to_string(),
+                is_custom: false,
+            },
+            KanbanViewDef {
+                id: "Cancelled".to_string(),
+                title: "Cancelled".to_string(),
+                subtitle: "Cancelled / duplicate".to_string(),
+                dot_color: "bg-slate-400".to_string(),
                 is_custom: false,
             },
         ];
@@ -99,6 +115,7 @@ pub fn Tickets() -> Element {
     let grouped_columns = use_memo(move || {
         let q = search_query.read().trim().to_lowercase();
         let filter_prio = selected_priority.read().clone();
+        let filter_stat = selected_status.read().clone();
         let defs = all_view_defs.read().clone();
         let mut map: std::collections::HashMap<String, Vec<TicketItem>> = std::collections::HashMap::new();
         for def in &defs {
@@ -107,6 +124,9 @@ pub fn Tickets() -> Element {
 
         for t in tickets.read().iter() {
             if filter_prio != "All" && t.priority != filter_prio {
+                continue;
+            }
+            if filter_stat != "All" && !t.status.eq_ignore_ascii_case(&filter_stat) {
                 continue;
             }
             if !q.is_empty()
@@ -136,8 +156,10 @@ pub fn Tickets() -> Element {
 
             let key = match crate::sync::from_sheet_status(st) {
                 "InProgress" => "InProgress",
-                "Onhold" => "Onhold",
+                "Hold" => "Hold",
+                "Solved" => "Solved",
                 "Completed" => "Completed",
+                "Cancelled" => "Cancelled",
                 _ => "Pending",
             };
             if let Some(list) = map.get_mut(key) {
@@ -225,6 +247,52 @@ pub fn Tickets() -> Element {
     let edit_kanban_state = use_signal(|| "Pending".to_string());
     let edit_stage = use_signal(|| "Pending".to_string());
     let edit_status = use_signal(|| "Pending".to_string());
+
+    // Advanced Filter for IT Data Table
+    let advanced_filter = AdvancedFilterState::new();
+
+    let table_categories = use_memo(move || {
+        let mut set = std::collections::BTreeSet::new();
+        for t in tickets.read().iter() {
+            let c = t.category.trim();
+            if !c.is_empty() {
+                set.insert(c.to_string());
+            }
+        }
+        set.into_iter().collect::<Vec<_>>()
+    });
+
+    let table_assignees = use_memo(move || {
+        let mut set = std::collections::BTreeSet::new();
+        for t in tickets.read().iter() {
+            let a = t.assigned_to.trim();
+            if !a.is_empty() && !a.eq_ignore_ascii_case("unassigned") {
+                set.insert(a.to_string());
+            }
+        }
+        set.into_iter().collect::<Vec<_>>()
+    });
+
+    let table_stages = use_memo(move || {
+        let mut set = std::collections::BTreeSet::new();
+        for t in tickets.read().iter() {
+            let s = t.stage.trim();
+            if !s.is_empty() && s != "Triage" {
+                set.insert(s.to_string());
+            }
+        }
+        set.into_iter().collect::<Vec<_>>()
+    });
+
+    let filtered_table_tickets = use_memo({
+        let filter = advanced_filter.clone();
+        move || {
+            let list = tickets.read().clone();
+            list.into_iter()
+                .filter(|t| filter.matches(t))
+                .collect::<Vec<_>>()
+        }
+    });
 
     // Fetch employee directory in real-time on mount
     use_effect(move || {
@@ -513,6 +581,7 @@ pub fn Tickets() -> Element {
                     KanbanBoard {
                         search_query,
                         selected_priority,
+                        selected_status,
                         col_limits,
                         hidden_views,
                         hide_empty_views,
@@ -531,28 +600,20 @@ pub fn Tickets() -> Element {
                 // IT Data Table View
                 TabsContent {
                     value: "table".to_string(),
-                    class: "flex flex-col flex-1 min-h-0 w-full overflow-hidden pt-2",
+                    class: "flex flex-col flex-1 min-h-0 w-full overflow-hidden pt-2 gap-2.5",
+                    AdvancedFilterBar {
+                        filter: advanced_filter.clone(),
+                        total_count: tickets.read().len(),
+                        filtered_count: filtered_table_tickets.read().len(),
+                        categories: table_categories.read().clone(),
+                        assignees: table_assignees.read().clone(),
+                        stages: table_stages.read().clone(),
+                    }
                     DataTable {
-                        data: tickets.read().clone(),
+                        data: filtered_table_tickets.read().clone(),
                         columns: ticket_columns(),
                         row_id: ticket_row_id,
                         search_text: ticket_search_text,
-                        filter_label: "Status".to_string(),
-                        filter: vec![
-                            DataTableFilter::new("Pending", "Pending"),
-                            DataTableFilter::new("InProgress", "In Progress"),
-                            DataTableFilter::new("Onhold", "Solved"),
-                            DataTableFilter::new("Completed", "Solved (Closed)"),
-                        ],
-                        filter_value: ticket_filter_value as fn(&TicketItem) -> String,
-                        filter2_label: "Priority".to_string(),
-                        filter2: vec![
-                            DataTableFilter::new("Urgent", "Urgent"),
-                            DataTableFilter::new("High", "High"),
-                            DataTableFilter::new("Medium", "Medium"),
-                            DataTableFilter::new("Low", "Low"),
-                        ],
-                        filter2_value: ticket_priority_filter_value as fn(&TicketItem) -> String,
                         on_row_click: move |t: TicketItem| state.open_view(t),
                         on_row_context_menu: move |(t, coords): (TicketItem, (f64, f64))| {
                             table_ctx_ticket.set(Some(t));

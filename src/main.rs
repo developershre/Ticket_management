@@ -136,13 +136,15 @@ fn main() {
             let users: i64 = conn.query_row("SELECT COUNT(*) FROM USERS", [], |r| r.get(0)).unwrap_or(-1);
             let c_pend: i64 = conn.query_row("SELECT COUNT(*) FROM tickets WHERE kanban_state = 'Pending'", [], |r| r.get(0)).unwrap_or(0);
             let c_prog: i64 = conn.query_row("SELECT COUNT(*) FROM tickets WHERE kanban_state = 'InProgress'", [], |r| r.get(0)).unwrap_or(0);
-            let c_hold: i64 = conn.query_row("SELECT COUNT(*) FROM tickets WHERE kanban_state = 'Onhold'", [], |r| r.get(0)).unwrap_or(0);
+            let c_hold: i64 = conn.query_row("SELECT COUNT(*) FROM tickets WHERE kanban_state = 'Hold' OR kanban_state = 'Onhold'", [], |r| r.get(0)).unwrap_or(0);
+            let c_solved: i64 = conn.query_row("SELECT COUNT(*) FROM tickets WHERE kanban_state = 'Solved'", [], |r| r.get(0)).unwrap_or(0);
             let c_done: i64 = conn.query_row("SELECT COUNT(*) FROM tickets WHERE kanban_state = 'Completed'", [], |r| r.get(0)).unwrap_or(0);
+            let c_cancel: i64 = conn.query_row("SELECT COUNT(*) FROM tickets WHERE kanban_state = 'Cancelled'", [], |r| r.get(0)).unwrap_or(0);
             let s_open: i64 = conn.query_row("SELECT COUNT(*) FROM tickets WHERE status = 'Open'", [], |r| r.get(0)).unwrap_or(0);
             let s_closed: i64 = conn.query_row("SELECT COUNT(*) FROM tickets WHERE status = 'Closed'", [], |r| r.get(0)).unwrap_or(0);
             println!(
-                "[sync] local_counts: tickets={} employees={} | columns: Pending={} InProgress={} Onhold(Solved)={} Completed(Solved-closed)={} | status: Open={} Closed={}",
-                tickets, users, c_pend, c_prog, c_hold, c_done, s_open, s_closed
+                "[sync] local_counts: tickets={} employees={} | columns: Pending={} InProgress={} Hold={} Solved={} Solved(closed)={} Cancelled={} | status: Open={} Closed={}",
+                tickets, users, c_pend, c_prog, c_hold, c_solved, c_done, c_cancel, s_open, s_closed
             );
         }
         return;

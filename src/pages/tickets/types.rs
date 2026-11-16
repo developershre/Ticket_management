@@ -2,7 +2,37 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[allow(dead_code)]
-pub const COLUMN_NAMES: &[&str] = &["Pending", "InProgress", "Onhold", "Completed"];
+pub const COLUMN_NAMES: &[&str] = &[
+    "Pending",
+    "InProgress",
+    "Hold",
+    "Solved",
+    "Completed",
+    "Cancelled",
+];
+
+/// Parses an ID string (e.g. "IT-123", "TC-0004", "123") into an i64 ticket ID.
+pub fn parse_ticket_num(id: &str) -> Option<i64> {
+    let s = id.trim();
+    if let Ok(n) = s.parse::<i64>() {
+        return Some(n);
+    }
+    if let Some(rest) = s
+        .strip_prefix("IT-")
+        .or_else(|| s.strip_prefix("it-"))
+        .or_else(|| s.strip_prefix("TC-"))
+        .or_else(|| s.strip_prefix("tc-"))
+    {
+        let trimmed_zeroes = rest.trim_start_matches('0');
+        if let Ok(n) = trimmed_zeroes.parse::<i64>() {
+            return Some(n);
+        }
+        if let Ok(n) = rest.parse::<i64>() {
+            return Some(n);
+        }
+    }
+    None
+}
 
 /// IT Ticket Item model storing all 23 standardized fields.
 #[derive(Clone, PartialEq, Debug)]
@@ -101,14 +131,26 @@ impl TicketItem {
     }
 
     pub fn from_db_ticket(t: crate::db::DbTicket) -> Self {
-        let raw_stage = if !t.kanban_state.is_empty() {
+        let raw_kanban = if !t.kanban_state.trim().is_empty() {
             &t.kanban_state
-        } else if !t.stage.is_empty() {
+        } else if !t.stage.trim().is_empty() {
             &t.stage
         } else {
             &t.status
         };
-        let stage = crate::sync::from_sheet_status(raw_stage).to_string();
+        let kanban_state = crate::sync::from_sheet_status(raw_kanban).to_string();
+        let stage = if !t.stage.trim().is_empty() {
+            t.stage.clone()
+        } else {
+            "Triage".to_string()
+        };
+        let status = if !t.status.trim().is_empty() {
+            t.status.clone()
+        } else if kanban_state == "Completed" || kanban_state == "Cancelled" {
+            "Closed".to_string()
+        } else {
+            "Open".to_string()
+        };
 
         let mut item = Self::new(
             t.ticket_id,
@@ -129,9 +171,9 @@ impl TicketItem {
             &t.sla_status,
             &t.sla_deadline,
             &t.rating_avg_text,
+            &kanban_state,
             &stage,
-            &stage,
-            &stage,
+            &status,
             &t.created_on,
             &t.last_updated_on,
         );
@@ -196,6 +238,80 @@ impl TicketItem {
             "IT Support" => "IT Support",
             other if !other.is_empty() => other,
             _ => "Unassigned",
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn display_tc_id(&self) -> String {
+        format!("TC-{:04}", self.ticket_id)
+    }
+
+    #[allow(dead_code)]
+    pub fn card_display_title(&self) -> String {
+        let prob = self.problem_description.trim();
+        if !prob.is_empty() {
+            prob.to_string()
+        } else if !self.subject.trim().is_empty() {
+            self.subject.trim().to_string()
+        } else {
+            self.title.clone()
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn customer_display(&self) -> String {
+        let name = self.emp_name();
+        if !name.is_empty() && name != "Unassigned" {
+            name
+        } else if !self.customer.trim().is_empty() && self.customer.trim() != "Internal" {
+            self.customer.trim().to_string()
+        } else {
+            "N/A".to_string()
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn department_display(&self) -> String {
+        let code = self.emp_code_only();
+        if !code.is_empty() {
+            if let Some(emp) = crate::db::find_employee_by_code(code) {
+                if !emp.department.trim().is_empty() {
+                    return emp.department.trim().to_string();
+                }
+            }
+        }
+        if !self.category.trim().is_empty() {
+            return self.category.trim().to_string();
+        }
+        "Admin".to_string()
+    }
+
+    #[allow(dead_code)]
+    pub fn division_display(&self) -> String {
+        let code = self.emp_code_only();
+        if !code.is_empty() {
+            if let Some(emp) = crate::db::find_employee_by_code(code) {
+                if !emp.division.trim().is_empty() {
+                    return emp.division.trim().to_string();
+                }
+                if emp.emp_email.trim().contains('@') {
+                    return emp.emp_email.trim().to_string();
+                }
+            }
+        }
+        if self.email_address.trim().contains('@') && !self.email_address.trim().is_empty() {
+            return self.email_address.trim().to_string();
+        }
+        "N/A".to_string()
+    }
+
+    #[allow(dead_code)]
+    pub fn assignee_card_display(&self) -> String {
+        let a = self.assigned_to.trim();
+        if a.is_empty() || a.eq_ignore_ascii_case("unassigned") {
+            "Unassigned".to_string()
+        } else {
+            a.to_string()
         }
     }
 }
@@ -277,9 +393,104 @@ pub fn column_display_label(col: &str) -> &'static str {
     match col {
         "Pending" => "Pending",
         "InProgress" => "In Progress",
-        "Onhold" => "Solved",
+        "Hold" | "Onhold" => "On Hold",
+        "Solved" => "Solved",
         "Completed" => "Solved (Closed)",
+        "Cancelled" => "Cancelled",
         _ => "Custom View",
+    }
+}
+
+#[allow(dead_code)]
+pub fn format_card_datetime(raw: &str) -> String {
+    let s = raw.trim();
+    if s.is_empty() {
+        return "N/A".to_string();
+    }
+    if let Some((y, m, d, h, mi)) = crate::state::parse_datetime_flexible(s) {
+        let am_pm = if h >= 12 { "PM" } else { "AM" };
+        let h12 = match h % 12 {
+            0 => 12,
+            other => other,
+        };
+        format!("{:04}-{:02}-{:02} {:02}:{:02} {}", y, m, d, h12, mi, am_pm)
+    } else {
+        s.to_string()
+    }
+}
+
+#[allow(dead_code)]
+pub fn card_border_accent_class(col: &str) -> &'static str {
+    match col {
+        "Hold" | "Onhold" => "border-l-4 border-l-amber-500",
+        "Cancelled" => "border-l-4 border-l-red-500",
+        "Completed" => "border-l-4 border-l-emerald-600",
+        "InProgress" => "border-l-4 border-l-sky-500",
+        "Pending" => "border-l-4 border-l-amber-400",
+        "Solved" => "border-l-4 border-l-purple-500",
+        _ => "border-l-4 border-l-slate-400",
+    }
+}
+
+#[allow(dead_code)]
+pub fn card_status_pill_label(col: &str) -> &'static str {
+    match col {
+        "Hold" | "Onhold" => "HOLD",
+        "Cancelled" => "CANCELLED",
+        "Completed" => "SOLVED(CLOSED)",
+        "InProgress" => "IN PROGRESS",
+        "Pending" => "PENDING",
+        "Solved" => "SOLVED",
+        _ => "CUSTOM",
+    }
+}
+
+#[allow(dead_code)]
+pub fn card_status_pill_class(col: &str) -> &'static str {
+    match col {
+        "Hold" | "Onhold" => "bg-amber-100 text-amber-900 border border-amber-200/60 dark:bg-amber-950/40 dark:text-amber-200",
+        "Cancelled" => "bg-red-100 text-red-700 border border-red-200/60 dark:bg-red-950/40 dark:text-red-300",
+        "Completed" => "bg-emerald-100 text-emerald-800 border border-emerald-200/60 dark:bg-emerald-950/40 dark:text-emerald-300",
+        "InProgress" => "bg-sky-100 text-sky-800 border border-sky-200/60 dark:bg-sky-950/40 dark:text-sky-300",
+        "Pending" => "bg-amber-100 text-amber-800 border border-amber-200/60 dark:bg-amber-950/40 dark:text-amber-300",
+        "Solved" => "bg-purple-100 text-purple-800 border border-purple-200/60 dark:bg-purple-950/40 dark:text-purple-300",
+        _ => "bg-slate-100 text-slate-800 border border-slate-200/60 dark:bg-slate-800 dark:text-slate-200",
+    }
+}
+
+#[allow(dead_code)]
+pub fn column_header_accent_class(col: &str) -> &'static str {
+    match col {
+        "Hold" | "Onhold" => "bg-amber-400",
+        "Cancelled" => "bg-red-500",
+        "Completed" => "bg-emerald-700",
+        "InProgress" => "bg-sky-500",
+        "Pending" => "bg-amber-400",
+        "Solved" => "bg-purple-600",
+        _ => "bg-slate-400",
+    }
+}
+
+#[allow(dead_code)]
+pub fn column_count_badge_class(col: &str) -> &'static str {
+    match col {
+        "Hold" | "Onhold" => "bg-amber-400 text-slate-950 font-bold",
+        "Cancelled" => "bg-red-500 text-white font-bold",
+        "Completed" => "bg-emerald-700 text-white font-bold",
+        "InProgress" => "bg-sky-500 text-white font-bold",
+        "Pending" => "bg-amber-400 text-slate-950 font-bold",
+        "Solved" => "bg-purple-600 text-white font-bold",
+        _ => "bg-slate-600 text-white font-bold",
+    }
+}
+
+#[allow(dead_code)]
+pub fn priority_pill_class(prio: &str) -> &'static str {
+    match prio {
+        "Critical" | "High" => "bg-red-500 text-white",
+        "Medium" => "bg-amber-400 text-slate-950",
+        "Low" => "bg-sky-500 text-white",
+        _ => "bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200",
     }
 }
 
@@ -288,8 +499,10 @@ pub fn column_subtitle(col: &str) -> &'static str {
     match col {
         "Pending" => "New & open",
         "InProgress" => "Active support",
-        "Onhold" => "Solved, awaiting close",
+        "Hold" | "Onhold" => "Waiting / paused",
+        "Solved" => "Solved, awaiting close",
         "Completed" => "Resolved & closed",
+        "Cancelled" => "Cancelled / duplicate",
         _ => "",
     }
 }
@@ -307,10 +520,12 @@ pub fn status_badge_class(status: &str) -> &'static str {
     match status {
         "Pending" => "text-amber-500 dark:text-amber-400 border-amber-500/35 bg-amber-500/15",
         "InProgress" => "text-sky-500 dark:text-sky-400 border-sky-500/35 bg-sky-500/15",
-        "Onhold" => "text-purple-500 dark:text-purple-400 border-purple-500/35 bg-purple-500/15",
+        "Hold" | "Onhold" => "text-orange-500 dark:text-orange-400 border-orange-500/35 bg-orange-500/15",
+        "Solved" => "text-purple-500 dark:text-purple-400 border-purple-500/35 bg-purple-500/15",
         "Completed" => {
             "text-emerald-500 dark:text-emerald-400 border-emerald-500/35 bg-emerald-500/15"
         }
+        "Cancelled" => "text-slate-400 dark:text-slate-400 border-slate-500/35 bg-slate-500/15",
         _ => "text-muted-foreground border-border bg-muted/40",
     }
 }
@@ -319,15 +534,17 @@ pub fn status_badge_variant(status: &str) -> &'static str {
     match status {
         "Pending" => "warning",
         "InProgress" => "info",
-        "Onhold" => "purple",
+        "Hold" | "Onhold" => "warning",
+        "Solved" => "purple",
         "Completed" => "success",
+        "Cancelled" => "secondary",
         _ => "secondary",
     }
 }
 
 pub fn sla_badge_class(sla: &str) -> &'static str {
     match sla {
-        "Within SLA" => {
+        "Within SLA" | "Met" => {
             "text-emerald-500 dark:text-emerald-400 border-emerald-500/35 bg-emerald-500/15"
         }
         "Approaching Breach" => {
@@ -524,8 +741,8 @@ impl TicketContextState {
         self.edit_sla_deadline.set(t.sla_deadline.clone());
         self.edit_rating_avg_text.set(t.rating_avg_text.clone());
         self.edit_kanban_state.set(t.kanban_state.clone());
-        self.edit_stage.set(t.kanban_state.clone());
-        self.edit_status.set(t.kanban_state.clone());
+        self.edit_stage.set(t.stage.clone());
+        self.edit_status.set(t.status.clone());
 
         self.editing_ticket.set(Some(t));
         self.is_edit_open.set(true);
@@ -535,47 +752,61 @@ impl TicketContextState {
 
     pub fn update_status(&mut self, ticket_id: &str, new_status: &str) {
         let mut local_num = None;
-        let mut list = self.tickets.write();
-        if let Some(pos) = list.iter().position(|t| t.id == ticket_id) {
-            list[pos].status = new_status.to_string();
-            list[pos].kanban_state = new_status.to_string();
-            list[pos].stage = new_status.to_string();
-            local_num = Some(list[pos].ticket_id);
+        let mut target_stage = None;
+        let derived_macro_status = if new_status.eq_ignore_ascii_case("Completed")
+            || new_status.eq_ignore_ascii_case("Solved(closed)")
+            || new_status.eq_ignore_ascii_case("Solved (closed)")
+            || new_status.eq_ignore_ascii_case("Closed")
+            || new_status.eq_ignore_ascii_case("Cancelled")
+        {
+            "Closed".to_string()
+        } else {
+            "Open".to_string()
+        };
+
+        {
+            let mut list = self.tickets.write();
+            if let Some(pos) = list.iter().position(|t| t.id == ticket_id) {
+                list[pos].status = derived_macro_status.clone();
+                list[pos].kanban_state = new_status.to_string();
+                target_stage = Some(list[pos].stage.clone());
+                local_num = Some(list[pos].ticket_id);
+            }
         }
-        let num = local_num
-            .or_else(|| {
-                ticket_id
-                    .strip_prefix("IT-")
-                    .and_then(|s| s.parse::<i64>().ok())
-            })
-            .or_else(|| ticket_id.parse::<i64>().ok());
+        let num = local_num.or_else(|| parse_ticket_num(ticket_id));
         if let Some(num) = num {
             let _ = crate::db::update_ticket_status(num, new_status);
-            crate::sync::enqueue_update(
-                num,
-                serde_json::json!({
-                    "kanban_state": new_status,
-                    "stage": new_status,
-                    "status": new_status,
-                }),
-            );
+            let sheet_kanban = match new_status {
+                "InProgress" => "In Progress",
+                "Hold" => "Hold",
+                "Solved" => "Solved",
+                "Completed" => "Solved(closed)",
+                "Cancelled" => "Cancelled",
+                other => other,
+            };
+            let mut payload = serde_json::json!({
+                "kanban_state": sheet_kanban,
+                "status": derived_macro_status,
+            });
+            if let Some(stg) = target_stage {
+                if !stg.is_empty() {
+                    payload["stage"] = serde_json::json!(stg);
+                }
+            }
+            crate::sync::enqueue_update(num, payload);
         }
     }
 
     pub fn update_priority(&mut self, ticket_id: &str, new_priority: &str) {
         let mut local_num = None;
-        let mut list = self.tickets.write();
-        if let Some(pos) = list.iter().position(|t| t.id == ticket_id) {
-            list[pos].priority = new_priority.to_string();
-            local_num = Some(list[pos].ticket_id);
+        {
+            let mut list = self.tickets.write();
+            if let Some(pos) = list.iter().position(|t| t.id == ticket_id) {
+                list[pos].priority = new_priority.to_string();
+                local_num = Some(list[pos].ticket_id);
+            }
         }
-        let num = local_num
-            .or_else(|| {
-                ticket_id
-                    .strip_prefix("IT-")
-                    .and_then(|s| s.parse::<i64>().ok())
-            })
-            .or_else(|| ticket_id.parse::<i64>().ok());
+        let num = local_num.or_else(|| parse_ticket_num(ticket_id));
         if let Some(num) = num {
             let _ = crate::db::update_ticket_priority(num, new_priority);
             crate::sync::enqueue_update(num, serde_json::json!({ "priority": new_priority }));
@@ -584,18 +815,14 @@ impl TicketContextState {
 
     pub fn update_category(&mut self, ticket_id: &str, new_category: &str) {
         let mut local_num = None;
-        let mut list = self.tickets.write();
-        if let Some(pos) = list.iter().position(|t| t.id == ticket_id) {
-            list[pos].category = new_category.to_string();
-            local_num = Some(list[pos].ticket_id);
+        {
+            let mut list = self.tickets.write();
+            if let Some(pos) = list.iter().position(|t| t.id == ticket_id) {
+                list[pos].category = new_category.to_string();
+                local_num = Some(list[pos].ticket_id);
+            }
         }
-        let num = local_num
-            .or_else(|| {
-                ticket_id
-                    .strip_prefix("IT-")
-                    .and_then(|s| s.parse::<i64>().ok())
-            })
-            .or_else(|| ticket_id.parse::<i64>().ok());
+        let num = local_num.or_else(|| parse_ticket_num(ticket_id));
         if let Some(num) = num {
             let _ = crate::db::update_ticket_category(num, new_category);
             crate::sync::enqueue_update(num, serde_json::json!({ "category": new_category }));
@@ -604,19 +831,15 @@ impl TicketContextState {
 
     pub fn update_assignee(&mut self, ticket_id: &str, new_assignee: &str) {
         let mut local_num = None;
-        let mut list = self.tickets.write();
-        if let Some(pos) = list.iter().position(|t| t.id == ticket_id) {
-            list[pos].assigned_to = new_assignee.to_string();
-            list[pos].assignee = new_assignee.to_string();
-            local_num = Some(list[pos].ticket_id);
+        {
+            let mut list = self.tickets.write();
+            if let Some(pos) = list.iter().position(|t| t.id == ticket_id) {
+                list[pos].assigned_to = new_assignee.to_string();
+                list[pos].assignee = new_assignee.to_string();
+                local_num = Some(list[pos].ticket_id);
+            }
         }
-        let num = local_num
-            .or_else(|| {
-                ticket_id
-                    .strip_prefix("IT-")
-                    .and_then(|s| s.parse::<i64>().ok())
-            })
-            .or_else(|| ticket_id.parse::<i64>().ok());
+        let num = local_num.or_else(|| parse_ticket_num(ticket_id));
         if let Some(num) = num {
             let _ = crate::db::update_ticket_assignee(num, new_assignee);
             crate::sync::enqueue_update(num, serde_json::json!({ "assigned_to": new_assignee }));
@@ -624,6 +847,25 @@ impl TicketContextState {
     }
 
     pub fn move_column_tickets(&mut self, from_col: &str, to_col: &str) {
+        let derived_macro_status = if to_col.eq_ignore_ascii_case("Completed")
+            || to_col.eq_ignore_ascii_case("Solved(closed)")
+            || to_col.eq_ignore_ascii_case("Solved (closed)")
+            || to_col.eq_ignore_ascii_case("Closed")
+            || to_col.eq_ignore_ascii_case("Cancelled")
+        {
+            "Closed".to_string()
+        } else {
+            "Open".to_string()
+        };
+        let sheet_kanban = match to_col {
+            "InProgress" => "In Progress",
+            "Hold" => "Hold",
+            "Solved" => "Solved",
+            "Completed" => "Solved(closed)",
+            "Cancelled" => "Cancelled",
+            other => other,
+        };
+
         let mut list = self.tickets.write();
         for t in list.iter_mut() {
             let current = if !t.kanban_state.is_empty() {
@@ -635,18 +877,17 @@ impl TicketContextState {
             };
             if current == from_col {
                 t.kanban_state = to_col.to_string();
-                t.stage = to_col.to_string();
-                t.status = to_col.to_string();
+                t.status = derived_macro_status.clone();
                 let num = t.ticket_id;
                 let _ = crate::db::update_ticket_status(num, to_col);
-                crate::sync::enqueue_update(
-                    num,
-                    serde_json::json!({
-                        "kanban_state": to_col,
-                        "stage": to_col,
-                        "status": to_col,
-                    }),
-                );
+                let mut payload = serde_json::json!({
+                    "kanban_state": sheet_kanban,
+                    "status": derived_macro_status,
+                });
+                if !t.stage.is_empty() {
+                    payload["stage"] = serde_json::json!(t.stage.clone());
+                }
+                crate::sync::enqueue_update(num, payload);
             }
         }
     }
@@ -658,12 +899,7 @@ impl TicketContextState {
             .iter()
             .find(|t| t.id == ticket_id)
             .map(|t| t.ticket_id)
-            .or_else(|| {
-                ticket_id
-                    .strip_prefix("IT-")
-                    .and_then(|s| s.parse::<i64>().ok())
-            })
-            .or_else(|| ticket_id.parse::<i64>().ok());
+            .or_else(|| parse_ticket_num(ticket_id));
 
         if let Some(num) = local_id {
             crate::sync::enqueue_delete(num);

@@ -108,8 +108,17 @@ pub fn CreateTicketDialog(mut props: CreateTicketDialogProps) -> Element {
         let rating_val = "Unrated".to_string();
 
         let kanban_val = create_kanban_state.read().clone();
-        let stage_val = "Triage".to_string();
-        let status_val = "Open".to_string();
+        let stage_raw = state.create_stage.read().clone();
+        let stage_val = if stage_raw.trim().is_empty() {
+            "Triage".to_string()
+        } else {
+            stage_raw.trim().to_string()
+        };
+        let status_val = if kanban_val == "Completed" || kanban_val == "Cancelled" {
+            "Closed".to_string()
+        } else {
+            "Open".to_string()
+        };
 
         let input = crate::db::NewTicketInput {
             employee_code: emp_combined.clone(),

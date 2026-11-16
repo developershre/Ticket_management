@@ -75,11 +75,13 @@ pub fn TicketContextMenu(props: TicketContextMenuProps) -> Element {
                 ContextMenuSub {
                     ContextMenuSubTrigger { "Change Status" }
                     ContextMenuSubContent {
-                        for & (code , label) in &[
+                        for &(code, label) in &[
                             ("Pending", "Pending"),
                             ("InProgress", "In Progress"),
-                            ("Onhold", "Solved"),
+                            ("Hold", "On Hold"),
+                            ("Solved", "Solved"),
                             ("Completed", "Solved (Closed)"),
+                            ("Cancelled", "Cancelled"),
                         ] {
                             {
                                 let is_active = current_status == code;
@@ -295,11 +297,13 @@ pub fn TableFloatingContextMenu(props: TableFloatingContextMenuProps) -> Element
             ContextMenuSub {
                 ContextMenuSubTrigger { "Change Status" }
                 ContextMenuSubContent {
-                    for & (code , label) in &[
+                    for &(code, label) in &[
                         ("Pending", "Pending"),
                         ("InProgress", "In Progress"),
-                        ("Onhold", "Solved"),
+                        ("Hold", "On Hold"),
+                        ("Solved", "Solved"),
                         ("Completed", "Solved (Closed)"),
+                        ("Cancelled", "Cancelled"),
                     ] {
                         {
                             let is_active = current_status == code;

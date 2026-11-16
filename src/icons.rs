@@ -28,6 +28,23 @@ pub fn ChevronLeftIcon(props: IconProps) -> Element {
     }
 }
 
+#[allow(dead_code)]
+#[component]
+pub fn ChevronDownIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "m6 9 6 6 6-6" }
+        }
+    }
+}
+
 #[component]
 pub fn ChevronRightIcon(props: IconProps) -> Element {
     rsx! {

@@ -134,11 +134,13 @@ pub fn TicketActionsCell(ticket: TicketItem) -> Element {
                     DropdownMenuSub {
                         DropdownMenuSubTrigger { "Change Status" }
                         DropdownMenuSubContent {
-                            for & (code , label) in &[
+                            for &(code, label) in &[
                                 ("Pending", "Pending"),
                                 ("InProgress", "In Progress"),
-                                ("Onhold", "On Hold"),
-                                ("Completed", "Completed"),
+                                ("Hold", "On Hold"),
+                                ("Solved", "Solved"),
+                                ("Completed", "Solved (Closed)"),
+                                ("Cancelled", "Cancelled"),
                             ] {
                                 {
                                     let mut state = state;
@@ -235,12 +237,45 @@ pub fn render_category_cell(t: &TicketItem) -> Element {
 }
 
 pub fn render_status_cell(t: &TicketItem) -> Element {
-    let status = t.status.clone();
-    let variant = status_badge_variant(&status);
-    let class = status_badge_class(&status);
-    let label = column_display_label(&status);
+    let kanban = t.kanban_state.clone();
+    let variant = status_badge_variant(&kanban);
+    let class = status_badge_class(&kanban);
+    let label = column_display_label(&kanban);
+    let is_open = t.status.eq_ignore_ascii_case("Open");
     rsx! {
-        Badge { variant: "{variant}", class: "text-[10px] font-semibold {class}", "{label}" }
+        div { class: "flex items-center gap-1.5 flex-wrap",
+            span {
+                class: if is_open {
+                    "inline-flex items-center gap-1 text-[9px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded px-1.5 py-0.2"
+                } else {
+                    "inline-flex items-center gap-1 text-[9px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-500/10 border border-slate-500/30 rounded px-1.5 py-0.2"
+                },
+                span {
+                    class: if is_open {
+                        "size-1.5 rounded-full bg-emerald-500 animate-pulse"
+                    } else {
+                        "size-1.5 rounded-full bg-slate-400"
+                    }
+                }
+                "{t.status}"
+            }
+            Badge { variant: "{variant}", class: "text-[10px] font-semibold {class}", "{label}" }
+        }
+    }
+}
+
+pub fn render_stage_cell(t: &TicketItem) -> Element {
+    let stage = t.stage.clone();
+    rsx! {
+        if !stage.is_empty() && stage != "Triage" && stage != t.kanban_state {
+            span {
+                class: "inline-flex items-center rounded bg-secondary/80 border border-border/60 px-1.5 py-0.5 text-[10px] font-mono font-medium text-foreground/80 truncate max-w-[150px]",
+                title: "Action / Stage: {stage}",
+                "{stage}"
+            }
+        } else {
+            span { class: "text-muted-foreground/50 text-[11px]", "—" }
+        }
     }
 }
 
@@ -303,10 +338,12 @@ pub fn ticket_row_id(t: &TicketItem) -> String {
     t.id.clone()
 }
 
+#[allow(dead_code)]
 pub fn ticket_filter_value(t: &TicketItem) -> String {
     t.status.clone()
 }
 
+#[allow(dead_code)]
 pub fn ticket_priority_filter_value(t: &TicketItem) -> String {
     t.priority.clone()
 }
@@ -336,6 +373,12 @@ pub fn ticket_columns() -> Vec<DataTableColumn<TicketItem>> {
             "Subject & Requester",
             render_title_cell,
             |t: &TicketItem| SortValue::Text(t.title.clone()),
+        ),
+        DataTableColumn::new(
+            "stage",
+            "Action / Stage",
+            render_stage_cell,
+            |t: &TicketItem| SortValue::Text(t.stage.clone()),
         ),
         DataTableColumn::new(
             "category",
