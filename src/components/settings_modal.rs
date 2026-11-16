@@ -103,6 +103,10 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
     let mut base_url = use_signal(|| initial_url);
     let mut api_key = use_signal(|| initial_key);
     let mut employee_code = use_signal(|| initial_emp);
+    let initial_profile = crate::db::get_active_sheet_profile();
+    let mut active_profile = use_signal(|| initial_profile);
+    let initial_protocol = crate::db::get_system_api_protocol().unwrap_or_else(|| "auto".to_string());
+    let mut api_protocol = use_signal(|| initial_protocol);
     let mut show_key = use_signal(|| false);
     let mut test_status = use_signal(|| TestStatus::Idle);
     let mut is_saving = use_signal(|| false);
@@ -161,6 +165,8 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         let url = base_url.read().trim().to_string();
         let key = api_key.read().trim().to_string();
         let emp = employee_code.read().trim().to_string();
+        let prof = active_profile.read().clone();
+        let proto = api_protocol.read().trim().to_string();
 
         if url.is_empty() {
             toast.error("Validation Error", "Google Apps Script Web App URL cannot be empty.");
@@ -169,10 +175,16 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
 
         is_saving.set(true);
 
-        if let Err(e) = crate::db::save_system_api_config(&url, &key, &emp) {
+        if let Err(e) = crate::db::save_sheet_profile_config(&prof, &url, &key) {
             is_saving.set(false);
             toast.error("Failed to Save Settings", format!("Database error: {e}"));
             return;
+        }
+        if !emp.is_empty() {
+            let _ = crate::db::sync_meta_set("system_employee_code", &emp);
+        }
+        if proto != "auto" {
+            let _ = crate::db::save_system_api_protocol(&proto);
         }
 
         match crate::sync::reload_client() {
@@ -380,6 +392,66 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                     }
                                 }
 
+                                // Google Sheet Profile Switcher (No API Key vs API Key)
+                                div { class: "flex flex-col gap-2 rounded-xl border border-border/70 bg-muted/30 p-3.5",
+                                    div { class: "flex items-center justify-between",
+                                        span { class: "text-xs font-semibold text-foreground", "Active Google Sheet" }
+                                        span { class: "text-[10px] text-muted-foreground font-mono",
+                                            if *active_profile.read() == "rest" { "BPSL REST (No Key)" } else { "Legacy v1 (API Key)" }
+                                        }
+                                    }
+                                    div { class: "grid grid-cols-2 gap-2",
+                                        button {
+                                            r#type: "button",
+                                            class: if *active_profile.read() == "rest" {
+                                                "cursor-pointer rounded-lg border border-primary bg-primary/10 px-3 py-2 text-left transition-colors"
+                                            } else {
+                                                "cursor-pointer rounded-lg border border-border/70 bg-background px-3 py-2 text-left hover:bg-muted/50 transition-colors"
+                                            },
+                                            onclick: move |_| {
+                                                active_profile.set("rest".to_string());
+                                                api_protocol.set("rest".to_string());
+                                                let (u, k) = crate::db::get_sheet_profile_config("rest");
+                                                base_url.set(u);
+                                                api_key.set(k);
+                                                test_status.set(TestStatus::Idle);
+                                                if crate::sync::switch_sheet_profile_and_sync("rest").is_ok() {
+                                                    if let Some(mut r) = db_sync {
+                                                        r.with_mut(|rev| rev.0 += 1);
+                                                    }
+                                                    toast.success("Switched Sheet", "Now syncing from BPSL Sheet (No API Key).");
+                                                }
+                                            },
+                                            div { class: "text-xs font-semibold text-foreground", "Sheet 1: No API Key" }
+                                            div { class: "text-[10px] text-muted-foreground", "BPSL REST (?api=tickets)" }
+                                        }
+                                        button {
+                                            r#type: "button",
+                                            class: if *active_profile.read() == "v1" {
+                                                "cursor-pointer rounded-lg border border-primary bg-primary/10 px-3 py-2 text-left transition-colors"
+                                            } else {
+                                                "cursor-pointer rounded-lg border border-border/70 bg-background px-3 py-2 text-left hover:bg-muted/50 transition-colors"
+                                            },
+                                            onclick: move |_| {
+                                                active_profile.set("v1".to_string());
+                                                api_protocol.set("v1".to_string());
+                                                let (u, k) = crate::db::get_sheet_profile_config("v1");
+                                                base_url.set(u);
+                                                api_key.set(k);
+                                                test_status.set(TestStatus::Idle);
+                                                if crate::sync::switch_sheet_profile_and_sync("v1").is_ok() {
+                                                    if let Some(mut r) = db_sync {
+                                                        r.with_mut(|rev| rev.0 += 1);
+                                                    }
+                                                    toast.success("Switched Sheet", "Now syncing from Legacy TMS Sheet (API Key).");
+                                                }
+                                            },
+                                            div { class: "text-xs font-semibold text-foreground", "Sheet 2: With API Key" }
+                                            div { class: "text-[10px] text-muted-foreground", "Legacy v1 Envelope" }
+                                        }
+                                    }
+                                }
+
                                 // Base URL
                                 div { class: "flex flex-col gap-1.5",
                                     label { class: "text-xs font-semibold text-foreground flex items-center justify-between",
@@ -395,6 +467,29 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                     }
                                     span { class: "text-[11px] text-muted-foreground",
                                         "Paste the Web App URL deployed from your Google Apps Script editor (must end in /exec)."
+                                    }
+                                }
+
+                                // API Protocol
+                                div { class: "flex flex-col gap-1.5",
+                                    label { class: "text-xs font-semibold text-foreground flex items-center justify-between",
+                                        span { "API Protocol" }
+                                        span { class: "text-[10px] text-muted-foreground font-mono", "TMS_API_PROTOCOL" }
+                                    }
+                                    select {
+                                        value: "{api_protocol}",
+                                        onchange: move |e: FormEvent| {
+                                            let val = e.value();
+                                            api_protocol.set(val.clone());
+                                            let _ = crate::db::save_system_api_protocol(&val);
+                                        },
+                                        class: "w-full font-mono text-xs h-9 rounded-md border border-input bg-background px-3 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/20 transition-colors",
+                                        option { value: "auto", "Auto (BPSL REST if API Key empty, else Legacy v1)" }
+                                        option { value: "rest", "BPSL REST API (?api=tickets, unauthenticated)" }
+                                        option { value: "v1", "Legacy v1 Envelope (POST JSON-RPC + API Key)" }
+                                    }
+                                    span { class: "text-[11px] text-muted-foreground",
+                                        "Choose BPSL REST API for unauthenticated ?api=... Google Apps Script endpoints."
                                     }
                                 }
 

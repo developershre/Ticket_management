@@ -16,6 +16,32 @@ const MAX_RETRY_AFTER: u64 = 86_400;
 // Configuration
 // ============================================================
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ApiProtocol {
+    /// Legacy authenticated JSON-RPC envelope (`POST {{base_url}}` with `version: "v1"`, `action`, `auth.api_key`).
+    LegacyV1,
+    /// Unauthenticated BPSL Ticket API (`GET`/`POST {{base_url}}?api=...`).
+    #[default]
+    BpslRest,
+}
+
+impl ApiProtocol {
+    pub fn from_str_opt(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "rest" | "bpsl" | "bpsl_rest" | "query" => Some(Self::BpslRest),
+            "v1" | "legacy" | "legacy_v1" | "envelope" => Some(Self::LegacyV1),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::BpslRest => "rest",
+            Self::LegacyV1 => "v1",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ApiConfig {
     pub base_url: String,
@@ -24,6 +50,8 @@ pub struct ApiConfig {
     /// `employee_code` to reference an existing employee row. Set via the
     /// `TMS_EMPLOYEE_CODE` environment variable.
     pub employee_code: Option<String>,
+    /// API wire protocol (`BpslRest` `?api=...` vs `LegacyV1` JSON envelope).
+    pub protocol: ApiProtocol,
 }
 
 #[derive(Deserialize)]
@@ -41,15 +69,20 @@ struct CollectionVariable {
 impl ApiConfig {
     /// Resolution order:
     /// 1. User-configured custom settings saved in SQLite `sync_meta`
-    /// 2. `TMS_API_BASE_URL`, `TMS_API_KEY`, `TMS_EMPLOYEE_CODE` env vars or `.env` file
-    /// 3. `base_url` / `api_key` variables of `TMS_API.postman_collection.json`
+    /// 2. `TMS_API_BASE_URL`, `TMS_API_KEY`, `TMS_EMPLOYEE_CODE`, `TMS_API_PROTOCOL` env vars or `.env` file
+    /// 3. `base_url`/`baseUrl` & `api_key` variables of `TMS_API.postman_collection.json`
     ///    (searched in working dir, next to executable and one level above)
     pub fn load() -> Result<ApiConfig, String> {
         let (sys_url, sys_key, sys_emp) = crate::db::get_system_api_config();
-        let (dot_url, dot_key, dot_emp) = Self::from_dotenv_file();
+        let sys_proto = crate::db::get_system_api_protocol();
+        let (dot_url, dot_key, dot_emp, dot_proto) = Self::from_dotenv_file();
+        let has_sys_key = sys_key.is_some();
         let env_url = sys_url.or_else(|| non_empty_env("TMS_API_BASE_URL")).or(dot_url);
         let env_key = sys_key.or_else(|| non_empty_env("TMS_API_KEY")).or(dot_key);
         let employee_code = sys_emp.or_else(|| non_empty_env("TMS_EMPLOYEE_CODE")).or(dot_emp);
+        let raw_proto = sys_proto
+            .or_else(|| non_empty_env("TMS_API_PROTOCOL"))
+            .or(dot_proto);
 
         let (file_url, file_key) = Self::from_collection_file();
 
@@ -58,21 +91,31 @@ impl ApiConfig {
             .ok_or_else(|| {
                 "Missing TMS_API_BASE_URL. Please define TMS_API_BASE_URL in your .env file or environment.".to_string()
             })?;
-        let api_key = env_key
-            .or(file_key)
-            .ok_or_else(|| {
-                "Missing TMS_API_KEY. Please define TMS_API_KEY in your .env file or environment.".to_string()
-            })?;
+        let api_key = if raw_proto.as_deref() == Some("rest") && !has_sys_key {
+            String::new()
+        } else {
+            env_key.or(file_key).unwrap_or_default().trim().to_string()
+        };
+
+        let protocol = raw_proto
+            .as_deref()
+            .and_then(ApiProtocol::from_str_opt)
+            .unwrap_or(if api_key.is_empty() {
+                ApiProtocol::BpslRest
+            } else {
+                ApiProtocol::LegacyV1
+            });
 
         Ok(ApiConfig {
             base_url: base_url.trim().to_string(),
-            api_key: api_key.trim().to_string(),
+            api_key,
             employee_code,
+            protocol,
         })
     }
 
     /// Reads key-value pairs from `.env` in candidate paths.
-    fn from_dotenv_file() -> (Option<String>, Option<String>, Option<String>) {
+    fn from_dotenv_file() -> (Option<String>, Option<String>, Option<String>, Option<String>) {
         for path in Self::candidate_paths(".env") {
             let Ok(content) = std::fs::read_to_string(&path) else {
                 continue;
@@ -80,6 +123,7 @@ impl ApiConfig {
             let mut url = None;
             let mut key = None;
             let mut emp = None;
+            let mut proto = None;
             for line in content.lines() {
                 let trimmed = line.trim();
                 if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -93,19 +137,20 @@ impl ApiConfig {
                             "TMS_API_BASE_URL" => url = Some(v.to_string()),
                             "TMS_API_KEY" => key = Some(v.to_string()),
                             "TMS_EMPLOYEE_CODE" => emp = Some(v.to_string()),
+                            "TMS_API_PROTOCOL" => proto = Some(v.to_string()),
                             _ => {}
                         }
                     }
                 }
             }
-            if url.is_some() || key.is_some() || emp.is_some() {
-                return (url, key, emp);
+            if url.is_some() || key.is_some() || emp.is_some() || proto.is_some() {
+                return (url, key, emp, proto);
             }
         }
-        (None, None, None)
+        (None, None, None, None)
     }
 
-    /// Reads the `base_url` and `api_key` collection variables from the
+    /// Reads the `base_url`/`baseUrl` and `api_key` collection variables from the
     /// Postman collection file, if any candidate location contains it.
     fn from_collection_file() -> (Option<String>, Option<String>) {
         for path in Self::candidate_paths("TMS_API.postman_collection.json") {
@@ -119,7 +164,7 @@ impl ApiConfig {
             let mut key = None;
             for var in file.variable {
                 match var.key.as_str() {
-                    "base_url" => url = Some(var.value),
+                    "base_url" | "baseUrl" => url = Some(var.value),
                     "api_key" => key = Some(var.value),
                     _ => {}
                 }
@@ -453,6 +498,7 @@ pub struct ServerTicket {
         deserialize_with = "flex_str",
         alias = "Ticket ID",
         alias = "ticket_id",
+        alias = "ticketId",
         alias = "id"
     )]
     pub ticket_id: String,
@@ -461,6 +507,7 @@ pub struct ServerTicket {
         deserialize_with = "flex_str",
         alias = "Employee Code",
         alias = "employee_code",
+        alias = "employeeCode",
         alias = "code"
     )]
     pub employee_code: String,
@@ -500,14 +547,18 @@ pub struct ServerTicket {
         default,
         deserialize_with = "flex_str",
         alias = "Attachment Name",
-        alias = "attachment_name"
+        alias = "attachment_name",
+        alias = "attachmentName",
+        alias = "fileName"
     )]
     pub attachment_name: String,
     #[serde(
         default,
         deserialize_with = "flex_str",
         alias = "Attachment URL",
-        alias = "attachment_url"
+        alias = "attachment_url",
+        alias = "attachmentUrl",
+        alias = "fileUrl"
     )]
     pub attachment_url: String,
     #[serde(
@@ -523,7 +574,8 @@ pub struct ServerTicket {
         alias = "Assigned to",
         alias = "Assigned To",
         alias = "assigned_to",
-        alias = "assignee"
+        alias = "assignee",
+        alias = "agent"
     )]
     pub assigned_to: String,
     #[serde(
@@ -538,6 +590,7 @@ pub struct ServerTicket {
         deserialize_with = "flex_f64",
         alias = "Time Spent",
         alias = "time_spent",
+        alias = "timeSpent",
         alias = "Time Spent (hours)",
         alias = "time_spent_hours"
     )]
@@ -555,7 +608,8 @@ pub struct ServerTicket {
         default,
         deserialize_with = "flex_str",
         alias = "My Activity",
-        alias = "my_activity"
+        alias = "my_activity",
+        alias = "myActivity"
     )]
     pub my_activity: String,
     #[serde(
@@ -569,14 +623,16 @@ pub struct ServerTicket {
         default,
         deserialize_with = "flex_str",
         alias = "SLA Status",
-        alias = "sla_status"
+        alias = "sla_status",
+        alias = "slaStatus"
     )]
     pub sla_status: String,
     #[serde(
         default,
         deserialize_with = "flex_str",
         alias = "SLA Deadline",
-        alias = "sla_deadline"
+        alias = "sla_deadline",
+        alias = "slaDeadline"
     )]
     pub sla_deadline: String,
     #[serde(
@@ -584,14 +640,18 @@ pub struct ServerTicket {
         deserialize_with = "flex_str",
         alias = "Rating Avg Text",
         alias = "rating_avg_text",
-        alias = "Rating"
+        alias = "ratingAvgText",
+        alias = "ratingText",
+        alias = "Rating",
+        alias = "rating"
     )]
     pub rating_avg_text: String,
     #[serde(
         default,
         deserialize_with = "flex_str",
         alias = "Kanban State",
-        alias = "kanban_state"
+        alias = "kanban_state",
+        alias = "kanbanState"
     )]
     pub kanban_state: String,
     #[serde(
@@ -613,8 +673,10 @@ pub struct ServerTicket {
         deserialize_with = "flex_str",
         alias = "Created on",
         alias = "created_on",
+        alias = "createdOn",
         alias = "Created At",
-        alias = "created_at"
+        alias = "created_at",
+        alias = "createdAt"
     )]
     pub created_on: String,
     #[serde(
@@ -622,8 +684,10 @@ pub struct ServerTicket {
         deserialize_with = "flex_str",
         alias = "Last Updated on",
         alias = "last_updated_on",
+        alias = "updatedOn",
         alias = "Last Updated At",
-        alias = "last_updated_at"
+        alias = "last_updated_at",
+        alias = "updatedAt"
     )]
     pub last_updated_on: String,
 }
@@ -650,6 +714,7 @@ pub struct Employee {
         deserialize_with = "flex_str",
         alias = "Employee Code",
         alias = "employee_code",
+        alias = "employeeCode",
         alias = "code",
         alias = "emp_code",
         alias = "id"
@@ -662,6 +727,7 @@ pub struct Employee {
         alias = "name",
         alias = "Employee Name",
         alias = "employee_name",
+        alias = "employeeName",
         alias = "emp_name"
     )]
     pub employee_name: String,
@@ -850,6 +916,9 @@ pub struct ApiClient {
 }
 
 impl ApiClient {
+    pub fn protocol(&self) -> ApiProtocol {
+        self.cfg.protocol
+    }
     pub fn new(cfg: ApiConfig) -> Result<Self, String> {
         let http = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
@@ -1022,23 +1091,215 @@ impl ApiClient {
         }
     }
 
-    // ---- actions (TMS_API.postman_collection.json) ----
-
-    /// `health.check` (no auth required).
-    pub async fn health(&self) -> Result<Value, ApiError> {
-        self.post("health.check", json!({})).await
+    /// Builds a URL for the unauthenticated BPSL Ticket API (`?api=...`).
+    fn rest_url(&self, api_route: &str, extra_query: &[(&str, &str)]) -> String {
+        let base = self.cfg.base_url.trim_end_matches('&');
+        let sep = if base.contains('?') { '&' } else { '?' };
+        let mut url = format!("{base}{sep}api={api_route}");
+        for (k, v) in extra_query {
+            if !v.is_empty() {
+                url.push('&');
+                url.push_str(k);
+                url.push('=');
+                url.push_str(&v.replace(' ', "%20").replace('&', "%26"));
+            }
+        }
+        url
     }
 
-    /// `tickets.list` â€” optional filters are omitted to fetch every row;
-    /// `limit` maxes out at 200 per the API documentation.
+    /// Executes a `GET` or `POST` request against the unauthenticated BPSL Ticket API (`?api=...`)
+    /// with the same transient retry logic (empty response, HTML cold start, 429/5xx, lock/busy).
+    async fn send_rest(
+        &self,
+        method: reqwest::Method,
+        api_route: &str,
+        extra_query: &[(&str, &str)],
+        body: Option<Value>,
+    ) -> Result<Value, ApiError> {
+        let url = self.rest_url(api_route, extra_query);
+        let mut attempts = 0usize;
+        const MAX_LOCK_ATTEMPTS: usize = 3;
+
+        loop {
+            attempts += 1;
+            let mut req = self.http.request(method.clone(), &url);
+            if let Some(ref b) = body {
+                req = req.json(b);
+            }
+
+            let resp = req.send().await.map_err(|e| {
+                if e.is_timeout() {
+                    ApiError::Timeout
+                } else {
+                    ApiError::Network(e.to_string())
+                }
+            })?;
+
+            let status = resp.status();
+            let retry_after = resp
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(parse_retry_after);
+
+            let text = resp
+                .text()
+                .await
+                .map_err(|e| ApiError::Network(format!("failed to read response: {e}")))?;
+
+            let text_trimmed = text.trim();
+            if text_trimmed.is_empty() {
+                if attempts < MAX_LOCK_ATTEMPTS {
+                    let delay = retry_after.unwrap_or(2 * attempts as u64);
+                    tokio::time::sleep(Duration::from_secs(delay)).await;
+                    continue;
+                }
+                return Err(ApiError::Decode(
+                    "empty response from Google Apps Script (transient script cold start or reset)"
+                        .to_string(),
+                ));
+            }
+
+            if text_trimmed.starts_with('<') {
+                if attempts < MAX_LOCK_ATTEMPTS {
+                    let delay = retry_after.unwrap_or(2 * attempts as u64);
+                    tokio::time::sleep(Duration::from_secs(delay)).await;
+                    continue;
+                }
+                let preview: String = text_trimmed.chars().take(200).collect();
+                return Err(ApiError::Decode(format!(
+                    "server returned HTML error instead of JSON: {preview}"
+                )));
+            }
+
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
+                if attempts < MAX_LOCK_ATTEMPTS {
+                    let delay = retry_after.unwrap_or(2 * attempts as u64);
+                    tokio::time::sleep(Duration::from_secs(delay)).await;
+                    continue;
+                }
+                return Err(ApiError::Http {
+                    status: status.as_u16(),
+                    retryable: true,
+                    retry_after,
+                    body: text.chars().take(300).collect(),
+                });
+            }
+            if status.is_client_error() {
+                return Err(ApiError::Http {
+                    status: status.as_u16(),
+                    retryable: false,
+                    retry_after,
+                    body: text.chars().take(300).collect(),
+                });
+            }
+
+            let val: Value = serde_json::from_str(&text)
+                .map_err(|e| ApiError::Decode(format!("invalid JSON response: {e}")))?;
+
+            // Handle error payloads in REST responses:
+            // { "success": false, ... }, { "ok": false, ... }, or { "error": "..." }
+            let explicit_fail = val.get("success").and_then(|v| v.as_bool()) == Some(false)
+                || val.get("ok").and_then(|v| v.as_bool()) == Some(false);
+            let error_msg = val.get("error").and_then(|err| {
+                if err.is_null() {
+                    None
+                } else if let Some(s) = err.as_str() {
+                    Some(s.to_string())
+                } else {
+                    err.get("message")
+                        .and_then(|m| m.as_str())
+                        .map(ToString::to_string)
+                }
+            });
+
+            if explicit_fail || error_msg.is_some() {
+                let message = error_msg
+                    .or_else(|| {
+                        val.get("message")
+                            .and_then(|m| m.as_str())
+                            .map(ToString::to_string)
+                    })
+                    .unwrap_or_else(|| "request failed".to_string());
+                let code = val
+                    .pointer("/error/code")
+                    .or_else(|| val.get("code"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("API_ERROR")
+                    .to_string();
+
+                let lower = message.to_lowercase();
+                let is_lock_or_busy = code == "LOCK_TIMEOUT"
+                    || code == "RATE_LIMIT"
+                    || code == "BUSY"
+                    || lower.contains("busy")
+                    || lower.contains("retry")
+                    || lower.contains("lock");
+                if is_lock_or_busy && attempts < MAX_LOCK_ATTEMPTS {
+                    let delay = match attempts {
+                        1 => Duration::from_millis(1500),
+                        _ => Duration::from_millis(3000),
+                    };
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+
+                return Err(ApiError::Api {
+                    code,
+                    message,
+                    retryable: is_lock_or_busy,
+                    retry_after,
+                });
+            }
+
+            if val.get("success").and_then(|v| v.as_bool()) == Some(true) {
+                if let Some(inner) = val.get("data") {
+                    return Ok(inner.clone());
+                }
+            }
+
+            return Ok(val);
+        }
+    }
+
+    // ---- actions (TMS_API.postman_collection.json & BPSL Ticket API) ----
+
+    /// Health / reachability probe.
+    pub async fn health(&self) -> Result<Value, ApiError> {
+        match self.cfg.protocol {
+            ApiProtocol::BpslRest => {
+                let _ = self
+                    .send_rest(reqwest::Method::GET, "tickets", &[], None)
+                    .await?;
+                Ok(json!({ "status": "ok", "protocol": "bpsl_rest" }))
+            }
+            ApiProtocol::LegacyV1 => self.post("health.check", json!({})).await,
+        }
+    }
+
+    /// `tickets.list` / `GET ?api=tickets`
     pub async fn tickets_list(&self, offset: u64, limit: u64) -> Result<TicketListPage, ApiError> {
-        let data = self
-            .post("tickets.list", json!({ "offset": offset, "limit": limit }))
-            .await?;
+        let data = match self.cfg.protocol {
+            ApiProtocol::BpslRest => {
+                self.send_rest(reqwest::Method::GET, "tickets", &[], None)
+                    .await?
+            }
+            ApiProtocol::LegacyV1 => {
+                self.post("tickets.list", json!({ "offset": offset, "limit": limit }))
+                    .await?
+            }
+        };
 
         let mut items = Vec::new();
         let mut invalid_items = 0usize;
-        if let Some(arr) = data.get("items").and_then(|v| v.as_array()) {
+        let arr = data
+            .get("items")
+            .and_then(|v| v.as_array())
+            .or_else(|| data.get("tickets").and_then(|v| v.as_array()))
+            .or_else(|| data.get("data").and_then(|v| v.as_array()))
+            .or_else(|| data.as_array());
+
+        if let Some(arr) = arr {
             for value in arr {
                 match serde_json::from_value::<ServerTicket>(value.clone()) {
                     Ok(t) => items.push(t),
@@ -1046,10 +1307,13 @@ impl ApiClient {
                 }
             }
         }
-        let has_more = data
-            .pointer("/pagination/has_more")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let has_more = match self.cfg.protocol {
+            ApiProtocol::BpslRest => false,
+            ApiProtocol::LegacyV1 => data
+                .pointer("/pagination/has_more")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        };
         Ok(TicketListPage {
             items,
             invalid_items,
@@ -1057,38 +1321,148 @@ impl ApiClient {
         })
     }
 
-    /// `tickets.get`
+    /// `tickets.get` / `GET ?api=tickets&id={{ticketId}}`
     pub async fn tickets_get(&self, ticket_id: &str) -> Result<ServerTicket, ApiError> {
-        let data = self
-            .post("tickets.get", json!({ "ticket_id": ticket_id }))
-            .await?;
+        let data = match self.cfg.protocol {
+            ApiProtocol::BpslRest => {
+                self.send_rest(reqwest::Method::GET, "tickets", &[("id", ticket_id)], None)
+                    .await?
+            }
+            ApiProtocol::LegacyV1 => {
+                self.post("tickets.get", json!({ "ticket_id": ticket_id }))
+                    .await?
+            }
+        };
         parse_ticket(data)
     }
 
-    /// `tickets.create` â€” `fields` must contain only real row fields (the
-    /// API rejects unknown fields with `UNKNOWN_FIELD`).
+    /// `tickets.create` / `POST ?api=tickets`
     pub async fn tickets_create(&self, fields: &Value) -> Result<ServerTicket, ApiError> {
-        let data = self.post("tickets.create", fields.clone()).await?;
+        let data = match self.cfg.protocol {
+            ApiProtocol::BpslRest => {
+                let body = to_bpsl_ticket_body(fields);
+                self.send_rest(reqwest::Method::POST, "tickets", &[], Some(body))
+                    .await?
+            }
+            ApiProtocol::LegacyV1 => self.post("tickets.create", fields.clone()).await?,
+        };
         parse_ticket(data)
     }
 
-    /// `tickets.update` â€” "send ticket_id and only the fields to update".
+    /// `tickets.update` / `POST ?api=tickets&id={{ticketId}}` (or `tickets/{{ticketId}}/stage` for stage-only changes)
     pub async fn tickets_update(
         &self,
         ticket_id: &str,
         fields: &Value,
     ) -> Result<ServerTicket, ApiError> {
-        let mut data = fields.as_object().cloned().unwrap_or_default();
-        data.insert("ticket_id".to_string(), json!(ticket_id));
-        let data = self.post("tickets.update", Value::Object(data)).await?;
+        let data = match self.cfg.protocol {
+            ApiProtocol::BpslRest => {
+                let obj = fields.as_object();
+                let is_stage_only = obj
+                    .map(|m| m.len() == 1 && m.contains_key("stage"))
+                    .unwrap_or(false);
+                if is_stage_only {
+                    let stage_val = obj
+                        .and_then(|m| m.get("stage"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Pending");
+                    let route = format!("tickets/{ticket_id}/stage");
+                    self.send_rest(
+                        reqwest::Method::POST,
+                        &route,
+                        &[],
+                        Some(json!({ "stage": stage_val })),
+                    )
+                    .await?
+                } else {
+                    let body = to_bpsl_ticket_body(fields);
+                    self.send_rest(
+                        reqwest::Method::POST,
+                        "tickets",
+                        &[("id", ticket_id)],
+                        Some(body),
+                    )
+                    .await?
+                }
+            }
+            ApiProtocol::LegacyV1 => {
+                let mut data = fields.as_object().cloned().unwrap_or_default();
+                data.insert("ticket_id".to_string(), json!(ticket_id));
+                self.post("tickets.update", Value::Object(data)).await?
+            }
+        };
         parse_ticket(data)
+    }
+
+    /// `POST ?api=tickets/{{ticketId}}/stage` (or `tickets.update` on LegacyV1).
+    pub async fn tickets_update_stage(
+        &self,
+        ticket_id: &str,
+        stage: &str,
+    ) -> Result<ServerTicket, ApiError> {
+        match self.cfg.protocol {
+            ApiProtocol::BpslRest => {
+                let route = format!("tickets/{ticket_id}/stage");
+                let data = self
+                    .send_rest(
+                        reqwest::Method::POST,
+                        &route,
+                        &[],
+                        Some(json!({ "stage": stage })),
+                    )
+                    .await?;
+                parse_ticket(data)
+            }
+            ApiProtocol::LegacyV1 => {
+                self.tickets_update(ticket_id, &json!({ "stage": stage }))
+                    .await
+            }
+        }
+    }
+
+    /// `POST ?api=tickets/{{ticketId}}/close` (or `tickets.update` on LegacyV1).
+    pub async fn tickets_close(
+        &self,
+        ticket_id: &str,
+        rating: &str,
+    ) -> Result<ServerTicket, ApiError> {
+        match self.cfg.protocol {
+            ApiProtocol::BpslRest => {
+                let route = format!("tickets/{ticket_id}/close");
+                let data = self
+                    .send_rest(
+                        reqwest::Method::POST,
+                        &route,
+                        &[],
+                        Some(json!({ "rating": rating })),
+                    )
+                    .await?;
+                parse_ticket(data)
+            }
+            ApiProtocol::LegacyV1 => {
+                self.tickets_update(
+                    ticket_id,
+                    &json!({ "status": "Closed", "stage": "Closed", "rating_avg_text": rating }),
+                )
+                .await
+            }
+        }
     }
 
     /// `tickets.delete` â€” hard delete; `NOT_FOUND` is treated as success
     /// by callers (already gone).
     pub async fn tickets_delete(&self, ticket_id: &str) -> Result<(), ApiError> {
-        self.post("tickets.delete", json!({ "ticket_id": ticket_id }))
-            .await?;
+        match self.cfg.protocol {
+            ApiProtocol::BpslRest => {
+                let route = format!("tickets/{ticket_id}/delete");
+                self.send_rest(reqwest::Method::POST, &route, &[], Some(json!({})))
+                    .await?;
+            }
+            ApiProtocol::LegacyV1 => {
+                self.post("tickets.delete", json!({ "ticket_id": ticket_id }))
+                    .await?;
+            }
+        }
         Ok(())
     }
 
@@ -1100,20 +1474,27 @@ impl ApiClient {
         mime_type: &str,
         data_base64: &str,
     ) -> Result<String, ApiError> {
-        let data = self
-            .post(
-                "attachments.upload",
-                json!({
-                    "file_name": file_name,
-                    "mime_type": mime_type,
-                    "data_base64": data_base64,
-                }),
-            )
-            .await?;
+        let body = json!({
+            "file_name": file_name,
+            "fileName": file_name,
+            "mime_type": mime_type,
+            "mimeType": mime_type,
+            "data_base64": data_base64,
+            "dataBase64": data_base64,
+        });
+        let data = match self.cfg.protocol {
+            ApiProtocol::BpslRest => {
+                self.send_rest(reqwest::Method::POST, "attachments", &[], Some(body))
+                    .await?
+            }
+            ApiProtocol::LegacyV1 => self.post("attachments.upload", body).await?,
+        };
         let url = data
             .get("attachment_url")
+            .or_else(|| data.get("attachmentUrl"))
             .or_else(|| data.get("url"))
             .or_else(|| data.get("file_url"))
+            .or_else(|| data.get("fileUrl"))
             .and_then(|v| v.as_str())
             .map(str::trim)
             .filter(|s| !s.is_empty())
@@ -1121,15 +1502,20 @@ impl ApiClient {
         url.ok_or_else(|| ApiError::Decode("attachments.upload returned no URL".to_string()))
     }
 
-    /// `employees.list` — fetches directory data (per TMS_API.postman_collection.json).
-    /// Falls back to `employees.listAll` if the server returns UNKNOWN_ACTION.
+    /// `employees.list` / `GET ?api=employees`
     pub async fn employees_list(&self) -> Result<Vec<Employee>, ApiError> {
-        let data = match self.post("employees.list", json!({})).await {
-            Ok(d) => d,
-            Err(ApiError::Api { ref code, .. }) if code == "UNKNOWN_ACTION" => {
-                self.post("employees.listAll", json!({})).await?
+        let data = match self.cfg.protocol {
+            ApiProtocol::BpslRest => {
+                self.send_rest(reqwest::Method::GET, "employees", &[], None)
+                    .await?
             }
-            Err(e) => return Err(e),
+            ApiProtocol::LegacyV1 => match self.post("employees.list", json!({})).await {
+                Ok(d) => d,
+                Err(ApiError::Api { ref code, .. }) if code == "UNKNOWN_ACTION" => {
+                    self.post("employees.listAll", json!({})).await?
+                }
+                Err(e) => return Err(e),
+            },
         };
 
         let mut items = Vec::new();
@@ -1137,7 +1523,8 @@ impl ApiClient {
             .get("items")
             .and_then(|v| v.as_array())
             .or_else(|| data.as_array())
-            .or_else(|| data.get("employees").and_then(|v| v.as_array()));
+            .or_else(|| data.get("employees").and_then(|v| v.as_array()))
+            .or_else(|| data.get("data").and_then(|v| v.as_array()));
 
         if let Some(arr) = arr {
             for value in arr {
@@ -1156,12 +1543,60 @@ impl ApiClient {
         Ok(items)
     }
 
-    /// `employees.get`
+    /// `employees.get` / `GET ?api=employees&code={{employeeCode}}`
     pub async fn employees_get(&self, employee_code: &str) -> Result<Employee, ApiError> {
-        let data = self
-            .post("employees.get", json!({ "employee_code": employee_code }))
-            .await?;
+        let data = match self.cfg.protocol {
+            ApiProtocol::BpslRest => {
+                self.send_rest(
+                    reqwest::Method::GET,
+                    "employees",
+                    &[("code", employee_code)],
+                    None,
+                )
+                .await?
+            }
+            ApiProtocol::LegacyV1 => {
+                self.post("employees.get", json!({ "employee_code": employee_code }))
+                    .await?
+            }
+        };
         parse_employee(data)
+    }
+
+    /// `GET ?api=analytics&startDate=...&endDate=...&shiftHours=...`
+    pub async fn analytics(
+        &self,
+        start_date: &str,
+        end_date: &str,
+        shift_hours: u32,
+    ) -> Result<Value, ApiError> {
+        let shift_str = shift_hours.to_string();
+        match self.cfg.protocol {
+            ApiProtocol::BpslRest => {
+                self.send_rest(
+                    reqwest::Method::GET,
+                    "analytics",
+                    &[
+                        ("startDate", start_date),
+                        ("endDate", end_date),
+                        ("shiftHours", &shift_str),
+                    ],
+                    None,
+                )
+                .await
+            }
+            ApiProtocol::LegacyV1 => {
+                self.post(
+                    "analytics.closed",
+                    json!({
+                        "startDate": start_date,
+                        "endDate": end_date,
+                        "shiftHours": shift_hours,
+                    }),
+                )
+                .await
+            }
+        }
     }
 
     /// `employees.create`
@@ -1202,6 +1637,13 @@ impl ApiClient {
         status: Option<&str>,
         employee_code: Option<&str>,
     ) -> Result<ReminderListPage, ApiError> {
+        if self.cfg.protocol == ApiProtocol::BpslRest {
+            return Ok(ReminderListPage {
+                items: Vec::new(),
+                invalid_items: 0,
+                has_more: false,
+            });
+        }
         let mut query = json!({ "offset": offset, "limit": limit });
         if let Some(s) = status {
             query
@@ -1303,13 +1745,43 @@ impl ApiClient {
     }
 }
 
+fn to_bpsl_ticket_body(fields: &Value) -> Value {
+    let Some(obj) = fields.as_object() else {
+        return fields.clone();
+    };
+    let mut out = serde_json::Map::new();
+    for (k, v) in obj {
+        let mapped = match k.as_str() {
+            "employee_code" => "employeeCode",
+            "email_address" => "email",
+            "problem_description" => "description",
+            "assigned_to" => "agent",
+            "attachment_name" => "attachmentName",
+            "attachment_url" => "attachmentUrl",
+            other => other,
+        };
+        out.insert(mapped.to_string(), v.clone());
+    }
+    Value::Object(out)
+}
+
 fn parse_ticket(data: Value) -> Result<ServerTicket, ApiError> {
-    serde_json::from_value(data)
+    let unwrapped = data
+        .get("ticket")
+        .or_else(|| data.get("data"))
+        .cloned()
+        .unwrap_or(data);
+    serde_json::from_value(unwrapped)
         .map_err(|e| ApiError::Decode(format!("invalid ticket payload: {e}")))
 }
 
 fn parse_employee(data: Value) -> Result<Employee, ApiError> {
-    let mut emp: Employee = serde_json::from_value(data)
+    let unwrapped = data
+        .get("employee")
+        .or_else(|| data.get("data"))
+        .cloned()
+        .unwrap_or(data);
+    let mut emp: Employee = serde_json::from_value(unwrapped)
         .map_err(|e| ApiError::Decode(format!("invalid employee payload: {e}")))?;
     if !emp.email.contains('@') && emp.division.contains('@') {
         std::mem::swap(&mut emp.email, &mut emp.division);

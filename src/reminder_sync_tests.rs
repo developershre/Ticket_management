@@ -45,7 +45,7 @@ mod tests {
         };
 
         let local_id = db::create_reminder_full(&input).expect("create reminder");
-        assert_eq!(db::is_reminder_completed(local_id), false);
+        assert!(!db::is_reminder_completed(local_id));
 
         // Map it to a server reminder ID
         db::set_reminder_mapping(local_id, "REM-20261104-0001", "2026-11-04 10:00:00")
@@ -90,7 +90,7 @@ mod tests {
         };
 
         let local_id = db::create_reminder_full(&input).expect("create reminder");
-        assert_eq!(db::is_reminder_completed(local_id), true);
+        assert!(db::is_reminder_completed(local_id));
 
         // Attempting to enqueue update on completed reminder must be rejected
         sync::enqueue_reminder_update(local_id, json!({ "status": "Cancelled" }));
@@ -177,7 +177,7 @@ mod tests {
         let cancelled = db::cancel_queued_updates_for_reminder(local_id).expect("cancel");
         assert!(cancelled >= 1, "Cancelled obsolete queued updates");
 
-        assert_eq!(db::is_reminder_completed(local_id), true);
+        assert!(db::is_reminder_completed(local_id));
 
         // Ensure ticket_id is preserved
         let conn = db::get_connection().expect("conn");
@@ -296,7 +296,7 @@ mod tests {
             retryable: true,
             retry_after: Some(2),
         };
-        assert_eq!(lock_timeout_err.is_retryable(), true);
+        assert!(lock_timeout_err.is_retryable());
 
         let not_found_err = ApiError::Api {
             code: "NOT_FOUND".to_string(),
@@ -304,7 +304,7 @@ mod tests {
             retryable: false,
             retry_after: None,
         };
-        assert_eq!(not_found_err.is_retryable(), false);
+        assert!(!not_found_err.is_retryable());
 
         // Insert a failed transient op (e.g. LOCK_TIMEOUT)
         let conn = db::get_connection().expect("conn");

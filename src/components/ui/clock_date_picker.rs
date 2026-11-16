@@ -30,6 +30,7 @@ fn days_in_month(y: u32, m: u32) -> u32 {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
         2 => {
+            #[allow(clippy::manual_is_multiple_of)]
             if (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0) {
                 29
             } else {
@@ -74,8 +75,8 @@ pub fn format_human_datetime(y: u32, m: u32, d: u32, h: u32, mi: u32) -> String 
 fn get_wheel_delta_y(e: &WheelEvent) -> f64 {
     match e.data().delta() {
         dioxus::html::geometry::WheelDelta::Pixels(p) => p.y,
-        dioxus::html::geometry::WheelDelta::Lines(l) => l.y as f64 * 20.0,
-        dioxus::html::geometry::WheelDelta::Pages(p) => p.y as f64 * 100.0,
+        dioxus::html::geometry::WheelDelta::Lines(l) => l.y * 20.0,
+        dioxus::html::geometry::WheelDelta::Pages(p) => p.y * 100.0,
     }
 }
 

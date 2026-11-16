@@ -109,12 +109,42 @@ fn main() {
     // Operational aid: run a single sync cycle against the configured API
     // and print the resulting status (no UI).
     if args.first().map(String::as_str) == Some("--sync-once") {
+        if args.iter().any(|a| a == "--use-env-api") {
+            let _ = db::clear_system_api_config();
+            let _ = db::sync_meta_set("last_pull_at", "0");
+            let _ = db::sync_meta_set("last_employee_pull_at", "0");
+            if let Ok(conn) = db::get_connection() {
+                let _ = conn.execute("UPDATE tickets SET server_last_updated = ''", []);
+            }
+        }
+        if let Ok(cfg) = api::ApiConfig::load() {
+            println!(
+                "[sync] db={} protocol={:?} url={}",
+                db::db_path().display(),
+                cfg.protocol,
+                cfg.base_url
+            );
+        }
         sync::run_cycle_blocking();
         let s = sync::snapshot();
         println!(
             "[sync] state={:?} pending={} conflicts={} detail={}",
             s.state, s.pending_ops, s.conflicts, s.detail
         );
+        if let Ok(conn) = db::get_connection() {
+            let tickets: i64 = conn.query_row("SELECT COUNT(*) FROM tickets", [], |r| r.get(0)).unwrap_or(-1);
+            let users: i64 = conn.query_row("SELECT COUNT(*) FROM USERS", [], |r| r.get(0)).unwrap_or(-1);
+            let c_pend: i64 = conn.query_row("SELECT COUNT(*) FROM tickets WHERE kanban_state = 'Pending'", [], |r| r.get(0)).unwrap_or(0);
+            let c_prog: i64 = conn.query_row("SELECT COUNT(*) FROM tickets WHERE kanban_state = 'InProgress'", [], |r| r.get(0)).unwrap_or(0);
+            let c_hold: i64 = conn.query_row("SELECT COUNT(*) FROM tickets WHERE kanban_state = 'Onhold'", [], |r| r.get(0)).unwrap_or(0);
+            let c_done: i64 = conn.query_row("SELECT COUNT(*) FROM tickets WHERE kanban_state = 'Completed'", [], |r| r.get(0)).unwrap_or(0);
+            let s_open: i64 = conn.query_row("SELECT COUNT(*) FROM tickets WHERE status = 'Open'", [], |r| r.get(0)).unwrap_or(0);
+            let s_closed: i64 = conn.query_row("SELECT COUNT(*) FROM tickets WHERE status = 'Closed'", [], |r| r.get(0)).unwrap_or(0);
+            println!(
+                "[sync] local_counts: tickets={} employees={} | columns: Pending={} InProgress={} Onhold(Solved)={} Completed(Solved-closed)={} | status: Open={} Closed={}",
+                tickets, users, c_pend, c_prog, c_hold, c_done, s_open, s_closed
+            );
+        }
         return;
     }
 

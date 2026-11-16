@@ -213,6 +213,8 @@ pub fn update_ticket_attachment_url(local_ticket_id: i64, new_url: &str) -> Resu
     Ok(())
 }
 
+static WAL_INITIALIZED_PATH: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
 /// Open a connection with WAL mode enabled for smooth concurrency.
 /// A busy timeout is set because the background sync worker and the UI
 /// thread both write to the database.
@@ -220,12 +222,29 @@ pub fn get_connection() -> Result<Connection> {
     let path = db_path();
     let conn = Connection::open(&path)?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
-    conn.execute_batch(
-        "PRAGMA journal_mode = WAL; \
-         PRAGMA synchronous = NORMAL; \
-         PRAGMA foreign_keys = ON; \
-         PRAGMA cache_size = -2000;",
-    )?;
+    let needs_wal = WAL_INITIALIZED_PATH
+        .lock()
+        .map(|g| g.as_ref() != Some(&path))
+        .unwrap_or(true);
+    if needs_wal {
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL; \
+             PRAGMA synchronous = NORMAL; \
+             PRAGMA foreign_keys = ON; \
+             PRAGMA temp_store = MEMORY; \
+             PRAGMA cache_size = -8000;",
+        )?;
+        if let Ok(mut g) = WAL_INITIALIZED_PATH.lock() {
+            *g = Some(path);
+        }
+    } else {
+        conn.execute_batch(
+            "PRAGMA synchronous = NORMAL; \
+             PRAGMA foreign_keys = ON; \
+             PRAGMA temp_store = MEMORY; \
+             PRAGMA cache_size = -8000;",
+        )?;
+    }
     Ok(conn)
 }
 
@@ -536,7 +555,7 @@ pub fn get_all_tickets() -> Vec<DbTicket> {
             server_ticket_id,
             server_last_updated
         FROM tickets
-        ORDER BY ticket_id ASC
+        ORDER BY ticket_id DESC
         "#,
     ) {
         Ok(s) => s,
@@ -1057,41 +1076,82 @@ pub fn extract_code_and_name_candidates(raw: &str) -> Vec<String> {
     out
 }
 
+type EmpCache = (PathBuf, std::collections::HashMap<String, DbEmployee>);
+static EMP_LOOKUP_CACHE: std::sync::RwLock<Option<EmpCache>> = std::sync::RwLock::new(None);
+
+pub fn invalidate_employee_lookup_cache() {
+    if let Ok(mut guard) = EMP_LOOKUP_CACHE.write() {
+        *guard = None;
+    }
+}
+
+fn load_employee_cache_map(path: &Path) -> Option<std::collections::HashMap<String, DbEmployee>> {
+    let conn = get_connection().ok()?;
+    let mut stmt = conn
+        .prepare("SELECT emp_id, emp_code, emp_name, emp_email, department, division FROM USERS WHERE is_deleted = 0")
+        .ok()?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(DbEmployee {
+                emp_id: row.get(0)?,
+                emp_code: row.get(1)?,
+                emp_name: row.get(2)?,
+                emp_email: row.get(3)?,
+                department: row.get(4)?,
+                division: row.get(5)?,
+            })
+        })
+        .ok()?;
+    let mut map = std::collections::HashMap::new();
+    for emp in rows.flatten() {
+        let c = emp.emp_code.trim().to_lowercase();
+        if !c.is_empty() {
+            map.entry(c).or_insert_with(|| emp.clone());
+        }
+        let n = emp.emp_name.trim().to_lowercase();
+        if !n.is_empty() {
+            map.entry(n).or_insert_with(|| emp.clone());
+        }
+        let e = emp.emp_email.trim().to_lowercase();
+        if !e.is_empty() {
+            map.entry(e).or_insert_with(|| emp.clone());
+        }
+    }
+    if let Ok(mut guard) = EMP_LOOKUP_CACHE.write() {
+        *guard = Some((path.to_path_buf(), map.clone()));
+    }
+    Some(map)
+}
+
 /// Lookup a single employee by their employee code, name, or email with flexible matching.
 pub fn find_employee_by_code(code: &str) -> Option<DbEmployee> {
     let clean = code.trim();
     if clean.is_empty() {
         return None;
     }
-    let conn = get_connection().ok()?;
+    let current_path = db_path();
     let candidates = extract_code_and_name_candidates(clean);
 
-    for cand in candidates {
-        let row = conn.query_row(
-            "SELECT emp_id, emp_code, emp_name, emp_email, department, division FROM USERS \
-             WHERE emp_code = ?1 COLLATE NOCASE \
-                OR emp_name = ?1 COLLATE NOCASE \
-                OR emp_email = ?1 COLLATE NOCASE \
-             LIMIT 1",
-            params![cand],
-            |row| {
-                Ok(DbEmployee {
-                    emp_id: row.get(0)?,
-                    emp_code: row.get(1)?,
-                    emp_name: row.get(2)?,
-                    emp_email: row.get(3)?,
-                    department: row.get(4)?,
-                    division: row.get(5)?,
-                })
-            },
-        )
-        .optional()
-        .ok()
-        .flatten();
-
-        if row.is_some() {
-            return row;
+    if let Ok(guard) = EMP_LOOKUP_CACHE.read() {
+        if let Some((ref cached_path, ref map)) = *guard {
+            if cached_path == &current_path {
+                for cand in &candidates {
+                    if let Some(emp) = map.get(&cand.to_lowercase()) {
+                        return Some(emp.clone());
+                    }
+                }
+                return None;
+            }
         }
+    }
+
+    if let Some(map) = load_employee_cache_map(&current_path) {
+        for cand in &candidates {
+            if let Some(emp) = map.get(&cand.to_lowercase()) {
+                return Some(emp.clone());
+            }
+        }
+        return None;
     }
     None
 }
@@ -1114,10 +1174,11 @@ pub fn matches_emp_query(emp_code_field: &str, emp_name_field: &str, emp_email_f
     // Digits comparison (e.g. searching "11061" matches "EMP-11061" or vice versa)
     let q_digits: String = q.chars().filter(|c| c.is_ascii_digit()).collect();
     let code_digits: String = emp_code_field.chars().filter(|c| c.is_ascii_digit()).collect();
-    if !q_digits.is_empty() && !code_digits.is_empty() {
-        if q_digits == code_digits || code_digits.contains(&q_digits) || q_digits.contains(&code_digits) {
-            return true;
-        }
+    if !q_digits.is_empty()
+        && !code_digits.is_empty()
+        && (q_digits == code_digits || code_digits.contains(&q_digits) || q_digits.contains(&code_digits))
+    {
+        return true;
     }
 
     // Stripped EMP prefix comparison
@@ -1174,6 +1235,39 @@ pub fn employee_count() -> usize {
     .unwrap_or(0)
 }
 
+/// Number of cached tickets (sidebar badge).
+pub fn ticket_count() -> usize {
+    let conn = match get_connection() {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+    conn.query_row("SELECT COUNT(*) FROM tickets", [], |r| r.get::<_, i64>(0))
+        .map(|n| n as usize)
+        .unwrap_or(0)
+}
+
+/// Number of notes (sidebar badge).
+pub fn note_count() -> usize {
+    let conn = match get_connection() {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+    conn.query_row("SELECT COUNT(*) FROM NOTES", [], |r| r.get::<_, i64>(0))
+        .map(|n| n as usize)
+        .unwrap_or(0)
+}
+
+/// Number of reminders (sidebar badge).
+pub fn reminder_count() -> usize {
+    let conn = match get_connection() {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+    conn.query_row("SELECT COUNT(*) FROM reminders", [], |r| r.get::<_, i64>(0))
+        .map(|n| n as usize)
+        .unwrap_or(0)
+}
+
 /// Replaces the whole employee cache with one `employees.list` result.
 ///
 /// A full replace (in a single transaction) mirrors the sheet exactly —
@@ -1204,6 +1298,7 @@ pub fn replace_employees(employees: &[crate::api::Employee]) -> Result<()> {
         }
     }
     tx.commit()?;
+    invalidate_employee_lookup_cache();
     Ok(())
 }
 
@@ -2103,15 +2198,33 @@ pub fn save_system_api_config(base_url: &str, api_key: &str, employee_code: &str
         let app_dir = std::path::PathBuf::from(app_data).join("BPSL IT Support");
         let _ = std::fs::create_dir_all(&app_dir);
         let env_path = app_dir.join(".env");
+        let proto = get_system_api_protocol().unwrap_or_else(|| {
+            if api_key.trim().is_empty() {
+                "rest".to_string()
+            } else {
+                "v1".to_string()
+            }
+        });
         let env_content = format!(
-            "# BPSL IT Support - System API Configuration\nTMS_API_BASE_URL=\"{}\"\nTMS_API_KEY=\"{}\"\nTMS_EMPLOYEE_CODE=\"{}\"\n",
+            "# BPSL IT Support - System API Configuration\nTMS_API_BASE_URL=\"{}\"\nTMS_API_KEY=\"{}\"\nTMS_EMPLOYEE_CODE=\"{}\"\nTMS_API_PROTOCOL=\"{}\"\n",
             base_url.trim(),
             api_key.trim(),
-            employee_code.trim()
+            employee_code.trim(),
+            proto
         );
         let _ = std::fs::write(env_path, env_content);
     }
     Ok(())
+}
+
+/// Returns the user-configured API protocol override (`"rest"`, `"v1"`, or `"auto"`), if any.
+pub fn get_system_api_protocol() -> Option<String> {
+    sync_meta_get("system_api_protocol").filter(|s| !s.trim().is_empty())
+}
+
+/// Persists the user-configured API protocol (`"auto"`, `"rest"`, or `"v1"`).
+pub fn save_system_api_protocol(protocol: &str) -> Result<()> {
+    sync_meta_set("system_api_protocol", protocol.trim())
 }
 
 /// Clears user-configured custom API settings from SQLite `sync_meta`.
@@ -2119,6 +2232,7 @@ pub fn clear_system_api_config() -> Result<()> {
     sync_meta_set("system_api_base_url", "")?;
     sync_meta_set("system_api_key", "")?;
     sync_meta_set("system_employee_code", "")?;
+    sync_meta_set("system_api_protocol", "")?;
 
     if let Some(app_data) = std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA")) {
         let env_path = std::path::PathBuf::from(app_data).join("BPSL IT Support").join(".env");
@@ -2127,6 +2241,91 @@ pub fn clear_system_api_config() -> Result<()> {
         }
     }
     Ok(())
+}
+
+pub const DEFAULT_REST_SHEET_URL: &str = "https://script.google.com/macros/s/AKfycbw32a4pqW9KjOFZebB8dE8IwTcStKR9drNWlliLD4pve4moL8H6Il88SO8BrpvtOdY7/exec";
+pub const DEFAULT_V1_SHEET_URL: &str = "https://script.google.com/macros/s/AKfycbx6TTCZF1WfcFPpJWOqGoMXKhXq-wxJprGtCIKfAHZnm9wGmSgBuRCpiTWUu4519oyV/exec";
+pub const DEFAULT_V1_SHEET_KEY: &str = "032fd9719ace4011bf0e7dab1dbed3363ecff4adbaf84b328539038cdc19c8389bd8d285cfa2400d8b89c874485e2315";
+
+/// Returns the active Google Sheet profile: `"rest"` (no API key) or `"v1"` (with API key).
+pub fn get_active_sheet_profile() -> String {
+    if let Some(p) = sync_meta_get("active_sheet_profile") {
+        let t = p.trim();
+        if t == "rest" || t == "v1" {
+            return t.to_string();
+        }
+    }
+    match get_system_api_protocol().as_deref() {
+        Some("v1") => "v1".to_string(),
+        Some("rest") => "rest".to_string(),
+        _ => {
+            let (_, key, _) = get_system_api_config();
+            if key.is_some() {
+                "v1".to_string()
+            } else {
+                "rest".to_string()
+            }
+        }
+    }
+}
+
+/// Returns `(base_url, api_key)` for the given sheet profile (`"rest"` or `"v1"`).
+pub fn get_sheet_profile_config(profile: &str) -> (String, String) {
+    if profile == "v1" {
+        let url = sync_meta_get("sheet_v1_url")
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_V1_SHEET_URL.to_string());
+        let key = sync_meta_get("sheet_v1_key")
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_V1_SHEET_KEY.to_string());
+        (url, key)
+    } else {
+        let url = sync_meta_get("sheet_rest_url")
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_REST_SHEET_URL.to_string());
+        (url, String::new())
+    }
+}
+
+/// Saves `(base_url, api_key)` for the given sheet profile (`"rest"` or `"v1"`).
+pub fn save_sheet_profile_config(profile: &str, base_url: &str, api_key: &str) -> Result<()> {
+    if profile == "v1" {
+        sync_meta_set("sheet_v1_url", base_url.trim())?;
+        sync_meta_set("sheet_v1_key", api_key.trim())?;
+    } else {
+        sync_meta_set("sheet_rest_url", base_url.trim())?;
+    }
+    sync_meta_set("active_sheet_profile", profile)?;
+    let proto = if profile == "v1" { "v1" } else { "rest" };
+    save_system_api_protocol(proto)?;
+    let emp = sync_meta_get("system_employee_code").unwrap_or_default();
+    save_system_api_config(base_url, if profile == "v1" { api_key } else { "" }, &emp)?;
+    Ok(())
+}
+
+/// Switches the active Google Sheet profile (`"rest"` or `"v1"`), updates active API
+/// credentials, clears previously synced remote cache so the new sheet's data loads cleanly,
+/// and returns `(base_url, api_key, protocol)`.
+pub fn switch_sheet_profile(profile: &str) -> Result<(String, String, String)> {
+    let target = if profile == "v1" { "v1" } else { "rest" };
+    let (url, key) = get_sheet_profile_config(target);
+    let proto = if target == "v1" { "v1" } else { "rest" };
+
+    sync_meta_set("active_sheet_profile", target)?;
+    save_system_api_protocol(proto)?;
+    let emp = sync_meta_get("system_employee_code").unwrap_or_default();
+    save_system_api_config(&url, &key, &emp)?;
+
+    let conn = get_connection()?;
+    conn.execute("DELETE FROM tickets WHERE COALESCE(server_ticket_id, '') != ''", [])?;
+    conn.execute("DELETE FROM USERS", [])?;
+    invalidate_employee_lookup_cache();
+
+    sync_meta_set("last_pull_at", "0")?;
+    sync_meta_set("last_employee_pull_at", "0")?;
+    sync_meta_set("last_reminder_pull_at", "0")?;
+
+    Ok((url, key, proto.to_string()))
 }
 
 // ---- ticket ↔ server mapping ----
@@ -2924,6 +3123,7 @@ pub fn create_employee_db(emp: &crate::api::Employee) -> Result<i64> {
             emp.division.trim(),
         ],
     )?;
+    invalidate_employee_lookup_cache();
     Ok(conn.last_insert_rowid())
 }
 
@@ -2950,6 +3150,7 @@ pub fn update_employee_db(
             emp_code.trim(),
         ],
     )?;
+    invalidate_employee_lookup_cache();
     Ok(())
 }
 
@@ -2959,5 +3160,6 @@ pub fn delete_employee_db(emp_code: &str) -> Result<()> {
         "UPDATE USERS SET is_deleted = 1 WHERE emp_code = ?1",
         params![emp_code.trim()],
     )?;
+    invalidate_employee_lookup_cache();
     Ok(())
 }

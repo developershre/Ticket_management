@@ -287,6 +287,15 @@ pub fn reload_client() -> Result<Arc<ApiClient>, String> {
     Ok(client)
 }
 
+/// Switches between the two Google Sheet profiles (`"rest"` = No API Key, `"v1"` = With API Key),
+/// clears the previous sheet's cached remote rows, reloads the HTTP client, and kicks an immediate sync.
+pub fn switch_sheet_profile_and_sync(profile: &str) -> Result<String, String> {
+    let (url, _key, proto) = db::switch_sheet_profile(profile).map_err(|e| e.to_string())?;
+    invalidate_employee_cache();
+    let _ = reload_client()?;
+    Ok(format!("Switched to {} ({})", proto, url))
+}
+
 fn ensure_client() -> Result<Arc<ApiClient>, String> {
     if let Ok(guard) = CLIENT.read() {
         if let Some(client) = guard.as_ref() {
@@ -313,10 +322,17 @@ pub async fn test_connection(base_url: &str, api_key: &str) -> Result<String, St
     if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
         return Err("URL must start with http:// or https://".to_string());
     }
+    let protocol = match crate::db::get_system_api_protocol().as_deref() {
+        Some("v1") => crate::api::ApiProtocol::LegacyV1,
+        Some("rest") => crate::api::ApiProtocol::BpslRest,
+        _ if api_key.trim().is_empty() => crate::api::ApiProtocol::BpslRest,
+        _ => crate::api::ApiProtocol::LegacyV1,
+    };
     let cfg = ApiConfig {
         base_url: base_url.to_string(),
         api_key: api_key.to_string(),
         employee_code: None,
+        protocol,
     };
     let client = ApiClient::new(cfg).map_err(|e| format!("Client setup error: {e}"))?;
 
@@ -324,8 +340,13 @@ pub async fn test_connection(base_url: &str, api_key: &str) -> Result<String, St
     let health_res = client.health().await.map_err(|e| format!("Server unreachable: {e}"))?;
     let server_status = health_res.get("status").and_then(|s| s.as_str()).unwrap_or("ok");
 
-    // 2. Authenticated probe if API key is provided
-    if !api_key.is_empty() {
+    // 2. Authenticated probe if API key is provided (or REST probe for BpslRest)
+    if protocol == crate::api::ApiProtocol::BpslRest {
+        client.tickets_list(0, 1).await.map_err(|e| {
+            format!("Server is online ({server_status}), but BPSL REST API probe failed: {e}")
+        })?;
+        Ok(format!("Connected to BPSL REST API successfully! (Server status: {server_status})"))
+    } else if !api_key.is_empty() {
         client.tickets_list(0, 1).await.map_err(|e| {
             format!("Server is online ({server_status}), but API Key authorization failed: {e}")
         })?;
@@ -876,11 +897,13 @@ pub fn to_sheet_status(val: &str) -> &'static str {
 /// Maps Google Sheet's validated dropdown choices ("Open", "In Progress", "On Hold", "Done", "New", "Assigned", "Investigation", "Resolution")
 /// to internal Kanban column status ("Pending", "InProgress", "Onhold", "Completed").
 pub fn from_sheet_status(val: &str) -> &'static str {
-    match val {
+    let trimmed = val.trim();
+    match trimmed {
         "Open" | "Pending" | "To Do" | "Todo" | "New" => "Pending",
         "In Progress" | "InProgress" | "In-Progress" | "Investigation" => "InProgress",
-        "On Hold" | "Onhold" | "On-Hold" | "Hold" | "Assigned" => "Onhold",
-        "Done" | "Completed" | "Resolved" | "Closed" | "Resolution" => "Completed",
+        "On Hold" | "Onhold" | "On-Hold" | "Hold" | "Assigned" | "Solved" => "Onhold",
+        "Done" | "Completed" | "Resolved" | "Closed" | "Close" | "Resolution" | "Solved(closed)"
+        | "Solved (closed)" => "Completed",
         other => match other {
             s if s.eq_ignore_ascii_case("open")
                 || s.eq_ignore_ascii_case("pending")
@@ -896,7 +919,8 @@ pub fn from_sheet_status(val: &str) -> &'static str {
             }
             s if s.eq_ignore_ascii_case("on hold")
                 || s.eq_ignore_ascii_case("onhold")
-                || s.eq_ignore_ascii_case("assigned") =>
+                || s.eq_ignore_ascii_case("assigned")
+                || s.eq_ignore_ascii_case("solved") =>
             {
                 "Onhold"
             }
@@ -904,12 +928,40 @@ pub fn from_sheet_status(val: &str) -> &'static str {
                 || s.eq_ignore_ascii_case("completed")
                 || s.eq_ignore_ascii_case("resolved")
                 || s.eq_ignore_ascii_case("closed")
-                || s.eq_ignore_ascii_case("resolution") =>
+                || s.eq_ignore_ascii_case("close")
+                || s.eq_ignore_ascii_case("resolution")
+                || s.eq_ignore_ascii_case("solved(closed)")
+                || s.eq_ignore_ascii_case("solved (closed)") =>
             {
                 "Completed"
             }
             _ => "Pending",
         },
+    }
+}
+
+fn to_bpsl_stage(val: &str) -> &'static str {
+    match from_sheet_status(val) {
+        "InProgress" => "In Progress",
+        "Onhold" => "Solved",
+        "Completed" => "Solved(closed)",
+        _ => "Pending",
+    }
+}
+
+fn to_bpsl_status(val: &str) -> &'static str {
+    let trimmed = val.trim();
+    if trimmed.eq_ignore_ascii_case("closed")
+        || trimmed.eq_ignore_ascii_case("close")
+        || trimmed.eq_ignore_ascii_case("completed")
+        || trimmed.eq_ignore_ascii_case("done")
+        || trimmed.eq_ignore_ascii_case("resolved")
+        || trimmed.eq_ignore_ascii_case("solved(closed)")
+        || trimmed.eq_ignore_ascii_case("solved (closed)")
+    {
+        "Closed"
+    } else {
+        "Open"
     }
 }
 
@@ -930,16 +982,28 @@ pub fn sanitize_ticket_payload(client: &ApiClient, payload: &Value, for_create: 
             obj.insert("employee_code".to_string(), json!(code));
         }
         if let Some(kanban) = obj.get("kanban_state").and_then(|v| v.as_str()) {
-            obj.insert(
-                "kanban_state".to_string(),
-                json!(to_sheet_kanban_state(kanban)),
-            );
+            let mapped = if client.protocol() == crate::api::ApiProtocol::BpslRest {
+                to_bpsl_stage(kanban)
+            } else {
+                to_sheet_kanban_state(kanban)
+            };
+            obj.insert("kanban_state".to_string(), json!(mapped));
         }
         if let Some(stage) = obj.get("stage").and_then(|v| v.as_str()) {
-            obj.insert("stage".to_string(), json!(to_sheet_stage(stage)));
+            let mapped = if client.protocol() == crate::api::ApiProtocol::BpslRest {
+                to_bpsl_stage(stage)
+            } else {
+                to_sheet_stage(stage)
+            };
+            obj.insert("stage".to_string(), json!(mapped));
         }
         if let Some(status) = obj.get("status").and_then(|v| v.as_str()) {
-            obj.insert("status".to_string(), json!(to_sheet_status(status)));
+            let mapped = if client.protocol() == crate::api::ApiProtocol::BpslRest {
+                to_bpsl_status(status)
+            } else {
+                to_sheet_status(status)
+            };
+            obj.insert("status".to_string(), json!(mapped));
         }
         if let Some(act) = obj.remove("activities") {
             if !obj.contains_key("activities_text") {
@@ -1055,9 +1119,25 @@ async fn pull(client: &ApiClient) -> Result<usize, ApiError> {
     // ---- server rows → local ----
     for (server_id, t) in &server {
         let mut t_norm = (*t).clone();
-        t_norm.kanban_state = from_sheet_status(&t.kanban_state).to_string();
-        t_norm.stage = from_sheet_status(&t.stage).to_string();
-        t_norm.status = from_sheet_status(&t.status).to_string();
+        let raw_kanban = if !t.kanban_state.trim().is_empty() {
+            t.kanban_state.as_str()
+        } else if !t.stage.trim().is_empty() {
+            t.stage.as_str()
+        } else {
+            t.status.as_str()
+        };
+        let normalized_col = from_sheet_status(raw_kanban).to_string();
+        t_norm.kanban_state = normalized_col.clone();
+        t_norm.stage = if !t.stage.trim().is_empty() {
+            from_sheet_status(&t.stage).to_string()
+        } else {
+            normalized_col.clone()
+        };
+        t_norm.status = if !t.status.trim().is_empty() {
+            to_bpsl_status(&t.status).to_string()
+        } else {
+            normalized_col
+        };
         let t = &t_norm;
         // Never re-insert a row that has a queued DELETE.
         if db::server_id_has_active_delete(server_id) {
