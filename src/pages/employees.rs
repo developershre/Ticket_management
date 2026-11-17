@@ -314,28 +314,29 @@ pub fn Employees() -> Element {
             // ============================================================
             // Page Header
             // ============================================================
-            header { class: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border/70 bg-card/60 backdrop-blur-md px-6 py-4.5",
-                div { class: "flex items-center gap-3",
-                    div { class: "flex size-10 items-center justify-center rounded-xl bg-muted text-foreground border border-border/80 shadow-xs",
+            header { class: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3.5 border-b border-border/70 bg-card/60 backdrop-blur-md px-4 sm:px-6 py-4 shrink-0",
+                div { class: "flex items-center gap-3 min-w-0 flex-1",
+                    div { class: "flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground border border-border/80 shadow-xs",
                         UsersIcon { class: "size-5" }
                     }
-                    div { class: "flex flex-col",
+                    div { class: "flex flex-col min-w-0 flex-1",
                         div { class: "flex items-center gap-2.5",
-                            h1 { class: "text-lg font-bold tracking-tight text-foreground", "Employees" }
-                            span { class: "rounded-full bg-muted border border-border/80 px-2.5 py-0.5 text-xs font-semibold text-muted-foreground",
+                            h1 { class: "text-lg font-bold tracking-tight text-foreground shrink-0", "Employees" }
+                            span { class: "rounded-full bg-muted border border-border/80 px-2.5 py-0.5 text-xs font-semibold text-muted-foreground shrink-0",
                                 "{total_count} in directory"
                             }
                         }
-                        p { class: "mt-0.5 text-xs text-muted-foreground",
+                        p { class: "mt-0.5 text-xs text-muted-foreground truncate",
                             "Synced with Google Sheets API · cached locally for offline use"
                         }
                     }
                 }
 
-                div { class: "flex items-center gap-2",
+                div { class: "flex items-center gap-2 flex-wrap sm:flex-nowrap shrink-0",
                     Button {
                         variant: "outline".to_string(),
                         size: "sm".to_string(),
+                        class: "shrink-0 shadow-2xs",
                         title: "Pull the latest employee list from Google Sheets now".to_string(),
                         onclick: move |_| {
                             crate::sync::invalidate_employee_cache();

@@ -541,21 +541,21 @@ pub fn Tickets() -> Element {
         .collect();
 
     rsx! {
-        div { class: "flex flex-col h-[calc(100vh-4rem)] max-h-[calc(100vh-4rem)] w-full gap-3 p-4 sm:p-6 overflow-hidden",
+        div { class: "flex flex-col h-[calc(100vh-4rem)] max-h-[calc(100vh-4rem)] w-full gap-3 p-3 sm:p-6 overflow-hidden",
             // Page Header
-            div { class: "flex items-center justify-between gap-4 pb-2 border-b border-border/40 shrink-0",
-                div { class: "flex items-center gap-3",
-                    div {
-                        h1 { class: "text-lg font-bold tracking-tight text-foreground", "Support Tickets" }
-                        p { class: "text-xs text-muted-foreground",
+            div { class: "flex items-center justify-between gap-3 pb-2 border-b border-border/40 shrink-0",
+                div { class: "flex items-center gap-3 min-w-0 flex-1",
+                    div { class: "flex flex-col min-w-0",
+                        h1 { class: "text-lg font-bold tracking-tight text-foreground truncate", "Support Tickets" }
+                        p { class: "text-xs text-muted-foreground truncate",
                             "{tickets.read().len()} total tickets across all stages"
                         }
                     }
                 }
-                div { class: "flex items-center gap-2",
+                div { class: "flex items-center gap-2 shrink-0",
                     Button {
                         size: "sm",
-                        class: "h-8 px-3 text-xs gap-1.5 font-medium cursor-pointer shadow-sm",
+                        class: "h-8 px-3 text-xs gap-1.5 font-medium cursor-pointer shadow-sm shrink-0",
                         onclick: move |_| state.open_create(None),
                         PlusIcon { class: "size-3.5" }
                         "New Ticket"

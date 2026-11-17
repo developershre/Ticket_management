@@ -374,10 +374,7 @@ pub fn save_hide_empty_views(val: bool) {
 pub fn kanban_grid_layout_class(visible_count: usize) -> &'static str {
     match visible_count {
         0 => "flex items-center justify-center w-full flex-1 min-h-0",
-        1 => "grid grid-cols-1 gap-3.5 w-full flex-1 min-h-0 overflow-y-auto",
-        2 => "grid grid-cols-1 md:grid-cols-2 gap-3.5 w-full flex-1 min-h-0 overflow-y-auto",
-        3 => "grid grid-cols-1 md:grid-cols-3 gap-3.5 w-full flex-1 min-h-0 overflow-y-auto",
-        4 => "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3.5 w-full flex-1 min-h-0 overflow-y-auto",
+        1 => "flex justify-center w-full flex-1 min-h-0 overflow-y-auto p-1",
         _ => "flex gap-3.5 w-full flex-1 min-h-0 overflow-x-auto pb-2 items-stretch",
     }
 }
@@ -393,7 +390,7 @@ pub fn column_display_label(col: &str) -> &'static str {
     match col {
         "Pending" => "Pending",
         "InProgress" => "In Progress",
-        "Hold" | "Onhold" => "On Hold",
+        "Hold" | "Onhold" => "Hold",
         "Solved" => "Solved",
         "Completed" => "Solved (Closed)",
         "Cancelled" => "Cancelled",
@@ -520,12 +517,12 @@ pub fn status_badge_class(status: &str) -> &'static str {
     match status {
         "Pending" => "text-amber-500 dark:text-amber-400 border-amber-500/35 bg-amber-500/15",
         "InProgress" => "text-sky-500 dark:text-sky-400 border-sky-500/35 bg-sky-500/15",
-        "Hold" | "Onhold" => "text-orange-500 dark:text-orange-400 border-orange-500/35 bg-orange-500/15",
+        "Hold" | "Onhold" => "text-amber-600 dark:text-amber-400 border-amber-500/35 bg-amber-500/15",
         "Solved" => "text-purple-500 dark:text-purple-400 border-purple-500/35 bg-purple-500/15",
         "Completed" => {
             "text-emerald-500 dark:text-emerald-400 border-emerald-500/35 bg-emerald-500/15"
         }
-        "Cancelled" => "text-slate-400 dark:text-slate-400 border-slate-500/35 bg-slate-500/15",
+        "Cancelled" => "text-rose-500 dark:text-rose-400 border-rose-500/35 bg-rose-500/15",
         _ => "text-muted-foreground border-border bg-muted/40",
     }
 }
@@ -537,7 +534,7 @@ pub fn status_badge_variant(status: &str) -> &'static str {
         "Hold" | "Onhold" => "warning",
         "Solved" => "purple",
         "Completed" => "success",
-        "Cancelled" => "secondary",
+        "Cancelled" => "destructive",
         _ => "secondary",
     }
 }

@@ -15,9 +15,9 @@ use crate::icons::{
 
 use super::components::{ColumnContextMenu, TicketContextMenu};
 use super::types::{
-    assignee_color_classes, column_display_label, get_assignee_initials, kanban_grid_layout_class,
-    priority_badge, save_hidden_views, save_hide_empty_views, sla_badge_class, status_badge_class,
-    status_badge_variant, KanbanViewDef, TicketContextState, TicketItem,
+    column_display_label, kanban_grid_layout_class, priority_badge, save_hidden_views,
+    save_hide_empty_views, status_badge_class, status_badge_variant, KanbanViewDef,
+    TicketContextState, TicketItem,
 };
 
 #[derive(Props, Clone, PartialEq)]
@@ -430,7 +430,11 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                             let col_enter2 = column.clone();
                             let col_over3 = column.clone();
                             let col_drop2 = column.clone();
-                            let flex_col_cls = if visible_view_defs.read().len() >= 5 { "min-w-[300px] flex-1 shrink-0" } else { "" };
+                            let flex_col_cls = if visible_view_defs.read().len() == 1 {
+                                "w-full max-w-3xl flex-1 shrink-0"
+                            } else {
+                                "min-w-[275px] sm:min-w-[295px] flex-1 shrink-0"
+                            };
 
                             rsx! {
                                 ColumnContextMenu {
@@ -576,23 +580,25 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                                     let title = ticket.title.clone();
                                                     let priority = ticket.priority.clone();
                                                     let category = ticket.category.clone();
-                                                    let assignee = ticket.assignee.clone();
-                                                    let ticket_status = ticket.status.clone();
-                                                    let sla_status = ticket.sla_status.clone();
                                                     let deadline = ticket.deadline.clone();
                                                     let disp_due = crate::state::format_display_12hr(&deadline);
 
                                                     let is_dragged = dragged_id.read().as_deref() == Some(&id);
                                                     let is_card_over = drag_over_card.read().as_deref() == Some(&id) && !is_dragged;
 
+                                                    let col_stripe = match ticket.kanban_state.as_str() {
+                                                        "Hold" | "Onhold" => "border-l-4 border-l-amber-500",
+                                                        "Cancelled" => "border-l-4 border-l-rose-500",
+                                                        "Completed" | "Solved" => "border-l-4 border-l-emerald-500",
+                                                        "InProgress" => "border-l-4 border-l-sky-500",
+                                                        "Pending" => "border-l-4 border-l-blue-500",
+                                                        _ => "border-l-4 border-l-primary/60",
+                                                    };
+
                                                     let card_cls = if is_dragged {
                                                         "opacity-40 scale-[0.99] border-dashed border-primary ring-1 ring-primary/40 bg-muted/40 cursor-grabbing rounded-md border p-3 flex flex-col gap-2 transition-all duration-200"
-                                                    } else if ticket_status == "Completed" {
-                                                        "group flex cursor-grab active:cursor-grabbing flex-col gap-2 rounded-md border border-success/30 bg-card p-3 transition-all duration-200 ease-out hover:border-success/60 hover:bg-success/5 hover:-translate-y-0.5 hover:shadow-md shadow-xs"
-                                                    } else if ticket_status == "InProgress" {
-                                                        "group flex cursor-grab active:cursor-grabbing flex-col gap-2 rounded-md border border-primary/40 bg-card p-3 transition-all duration-200 ease-out hover:border-primary/70 hover:bg-primary/5 hover:-translate-y-0.5 hover:shadow-md shadow-xs"
                                                     } else {
-                                                        "group flex cursor-grab active:cursor-grabbing flex-col gap-2 rounded-md border border-border/70 bg-card p-3 transition-all duration-200 ease-out hover:border-primary/50 hover:bg-accent/20 hover:-translate-y-0.5 hover:shadow-md shadow-xs"
+                                                        "group flex cursor-grab active:cursor-grabbing flex-col gap-2 rounded-md border border-border/70 bg-card p-3 transition-all duration-200 ease-out hover:border-primary/50 hover:bg-accent/15 hover:-translate-y-0.5 hover:shadow-md shadow-xs"
                                                     };
 
                                                     let id_for_start = id.clone();
@@ -652,7 +658,7 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                                                 div {
                                                                     draggable: "true",
                                                                     "data-drag-id": "{id}",
-                                                                    class: "select-none {card_cls}",
+                                                                    class: "select-none {card_cls} {col_stripe}",
                                                                     ondragstart: move |_| {
                                                                         dragged_id.set(Some(id_for_start.clone()));
                                                                     },
@@ -666,39 +672,19 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
 
                                                                     div { class: "pointer-events-none flex flex-col gap-2 w-full",
                                                                         div { class: "flex items-center justify-between gap-1.5",
-                                                                            div { class: "flex items-center gap-1.5 min-w-0",
+                                                                            div { class: "flex items-center gap-1.5 shrink-0 min-w-0",
                                                                                 GripVerticalIcon { class: "size-3.5 shrink-0 text-muted-foreground/40 group-hover:text-primary transition-colors cursor-grab" }
-                                                                                span { class: "font-mono text-[11px] font-bold text-muted-foreground group-hover:text-primary transition-colors",
+                                                                                span { class: "font-mono text-xs font-bold text-primary tracking-wide shrink-0 whitespace-nowrap group-hover:underline transition-colors",
                                                                                     "{id}"
                                                                                 }
                                                                             }
-                                                                            div { class: "flex items-center gap-1 shrink-0",
-                                                                                span {
-                                                                                    class: if ticket.status.eq_ignore_ascii_case("Open") {
-                                                                                        "inline-flex items-center gap-1 text-[9px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded px-1.5 py-0.2"
-                                                                                    } else {
-                                                                                        "inline-flex items-center gap-1 text-[9px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-500/10 border border-slate-500/30 rounded px-1.5 py-0.2"
-                                                                                    },
-                                                                                    span {
-                                                                                        class: if ticket.status.eq_ignore_ascii_case("Open") {
-                                                                                            "size-1.5 rounded-full bg-emerald-500 animate-pulse"
-                                                                                        } else {
-                                                                                            "size-1.5 rounded-full bg-slate-400"
-                                                                                        }
-                                                                                    }
-                                                                                    "{ticket.status}"
-                                                                                }
+                                                                            div { class: "flex items-center gap-1 shrink-0 ml-auto",
                                                                                 Badge {
                                                                                     variant: "{status_badge_variant(&ticket.kanban_state)}",
-                                                                                    class: "text-[10px] font-semibold {status_badge_class(&ticket.kanban_state)}",
+                                                                                    class: "text-[10px] font-semibold uppercase tracking-wider shrink-0 {status_badge_class(&ticket.kanban_state)}",
                                                                                     "{column_display_label(&ticket.kanban_state)}"
                                                                                 }
-                                                                                Badge {
-                                                                                    variant: "{priority_badge(&priority)}",
-                                                                                    class: "text-[10px] px-1.5 py-0.2",
-                                                                                    "{priority}"
-                                                                                }
-                                                                                div { class: "flex items-center gap-0.5 pointer-events-auto ml-1 border-l border-border/50 pl-1",
+                                                                                div { class: "flex items-center gap-0.5 pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity ml-1 border-l border-border/40 pl-1",
                                                                                     button {
                                                                                         r#type: "button",
                                                                                         title: "View Ticket Details",
@@ -729,8 +715,44 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                                                             }
                                                                         }
 
-                                                                        p { class: "text-sm font-semibold leading-snug text-foreground group-hover:text-primary/95 transition-colors line-clamp-2",
+                                                                        p { class: "text-sm font-semibold leading-snug text-foreground group-hover:text-primary transition-colors line-clamp-2",
                                                                             "{title}"
+                                                                        }
+
+                                                                        div { class: "flex flex-col gap-0.5 text-[11px] text-muted-foreground pt-0.5",
+                                                                            div { class: "flex items-center gap-1 text-[11px] min-w-0",
+                                                                                span { class: "text-muted-foreground/80 shrink-0", "Customer:" }
+                                                                                span { class: "font-medium text-foreground truncate", "{ticket.emp_name()}" }
+                                                                            }
+                                                                            {
+                                                                                let dept = ticket.department_display();
+                                                                                let div_s = ticket.division_display();
+                                                                                let show_div = !div_s.is_empty() && div_s != "N/A";
+                                                                                rsx! {
+                                                                                    if !dept.is_empty() || show_div {
+                                                                                        div { class: "flex items-center gap-1 text-[10px] text-muted-foreground/80 truncate",
+                                                                                            span { class: "shrink-0", "Department:" }
+                                                                                            span { class: "truncate", "{dept}" }
+                                                                                            if show_div {
+                                                                                                span { class: "shrink-0", "|" }
+                                                                                                span { class: "truncate", "Division: {div_s}" }
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                            if !ticket.created_on.is_empty() {
+                                                                                div { class: "flex items-center gap-1 text-[10px] text-muted-foreground/70",
+                                                                                    span { class: "shrink-0", "Created:" }
+                                                                                    span { class: "font-mono", "{crate::state::format_display_12hr(&ticket.created_on)}" }
+                                                                                }
+                                                                            }
+                                                                            if !ticket.last_updated_on.is_empty() {
+                                                                                div { class: "flex items-center gap-1 text-[10px] text-muted-foreground/70",
+                                                                                    span { class: "shrink-0", "Updated:" }
+                                                                                    span { class: "font-mono", "{crate::state::format_display_12hr(&ticket.last_updated_on)}" }
+                                                                                }
+                                                                            }
                                                                         }
 
                                                                         if !ticket.stage.is_empty() && ticket.stage != "Triage" && ticket.stage != ticket.kanban_state {
@@ -743,20 +765,6 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                                                             }
                                                                         }
 
-                                                                        div { class: "flex flex-col gap-0.5 text-[11px] pt-0.5",
-                                                                            div { class: "flex items-center justify-between gap-1.5 text-muted-foreground",
-                                                                                span { class: "font-medium text-foreground truncate", "{ticket.emp_name()}" }
-                                                                            }
-                                                                            div { class: "flex items-center justify-between gap-1 text-[10px] text-muted-foreground/80",
-                                                                                span { class: "truncate", "{ticket.email_address}" }
-                                                                                if !sla_status.is_empty() {
-                                                                                    span { class: "rounded px-1.5 py-0.2 text-[9px] font-semibold {sla_badge_class(&sla_status)} shrink-0",
-                                                                                        "{sla_status}"
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                        }
-
                                                                         if !deadline.is_empty() {
                                                                             div { class: "flex items-center justify-between text-[10px] text-muted-foreground/80 pt-1 border-t border-border/30",
                                                                                 span { class: "font-mono text-warning font-medium", title: "{deadline}", "Due: {disp_due}" }
@@ -764,36 +772,34 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                                                         }
                                                                     }
 
-                                                                    div { class: "mt-1 flex items-center justify-between pt-2 border-t border-border/40 text-xs",
-                                                                        div { class: "flex items-center gap-1.5 pointer-events-auto flex-wrap",
-                                                                            span { class: "rounded-md bg-muted/80 px-2 py-0.5 text-[10px] font-medium text-muted-foreground",
-                                                                                "{category}"
+                                                                    div { class: "mt-1 flex items-center justify-between pt-2 border-t border-border/40 text-xs gap-2",
+                                                                        div { class: "flex items-center gap-1.5 pointer-events-auto min-w-0 flex-wrap",
+                                                                            span { class: "rounded bg-muted/80 px-2 py-0.5 text-[10px] font-medium text-foreground truncate max-w-[130px] border border-border/50",
+                                                                                "{ticket.assignee_name()}"
+                                                                            }
+                                                                            if !category.is_empty() {
+                                                                                span { class: "rounded bg-muted/50 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground truncate max-w-[100px]",
+                                                                                    "{category}"
+                                                                                }
                                                                             }
                                                                             if !ticket.rating_avg_text.is_empty() && ticket.rating_avg_text != "Unrated" {
                                                                                 span {
-                                                                                    class: "inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-500 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.2",
+                                                                                    class: "inline-flex items-center gap-0.5 text-[9px] font-semibold text-amber-500 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.2 shrink-0",
                                                                                     "★ {ticket.rating_avg_text}"
                                                                                 }
                                                                             }
                                                                             if !ticket.attachment_name.is_empty() || !ticket.attachment_url.is_empty() {
                                                                                 span {
-                                                                                    class: "inline-flex items-center text-muted-foreground hover:text-primary transition-colors cursor-pointer",
+                                                                                    class: "inline-flex items-center text-muted-foreground hover:text-primary transition-colors cursor-pointer shrink-0",
                                                                                     title: if !ticket.attachment_name.is_empty() { "{ticket.attachment_name}" } else { "{ticket.attachment_url}" },
                                                                                     PaperclipIcon { class: "size-3 text-muted-foreground/80" }
                                                                                 }
                                                                             }
                                                                         }
-                                                                        {
-                                                                            let initials = get_assignee_initials(&assignee);
-                                                                            let color_cls = assignee_color_classes(&assignee);
-                                                                            let display_name = ticket.assignee_name();
-                                                                            rsx! {
-                                                                                div {
-                                                                                    title: "Assigned to: {display_name}",
-                                                                                    class: "flex size-6 shrink-0 items-center justify-center rounded-full text-[10px] font-extrabold uppercase border shadow-2xs pointer-events-auto cursor-help transition-transform hover:scale-110 {color_cls}",
-                                                                                    "{initials}"
-                                                                                }
-                                                                            }
+                                                                        Badge {
+                                                                            variant: "{priority_badge(&priority)}",
+                                                                            class: "text-[10px] font-semibold px-2 py-0.5 shrink-0 whitespace-nowrap shadow-2xs",
+                                                                            "{priority}"
                                                                         }
                                                                     }
                                                                 }

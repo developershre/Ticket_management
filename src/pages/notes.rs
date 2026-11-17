@@ -115,30 +115,30 @@ pub fn NotesPage() -> Element {
             // ============================================================
             // Page Header
             // ============================================================
-            header { class: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border/70 bg-card/60 backdrop-blur-md px-6 py-4.5",
-                div { class: "flex items-center gap-3",
-                    div { class: "flex size-10 items-center justify-center rounded-xl bg-muted text-foreground border border-border/80 shadow-xs",
+            header { class: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3.5 border-b border-border/70 bg-card/60 backdrop-blur-md px-4 sm:px-6 py-4 shrink-0",
+                div { class: "flex items-center gap-3 min-w-0 flex-1",
+                    div { class: "flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground border border-border/80 shadow-xs",
                         StickyNoteIcon { class: "size-5" }
                     }
-                    div { class: "flex flex-col",
+                    div { class: "flex flex-col min-w-0 flex-1",
                         div { class: "flex items-center gap-2.5",
-                            h1 { class: "text-lg font-bold tracking-tight text-foreground", "Notes" }
-                            span { class: "rounded-full bg-muted border border-border/80 px-2.5 py-0.5 text-xs font-semibold text-muted-foreground",
+                            h1 { class: "text-lg font-bold tracking-tight text-foreground shrink-0", "Notes" }
+                            span { class: "rounded-full bg-muted border border-border/80 px-2.5 py-0.5 text-xs font-semibold text-muted-foreground shrink-0",
                                 "{total_count} saved"
                             }
                         }
-                        p { class: "text-xs text-muted-foreground",
+                        p { class: "text-xs text-muted-foreground truncate",
                             "Quick notes captured from the FAB button and workspace, stored directly in SQLite (management.db)"
                         }
                     }
                 }
 
-                div { class: "flex items-center gap-3",
+                div { class: "flex items-center gap-2.5 w-full sm:w-auto shrink-0 justify-between sm:justify-end",
                     // Search bar
-                    div { class: "relative w-64 sm:w-72",
+                    div { class: "relative flex-1 sm:w-72 sm:flex-initial",
                         SearchIcon { class: "absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" }
                         Input {
-                            class: "pl-8 text-xs h-9 bg-card border-border/80 focus-visible:ring-1",
+                            class: "pl-8 text-xs h-9 bg-card border-border/80 focus-visible:ring-1 w-full",
                             placeholder: "Search notes, titles, or authors...",
                             value: search_query.read().clone(),
                             oninput: move |e: FormEvent| search_query.set(e.value()),
@@ -158,7 +158,7 @@ pub fn NotesPage() -> Element {
                     Button {
                         variant: "default",
                         size: "sm",
-                        class: "gap-1.5 font-semibold shadow-xs cursor-pointer",
+                        class: "shrink-0 gap-1.5 font-semibold shadow-xs cursor-pointer",
                         onclick: move |_| {
                             new_title.set(String::new());
                             new_details.set(String::new());
