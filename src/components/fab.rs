@@ -397,7 +397,7 @@ pub fn Fab() -> Element {
         // ------------------------------------------------------------
         if menu_open() {
             div {
-                class: "fixed bottom-24 right-6 z-40 flex flex-col items-end gap-3 animate-in fade-in slide-in-from-bottom-3 duration-200",
+                class: "fixed bottom-38 right-6 z-40 flex flex-col items-end gap-3 animate-in fade-in slide-in-from-bottom-3 duration-200",
                 for (action_idx, kind_item) in ALL_KINDS.iter().enumerate() {
                     div {
                         key: "quick-action-{action_idx}",
@@ -424,7 +424,7 @@ pub fn Fab() -> Element {
             r#type: "button",
             title: "Quick actions",
             "aria-label": "Quick actions",
-            class: "fixed bottom-6 right-6 z-40 flex size-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-xl shadow-primary/30 hover:shadow-2xl hover:shadow-primary/45 hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer border border-primary-foreground/15",
+            class: "fixed bottom-20 right-6 z-40 flex size-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-xl shadow-primary/30 hover:shadow-2xl hover:shadow-primary/45 hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer border border-primary-foreground/15",
             onclick: move |_| {
                 let next = !*menu_open.read();
                 menu_open.set(next);
