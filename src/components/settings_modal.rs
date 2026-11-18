@@ -90,23 +90,23 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
     let mut active_tab = use_signal(|| SettingsTab::Api);
 
     // ---- API Tab State ----
-    let (initial_url, initial_key, initial_emp) = {
-        let (sys_url, sys_key, sys_emp) = crate::db::get_system_api_config();
-        let loaded = crate::api::ApiConfig::load().ok();
-        (
-            sys_url.or_else(|| loaded.as_ref().map(|c| c.base_url.clone())).unwrap_or_default(),
-            sys_key.or_else(|| loaded.as_ref().map(|c| c.api_key.clone())).unwrap_or_default(),
-            sys_emp.or_else(|| loaded.as_ref().and_then(|c| c.employee_code.clone())).unwrap_or_default(),
-        )
-    };
+    let all_init_sources = crate::db::get_all_sheet_sources();
+    let initial_active_id = crate::db::get_active_sheet_source_id();
+    let initial_active_src = all_init_sources
+        .iter()
+        .find(|s| s.id == initial_active_id)
+        .cloned()
+        .unwrap_or_else(|| all_init_sources[0].clone());
 
-    let mut base_url = use_signal(|| initial_url);
-    let mut api_key = use_signal(|| initial_key);
+    let mut sheet_sources = use_signal(move || all_init_sources);
+    let active_profile = use_signal(move || initial_active_src.id.clone());
+    let mut current_profile_name = use_signal(move || initial_active_src.name.clone());
+    let mut base_url = use_signal(move || initial_active_src.base_url.clone());
+    let mut api_key = use_signal(move || initial_active_src.api_key.clone());
+    let mut api_protocol = use_signal(move || initial_active_src.protocol.clone());
+
+    let initial_emp = crate::db::sync_meta_get("system_employee_code").unwrap_or_default();
     let mut employee_code = use_signal(|| initial_emp);
-    let initial_profile = crate::db::get_active_sheet_profile();
-    let mut active_profile = use_signal(|| initial_profile);
-    let initial_protocol = crate::db::get_system_api_protocol().unwrap_or_else(|| "auto".to_string());
-    let mut api_protocol = use_signal(|| initial_protocol);
     let mut show_key = use_signal(|| false);
     let mut test_status = use_signal(|| TestStatus::Idle);
     let mut is_saving = use_signal(|| false);
@@ -148,6 +148,99 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         on_close.call(());
     };
 
+    let handle_add_sheet = {
+        let mut sheet_sources = sheet_sources;
+        let mut active_profile = active_profile;
+        let mut current_profile_name = current_profile_name;
+        let mut base_url = base_url;
+        let mut api_key = api_key;
+        let mut api_protocol = api_protocol;
+        let mut test_status = test_status;
+        move |_| {
+            let mut list = sheet_sources.write();
+            let count = list.len() + 1;
+            let new_id = format!("sheet_{}", crate::sync::now_epoch());
+            let new_name = format!("Sheet Source {count}");
+            let new_src = crate::db::SheetSource {
+                id: new_id.clone(),
+                name: new_name.clone(),
+                base_url: String::new(),
+                api_key: String::new(),
+                protocol: "auto".to_string(),
+            };
+            list.push(new_src);
+            drop(list);
+            active_profile.set(new_id);
+            current_profile_name.set(new_name);
+            base_url.set(String::new());
+            api_key.set(String::new());
+            api_protocol.set("auto".to_string());
+            test_status.set(TestStatus::Idle);
+        }
+    };
+
+    let mut handle_delete_sheet = {
+        let mut sheet_sources = sheet_sources;
+        let mut active_profile = active_profile;
+        let mut current_profile_name = current_profile_name;
+        let mut base_url = base_url;
+        let mut api_key = api_key;
+        let mut api_protocol = api_protocol;
+        let mut test_status = test_status;
+        let toast = toast;
+        move |id_to_del: String| {
+            if sheet_sources.read().len() <= 1 {
+                toast.warning("Cannot Delete", "You must keep at least one Google Sheet source.");
+                return;
+            }
+            let mut list = sheet_sources.write();
+            list.retain(|s| s.id != id_to_del);
+            let remaining_first = list.first().cloned();
+            let list_copy = list.clone();
+            drop(list);
+            let _ = crate::db::save_all_sheet_sources(&list_copy);
+            if *active_profile.read() == id_to_del {
+                if let Some(first) = remaining_first {
+                    active_profile.set(first.id.clone());
+                    current_profile_name.set(first.name.clone());
+                    base_url.set(first.base_url.clone());
+                    api_key.set(first.api_key.clone());
+                    api_protocol.set(first.protocol.clone());
+                    let _ = crate::sync::switch_sheet_profile_and_sync(&first.id);
+                }
+            }
+            test_status.set(TestStatus::Idle);
+        }
+    };
+
+    let mut handle_select_sheet = {
+        let mut sheet_sources = sheet_sources;
+        let mut active_profile = active_profile;
+        let mut current_profile_name = current_profile_name;
+        let mut base_url = base_url;
+        let mut api_key = api_key;
+        let mut api_protocol = api_protocol;
+        let mut test_status = test_status;
+        move |src: crate::db::SheetSource| {
+            let cur_id = active_profile.read().clone();
+            {
+                let mut list = sheet_sources.write();
+                if let Some(item) = list.iter_mut().find(|s| s.id == cur_id) {
+                    item.name = current_profile_name.read().trim().to_string();
+                    item.base_url = base_url.read().trim().to_string();
+                    item.api_key = api_key.read().trim().to_string();
+                    item.protocol = api_protocol.read().trim().to_string();
+                }
+            }
+            active_profile.set(src.id.clone());
+            current_profile_name.set(src.name.clone());
+            base_url.set(src.base_url.clone());
+            api_key.set(src.api_key.clone());
+            api_protocol.set(src.protocol.clone());
+            test_status.set(TestStatus::Idle);
+        }
+    };
+
     let handle_test = move |_| {
         let url = base_url.read().trim().to_string();
         let key = api_key.read().trim().to_string();
@@ -167,6 +260,7 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         let emp = employee_code.read().trim().to_string();
         let prof = active_profile.read().clone();
         let proto = api_protocol.read().trim().to_string();
+        let name = current_profile_name.read().trim().to_string();
 
         if url.is_empty() {
             toast.error("Validation Error", "Google Apps Script Web App URL cannot be empty.");
@@ -175,30 +269,46 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
 
         is_saving.set(true);
 
-        if let Err(e) = crate::db::save_sheet_profile_config(&prof, &url, &key) {
+        // Update active profile in sources list
+        let mut list = sheet_sources.write();
+        if let Some(item) = list.iter_mut().find(|s| s.id == prof) {
+            item.name = if name.is_empty() { format!("Sheet Source {}", prof) } else { name.clone() };
+            item.base_url = url.clone();
+            item.api_key = key.clone();
+            item.protocol = proto.clone();
+        }
+        let sources_copy = list.clone();
+        drop(list);
+
+        if let Err(e) = crate::db::save_all_sheet_sources(&sources_copy) {
             is_saving.set(false);
             toast.error("Failed to Save Settings", format!("Database error: {e}"));
             return;
         }
+
         if !emp.is_empty() {
             let _ = crate::db::sync_meta_set("system_employee_code", &emp);
         }
-        if proto != "auto" {
-            let _ = crate::db::save_system_api_protocol(&proto);
-        }
 
-        match crate::sync::reload_client() {
+        match crate::sync::switch_sheet_profile_and_sync(&prof) {
             Ok(_) => {
                 is_saving.set(false);
                 crate::sync::kick();
+                spawn(async move {
+                    let _ = crate::sync::pull_tickets_now().await;
+                    let _ = crate::sync::pull_employees_now().await;
+                });
                 if let Some(mut r) = db_sync {
                     r.with_mut(|rev| rev.0 += 1);
                 }
-                toast.success("Settings Saved", "API credentials stored in system. Sync refreshed!");
+                let disp_name = if name.is_empty() { "Google Sheet".to_string() } else { name };
+                toast.success("Settings Saved & Connected", format!("Successfully connected to {disp_name}."));
+                on_close.call(());
             }
             Err(e) => {
                 is_saving.set(false);
-                toast.warning("Settings Saved", format!("Credentials stored, but client reload failed: {e}"));
+                toast.warning("Settings Saved", format!("Saved in database, but connection reload warned: {e}"));
+                on_close.call(());
             }
         }
     };
@@ -392,63 +502,101 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                     }
                                 }
 
-                                // Google Sheet Profile Switcher (No API Key vs API Key)
-                                div { class: "flex flex-col gap-2 rounded-xl border border-border/70 bg-muted/30 p-3.5",
+                                // Google Sheet Sources Manager
+                                div { class: "flex flex-col gap-2.5 rounded-xl border border-border/70 bg-muted/30 p-3.5",
                                     div { class: "flex items-center justify-between",
-                                        span { class: "text-xs font-semibold text-foreground", "Active Google Sheet" }
-                                        span { class: "text-[10px] text-muted-foreground font-mono",
-                                            if *active_profile.read() == "rest" { "BPSL REST (No Key)" } else { "Legacy v1 (API Key)" }
+                                        div { class: "flex items-center gap-1.5",
+                                            span { class: "text-xs font-semibold text-foreground", "Google Sheet Sources" }
+                                            span { class: "text-[10px] text-muted-foreground px-1.5 py-0.5 rounded-full bg-muted font-mono",
+                                                "{sheet_sources.read().len()}"
+                                            }
+                                        }
+                                        button {
+                                            r#type: "button",
+                                            class: "cursor-pointer flex items-center gap-1 rounded-md bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 px-2 py-1 text-[11px] font-medium transition-colors shadow-2xs",
+                                            onclick: handle_add_sheet,
+                                            svg { class: "size-3", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
+                                                path { d: "M12 5v14M5 12h14" }
+                                            }
+                                            "Add Sheet Source"
                                         }
                                     }
-                                    div { class: "grid grid-cols-2 gap-2",
-                                        button {
-                                            r#type: "button",
-                                            class: if *active_profile.read() == "rest" {
-                                                "cursor-pointer rounded-lg border border-primary bg-primary/10 px-3 py-2 text-left transition-colors"
-                                            } else {
-                                                "cursor-pointer rounded-lg border border-border/70 bg-background px-3 py-2 text-left hover:bg-muted/50 transition-colors"
-                                            },
-                                            onclick: move |_| {
-                                                active_profile.set("rest".to_string());
-                                                api_protocol.set("rest".to_string());
-                                                let (u, k) = crate::db::get_sheet_profile_config("rest");
-                                                base_url.set(u);
-                                                api_key.set(k);
-                                                test_status.set(TestStatus::Idle);
-                                                if crate::sync::switch_sheet_profile_and_sync("rest").is_ok() {
-                                                    if let Some(mut r) = db_sync {
-                                                        r.with_mut(|rev| rev.0 += 1);
+                                    div { class: "flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-1",
+                                        for src in sheet_sources.read().clone() {
+                                            {
+                                                let is_selected = *active_profile.read() == src.id;
+                                                let src_id = src.id.clone();
+                                                let src_name = src.name.clone();
+                                                let url_display = if src.base_url.is_empty() { "No URL configured".to_string() } else { src.base_url.clone() };
+                                                let can_delete = sheet_sources.read().len() > 1;
+                                                rsx! {
+                                                    div {
+                                                        key: "{src.id}",
+                                                        class: if is_selected {
+                                                            "group flex items-center justify-between rounded-lg border border-primary bg-primary/10 px-3 py-2 transition-all shadow-2xs cursor-pointer"
+                                                        } else {
+                                                            "group flex items-center justify-between rounded-lg border border-border/70 bg-background px-3 py-2 hover:bg-muted/50 transition-all cursor-pointer"
+                                                        },
+                                                        onclick: {
+                                                            let src_c = src.clone();
+                                                            move |_| handle_select_sheet(src_c.clone())
+                                                        },
+                                                        div { class: "flex items-center gap-2.5 min-w-0 flex-1",
+                                                            div {
+                                                                class: if is_selected { "size-2 rounded-full bg-primary shrink-0" } else { "size-2 rounded-full bg-muted-foreground/40 shrink-0" },
+                                                            }
+                                                            div { class: "flex flex-col min-w-0 flex-1",
+                                                                span { class: "text-xs font-semibold text-foreground truncate", "{src_name}" }
+                                                                span { class: "text-[10px] text-muted-foreground font-mono truncate", "{url_display}" }
+                                                            }
+                                                        }
+                                                        if can_delete {
+                                                            button {
+                                                                r#type: "button",
+                                                                title: "Delete this sheet source",
+                                                                class: "opacity-40 group-hover:opacity-100 hover:text-destructive hover:bg-destructive/10 p-1 rounded transition-all cursor-pointer ml-2",
+                                                                onclick: {
+                                                                    let id = src_id.clone();
+                                                                    move |e: MouseEvent| {
+                                                                        e.stop_propagation();
+                                                                        handle_delete_sheet(id.clone());
+                                                                    }
+                                                                },
+                                                                svg { class: "size-3.5", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
+                                                                    path { d: "M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" }
+                                                                }
+                                                            }
+                                                        }
                                                     }
-                                                    toast.success("Switched Sheet", "Now syncing from BPSL Sheet (No API Key).");
                                                 }
-                                            },
-                                            div { class: "text-xs font-semibold text-foreground", "Sheet 1: No API Key" }
-                                            div { class: "text-[10px] text-muted-foreground", "BPSL REST (?api=tickets)" }
+                                            }
                                         }
-                                        button {
-                                            r#type: "button",
-                                            class: if *active_profile.read() == "v1" {
-                                                "cursor-pointer rounded-lg border border-primary bg-primary/10 px-3 py-2 text-left transition-colors"
-                                            } else {
-                                                "cursor-pointer rounded-lg border border-border/70 bg-background px-3 py-2 text-left hover:bg-muted/50 transition-colors"
-                                            },
-                                            onclick: move |_| {
-                                                active_profile.set("v1".to_string());
-                                                api_protocol.set("v1".to_string());
-                                                let (u, k) = crate::db::get_sheet_profile_config("v1");
-                                                base_url.set(u);
-                                                api_key.set(k);
-                                                test_status.set(TestStatus::Idle);
-                                                if crate::sync::switch_sheet_profile_and_sync("v1").is_ok() {
-                                                    if let Some(mut r) = db_sync {
-                                                        r.with_mut(|rev| rev.0 += 1);
-                                                    }
-                                                    toast.success("Switched Sheet", "Now syncing from Legacy TMS Sheet (API Key).");
-                                                }
-                                            },
-                                            div { class: "text-xs font-semibold text-foreground", "Sheet 2: With API Key" }
-                                            div { class: "text-[10px] text-muted-foreground", "Legacy v1 Envelope" }
-                                        }
+                                    }
+                                }
+
+                                // Sheet Name / Label input
+                                div { class: "flex flex-col gap-1.5",
+                                    label { class: "text-xs font-semibold text-foreground flex items-center justify-between",
+                                        span { "Sheet Source Name" }
+                                        span { class: "text-[10px] text-muted-foreground font-mono", "LABEL" }
+                                    }
+                                    Input {
+                                        r#type: "text",
+                                        placeholder: "e.g. Primary Sheet, Production Support...",
+                                        value: current_profile_name.read().clone(),
+                                        oninput: move |e: FormEvent| {
+                                            let val = e.value();
+                                            current_profile_name.set(val.clone());
+                                            let cur_id = active_profile.read().clone();
+                                            let mut list = sheet_sources.write();
+                                            if let Some(item) = list.iter_mut().find(|s| s.id == cur_id) {
+                                                item.name = val;
+                                            }
+                                        },
+                                        class: "font-medium text-xs h-9 rounded-md border border-input bg-background px-3 focus:border-primary",
+                                    }
+                                    span { class: "text-[11px] text-muted-foreground",
+                                        "Custom name to identify this Google Sheet link in the sidebar selector and tabs."
                                     }
                                 }
 
@@ -462,7 +610,15 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                         r#type: "text",
                                         placeholder: "https://script.google.com/macros/s/AKfycb.../exec",
                                         value: "{base_url}",
-                                        oninput: move |e: FormEvent| base_url.set(e.value()),
+                                        oninput: move |e: FormEvent| {
+                                            let val = e.value();
+                                            base_url.set(val.clone());
+                                            let cur_id = active_profile.read().clone();
+                                            let mut list = sheet_sources.write();
+                                            if let Some(item) = list.iter_mut().find(|s| s.id == cur_id) {
+                                                item.base_url = val;
+                                            }
+                                        },
                                         class: "font-mono text-xs h-9 rounded-md border border-input bg-background px-3 focus:border-primary",
                                     }
                                     span { class: "text-[11px] text-muted-foreground",
@@ -481,30 +637,43 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                         onchange: move |e: FormEvent| {
                                             let val = e.value();
                                             api_protocol.set(val.clone());
+                                            let cur_id = active_profile.read().clone();
+                                            let mut list = sheet_sources.write();
+                                            if let Some(item) = list.iter_mut().find(|s| s.id == cur_id) {
+                                                item.protocol = val.clone();
+                                            }
                                             let _ = crate::db::save_system_api_protocol(&val);
                                         },
                                         class: "w-full font-mono text-xs h-9 rounded-md border border-input bg-background px-3 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/20 transition-colors",
-                                        option { value: "auto", "Auto (BPSL REST if API Key empty, else Legacy v1)" }
-                                        option { value: "rest", "BPSL REST API (?api=tickets, unauthenticated)" }
-                                        option { value: "v1", "Legacy v1 Envelope (POST JSON-RPC + API Key)" }
+                                        option { value: "auto", "Auto-detect (recommended)" }
+                                        option { value: "rest", "REST API (Direct / Query parameters)" }
+                                        option { value: "v1", "JSON-RPC Envelope (Standard v1)" }
                                     }
                                     span { class: "text-[11px] text-muted-foreground",
-                                        "Choose BPSL REST API for unauthenticated ?api=... Google Apps Script endpoints."
+                                        "Select 'Auto-detect' to automatically select the protocol supported by your Google Apps Script endpoint."
                                     }
                                 }
 
                                 // API Key
                                 div { class: "flex flex-col gap-1.5",
                                     label { class: "text-xs font-semibold text-foreground flex items-center justify-between",
-                                        span { "API Secret Key" }
+                                        span { "API Secret Key (Optional)" }
                                         span { class: "text-[10px] text-muted-foreground font-mono", "TMS_API_KEY" }
                                     }
                                     div { class: "relative flex items-center",
                                         input {
                                             r#type: if *show_key.read() { "text" } else { "password" },
-                                            placeholder: "Enter API authentication key",
+                                            placeholder: "Enter API authentication key (optional for unauthenticated REST)",
                                             value: "{api_key}",
-                                            oninput: move |e: FormEvent| api_key.set(e.value()),
+                                            oninput: move |e: FormEvent| {
+                                                let val = e.value();
+                                                api_key.set(val.clone());
+                                                let cur_id = active_profile.read().clone();
+                                                let mut list = sheet_sources.write();
+                                                if let Some(item) = list.iter_mut().find(|s| s.id == cur_id) {
+                                                    item.api_key = val;
+                                                }
+                                            },
                                             class: "w-full font-mono text-xs h-9 rounded-md border border-input bg-background pl-3 pr-10 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/20 transition-colors",
                                         }
                                         button {
@@ -519,7 +688,7 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                         }
                                     }
                                     span { class: "text-[11px] text-muted-foreground",
-                                        "Must match the API_KEY script property in your Google Apps Script."
+                                        "Leave blank if your Google Apps Script Web App does not require an API key."
                                     }
                                 }
 

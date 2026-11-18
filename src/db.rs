@@ -2,6 +2,7 @@
 //! Reads and writes directly to `management.db` adhering to `DATABASE.SQL`.
 
 use rusqlite::{params, Connection, OptionalExtension, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -2306,30 +2307,214 @@ pub const DEFAULT_REST_SHEET_URL: &str = "https://script.google.com/macros/s/AKf
 pub const DEFAULT_V1_SHEET_URL: &str = "https://script.google.com/macros/s/AKfycbx6TTCZF1WfcFPpJWOqGoMXKhXq-wxJprGtCIKfAHZnm9wGmSgBuRCpiTWUu4519oyV/exec";
 pub const DEFAULT_V1_SHEET_KEY: &str = "032fd9719ace4011bf0e7dab1dbed3363ecff4adbaf84b328539038cdc19c8389bd8d285cfa2400d8b89c874485e2315";
 
-/// Returns the active Google Sheet profile: `"rest"` (no API key) or `"v1"` (with API key).
-pub fn get_active_sheet_profile() -> String {
-    if let Some(p) = sync_meta_get("active_sheet_profile") {
-        let t = p.trim();
-        if t == "rest" || t == "v1" {
-            return t.to_string();
-        }
-    }
-    match get_system_api_protocol().as_deref() {
-        Some("v1") => "v1".to_string(),
-        Some("rest") => "rest".to_string(),
-        _ => {
-            let (_, key, _) = get_system_api_config();
-            if key.is_some() {
-                "v1".to_string()
-            } else {
-                "rest".to_string()
-            }
+/// Configured Google Sheet data source (URL, API key, protocol, display name).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SheetSource {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    pub api_key: String,
+    pub protocol: String,
+}
+
+impl SheetSource {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        protocol: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            base_url: base_url.into(),
+            api_key: api_key.into(),
+            protocol: protocol.into(),
         }
     }
 }
 
-/// Returns `(base_url, api_key)` for the given sheet profile (`"rest"` or `"v1"`).
+/// Retrieves all configured Google Sheet sources from SQLite `sync_meta`.
+/// If no custom sources have been saved, seeds with the default Primary (REST) and Secondary (V1) sources.
+pub fn get_all_sheet_sources() -> Vec<SheetSource> {
+    if let Some(json_str) = sync_meta_get("custom_sheet_sources") {
+        if let Ok(sources) = serde_json::from_str::<Vec<SheetSource>>(&json_str) {
+            if !sources.is_empty() {
+                return sources;
+            }
+        }
+    }
+
+    // Seed directly from sync_meta keys or defaults to prevent any recursion
+    let rest_name = sync_meta_get("sheet_rest_name")
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "Primary Sheet".to_string());
+    let rest_url = sync_meta_get("sheet_rest_url")
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_REST_SHEET_URL.to_string());
+    let rest_key = sync_meta_get("sheet_rest_key").unwrap_or_default();
+
+    let v1_name = sync_meta_get("sheet_v1_name")
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "Secondary Sheet".to_string());
+    let v1_url = sync_meta_get("sheet_v1_url")
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_V1_SHEET_URL.to_string());
+    let v1_key = sync_meta_get("sheet_v1_key")
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_V1_SHEET_KEY.to_string());
+
+    let initial = vec![
+        SheetSource {
+            id: "rest".to_string(),
+            name: rest_name,
+            base_url: rest_url,
+            api_key: rest_key,
+            protocol: "rest".to_string(),
+        },
+        SheetSource {
+            id: "v1".to_string(),
+            name: v1_name,
+            base_url: v1_url,
+            api_key: v1_key,
+            protocol: "v1".to_string(),
+        },
+    ];
+    let _ = save_all_sheet_sources(&initial);
+    initial
+}
+
+/// Saves the list of all Google Sheet sources in SQLite `sync_meta`.
+pub fn save_all_sheet_sources(sources: &[SheetSource]) -> Result<()> {
+    if let Ok(json_str) = serde_json::to_string(sources) {
+        sync_meta_set("custom_sheet_sources", &json_str)?;
+    }
+    Ok(())
+}
+
+/// Returns the currently active Google Sheet source ID (e.g. `"rest"`, `"v1"`, or a custom ID).
+pub fn get_active_sheet_source_id() -> String {
+    if let Some(id) = sync_meta_get("active_sheet_source_id") {
+        let t = id.trim();
+        if !t.is_empty() {
+            return t.to_string();
+        }
+    }
+    if let Some(legacy) = sync_meta_get("active_sheet_profile") {
+        let t = legacy.trim();
+        if !t.is_empty() {
+            return t.to_string();
+        }
+    }
+    "rest".to_string()
+}
+
+/// Returns the active `SheetSource` instance.
+pub fn get_active_sheet_source() -> SheetSource {
+    let active_id = get_active_sheet_source_id();
+    let sources = get_all_sheet_sources();
+    sources
+        .into_iter()
+        .find(|s| s.id == active_id)
+        .unwrap_or_else(|| SheetSource {
+            id: "rest".to_string(),
+            name: "Primary Sheet".to_string(),
+            base_url: DEFAULT_REST_SHEET_URL.to_string(),
+            api_key: String::new(),
+            protocol: "rest".to_string(),
+        })
+}
+
+/// Saves or updates a `SheetSource`. If its ID already exists, it is updated in-place;
+/// otherwise, it is appended to the list of available sources.
+pub fn save_sheet_source(source: &SheetSource) -> Result<()> {
+    let mut sources = get_all_sheet_sources();
+    if let Some(pos) = sources.iter().position(|s| s.id == source.id) {
+        sources[pos] = source.clone();
+    } else {
+        sources.push(source.clone());
+    }
+    save_all_sheet_sources(&sources)?;
+
+    // Backwards compatibility with legacy keys
+    if source.id == "rest" {
+        let _ = save_sheet_profile_name("rest", &source.name);
+        let _ = sync_meta_set("sheet_rest_url", &source.base_url);
+        let _ = sync_meta_set("sheet_rest_key", &source.api_key);
+    } else if source.id == "v1" {
+        let _ = save_sheet_profile_name("v1", &source.name);
+        let _ = sync_meta_set("sheet_v1_url", &source.base_url);
+        let _ = sync_meta_set("sheet_v1_key", &source.api_key);
+    }
+
+    if get_active_sheet_source_id() == source.id {
+        let emp = sync_meta_get("system_employee_code").unwrap_or_default();
+        save_system_api_config(&source.base_url, &source.api_key, &emp)?;
+        save_system_api_protocol(&source.protocol)?;
+    }
+    Ok(())
+}
+
+/// Deletes a sheet source by ID. Returns an error if attempting to delete the only remaining source.
+pub fn delete_sheet_source(id: &str) -> Result<()> {
+    let mut sources = get_all_sheet_sources();
+    if sources.len() <= 1 {
+        return Ok(());
+    }
+    let was_active = get_active_sheet_source_id() == id;
+    sources.retain(|s| s.id != id);
+    save_all_sheet_sources(&sources)?;
+
+    if was_active {
+        if let Some(first) = sources.first() {
+            let _ = switch_sheet_profile(&first.id);
+        }
+    }
+    Ok(())
+}
+
+/// Returns the active Google Sheet profile ID.
+pub fn get_active_sheet_profile() -> String {
+    get_active_sheet_source_id()
+}
+
+/// Returns the user-assigned display name for a given sheet profile/source ID.
+pub fn get_sheet_profile_name(profile: &str) -> String {
+    if let Some(json_str) = sync_meta_get("custom_sheet_sources") {
+        if let Ok(sources) = serde_json::from_str::<Vec<SheetSource>>(&json_str) {
+            if let Some(src) = sources.iter().find(|s| s.id == profile) {
+                return src.name.clone();
+            }
+        }
+    }
+    let key = if profile == "v1" { "sheet_v1_name" } else { "sheet_rest_name" };
+    sync_meta_get(key)
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            if profile == "v1" {
+                "Secondary Sheet".to_string()
+            } else {
+                "Primary Sheet".to_string()
+            }
+        })
+}
+
+/// Saves the user-assigned display name for the sheet profile (`"rest"` or `"v1"`).
+pub fn save_sheet_profile_name(profile: &str, name: &str) -> Result<()> {
+    let key = if profile == "v1" { "sheet_v1_name" } else { "sheet_rest_name" };
+    sync_meta_set(key, name.trim())
+}
+
+/// Returns `(base_url, api_key)` for the given sheet profile ID.
 pub fn get_sheet_profile_config(profile: &str) -> (String, String) {
+    if let Some(json_str) = sync_meta_get("custom_sheet_sources") {
+        if let Ok(sources) = serde_json::from_str::<Vec<SheetSource>>(&json_str) {
+            if let Some(src) = sources.iter().find(|s| s.id == profile) {
+                return (src.base_url.clone(), src.api_key.clone());
+            }
+        }
+    }
     if profile == "v1" {
         let url = sync_meta_get("sheet_v1_url")
             .filter(|s| !s.trim().is_empty())
@@ -2342,38 +2527,53 @@ pub fn get_sheet_profile_config(profile: &str) -> (String, String) {
         let url = sync_meta_get("sheet_rest_url")
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_REST_SHEET_URL.to_string());
-        (url, String::new())
+        let key = sync_meta_get("sheet_rest_key")
+            .unwrap_or_default();
+        (url, key)
     }
 }
 
-/// Saves `(base_url, api_key)` for the given sheet profile (`"rest"` or `"v1"`).
-pub fn save_sheet_profile_config(profile: &str, base_url: &str, api_key: &str) -> Result<()> {
-    if profile == "v1" {
-        sync_meta_set("sheet_v1_url", base_url.trim())?;
-        sync_meta_set("sheet_v1_key", api_key.trim())?;
-    } else {
-        sync_meta_set("sheet_rest_url", base_url.trim())?;
-    }
-    sync_meta_set("active_sheet_profile", profile)?;
+/// Saves `(name, base_url, api_key)` for the given sheet profile.
+pub fn save_sheet_profile_config(profile: &str, name: &str, base_url: &str, api_key: &str) -> Result<()> {
     let proto = if profile == "v1" { "v1" } else { "rest" };
+    let source = SheetSource {
+        id: profile.to_string(),
+        name: name.to_string(),
+        base_url: base_url.to_string(),
+        api_key: api_key.to_string(),
+        protocol: proto.to_string(),
+    };
+    save_sheet_source(&source)?;
+    sync_meta_set("active_sheet_source_id", profile)?;
+    sync_meta_set("active_sheet_profile", profile)?;
     save_system_api_protocol(proto)?;
     let emp = sync_meta_get("system_employee_code").unwrap_or_default();
     save_system_api_config(base_url, if profile == "v1" { api_key } else { "" }, &emp)?;
     Ok(())
 }
 
-/// Switches the active Google Sheet profile (`"rest"` or `"v1"`), updates active API
+/// Switches the active Google Sheet source by ID, updates active API
 /// credentials, clears previously synced remote cache so the new sheet's data loads cleanly,
 /// and returns `(base_url, api_key, protocol)`.
 pub fn switch_sheet_profile(profile: &str) -> Result<(String, String, String)> {
-    let target = if profile == "v1" { "v1" } else { "rest" };
-    let (url, key) = get_sheet_profile_config(target);
-    let proto = if target == "v1" { "v1" } else { "rest" };
+    let sources = get_all_sheet_sources();
+    let source = sources
+        .iter()
+        .find(|s| s.id == profile)
+        .cloned()
+        .unwrap_or_else(|| {
+            if profile == "v1" {
+                sources.get(1).cloned().unwrap_or_else(|| sources[0].clone())
+            } else {
+                sources[0].clone()
+            }
+        });
 
-    sync_meta_set("active_sheet_profile", target)?;
-    save_system_api_protocol(proto)?;
+    sync_meta_set("active_sheet_source_id", &source.id)?;
+    sync_meta_set("active_sheet_profile", &source.id)?;
+    save_system_api_protocol(&source.protocol)?;
     let emp = sync_meta_get("system_employee_code").unwrap_or_default();
-    save_system_api_config(&url, &key, &emp)?;
+    save_system_api_config(&source.base_url, &source.api_key, &emp)?;
 
     let conn = get_connection()?;
     conn.execute("DELETE FROM tickets WHERE COALESCE(server_ticket_id, '') != ''", [])?;
@@ -2384,7 +2584,7 @@ pub fn switch_sheet_profile(profile: &str) -> Result<(String, String, String)> {
     sync_meta_set("last_employee_pull_at", "0")?;
     sync_meta_set("last_reminder_pull_at", "0")?;
 
-    Ok((url, key, proto.to_string()))
+    Ok((source.base_url, source.api_key, source.protocol))
 }
 
 // ---- ticket ↔ server mapping ----
@@ -3221,4 +3421,21 @@ pub fn delete_employee_db(emp_code: &str) -> Result<()> {
     )?;
     invalidate_employee_lookup_cache();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sheet_sources_no_recursion() {
+        let sources = get_all_sheet_sources();
+        assert!(!sources.is_empty());
+        let active_id = get_active_sheet_source_id();
+        assert!(!active_id.is_empty());
+        let name = get_sheet_profile_name(&sources[0].id);
+        assert!(!name.is_empty());
+        let (url, _) = get_sheet_profile_config(&sources[0].id);
+        assert!(!url.is_empty());
+    }
 }

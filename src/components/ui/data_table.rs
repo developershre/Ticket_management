@@ -516,11 +516,11 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
 
                     // Faceted filter 1
                     if show_filter {
-                        div { class: "w-[130px] shrink-0",
+                        div { class: "min-w-[135px] max-w-[220px] shrink-0",
                             Select {
                                 value: Some(filter),
                                 SelectTrigger { class: "h-8 text-xs rounded-md bg-background border-border/80".to_string(),
-                                    SelectValue { placeholder: "{filter_placeholder}".to_string() }
+                                    SelectValue { placeholder: filter_placeholder.clone() }
                                 }
                                 SelectContent {
                                     SelectItem { value: "".to_string(), text: format!("All {}", filter_placeholder), "All" }
@@ -539,11 +539,11 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
 
                     // Faceted filter 2
                     if show_filter2 {
-                        div { class: "w-[130px] shrink-0",
+                        div { class: "min-w-[135px] max-w-[220px] shrink-0",
                             Select {
                                 value: Some(filter2),
                                 SelectTrigger { class: "h-8 text-xs rounded-md bg-background border-border/80".to_string(),
-                                    SelectValue { placeholder: "{filter2_placeholder}".to_string() }
+                                    SelectValue { placeholder: filter2_placeholder.clone() }
                                 }
                                 SelectContent {
                                     SelectItem { value: "".to_string(), text: format!("All {}", filter2_placeholder), "All" }

@@ -318,23 +318,18 @@ struct RequestEnvelope<'a> {
     data: Value,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct ResponseEnvelope {
-    success: bool,
+    #[serde(default)]
+    success: Option<bool>,
+    #[serde(default)]
+    status: Option<String>,
     #[serde(default)]
     data: Option<Value>,
     #[serde(default)]
     message: Option<String>,
     #[serde(default)]
-    error: Option<ErrorBody>,
-}
-
-#[derive(Deserialize)]
-struct ErrorBody {
-    #[serde(default)]
-    code: Option<String>,
-    #[serde(default)]
-    retryable: Option<bool>,
+    error: Option<Value>,
 }
 
 // ============================================================
@@ -1041,20 +1036,51 @@ impl ApiClient {
             let envelope: ResponseEnvelope = serde_json::from_str(&text)
                 .map_err(|e| ApiError::Decode(format!("invalid JSON response: {e}")))?;
 
-            if envelope.success {
+            let is_success = envelope.success.unwrap_or_else(|| {
+                envelope
+                    .status
+                    .as_deref()
+                    .map(|s| s.eq_ignore_ascii_case("success") || s.eq_ignore_ascii_case("ok"))
+                    .unwrap_or(false)
+            });
+
+            if is_success && envelope.error.is_none() {
                 return Ok(envelope.data.unwrap_or(Value::Null));
             }
 
-            let message = envelope
-                .message
-                .unwrap_or_else(|| "request failed".to_string());
-
-            let (code, mut body_retryable) = match envelope.error {
-                Some(err) => (
-                    err.code.unwrap_or_else(|| "UNKNOWN".to_string()),
-                    err.retryable.unwrap_or(false),
+            let (code, message, mut body_retryable) = match envelope.error {
+                Some(Value::String(err_str)) => {
+                    let code = if err_str.contains("Unknown API route") || err_str.contains("UNKNOWN_ROUTE") {
+                        "UNKNOWN_ROUTE".to_string()
+                    } else {
+                        "API_ERROR".to_string()
+                    };
+                    let msg = envelope.message.unwrap_or(err_str);
+                    (code, msg, false)
+                }
+                Some(Value::Object(map)) => {
+                    let code = map
+                        .get("code")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("API_ERROR")
+                        .to_string();
+                    let msg = map
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string)
+                        .or(envelope.message)
+                        .unwrap_or_else(|| "request failed".to_string());
+                    let retry = map
+                        .get("retryable")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    (code, msg, retry)
+                }
+                _ => (
+                    "UNKNOWN".to_string(),
+                    envelope.message.unwrap_or_else(|| "request failed".to_string()),
+                    false,
                 ),
-                None => ("UNKNOWN".to_string(), false),
             };
 
             // Detect transient Google Apps Script LockService/busy conditions
@@ -1273,7 +1299,19 @@ impl ApiClient {
                     .await?;
                 Ok(json!({ "status": "ok", "protocol": "bpsl_rest" }))
             }
-            ApiProtocol::LegacyV1 => self.post("health.check", json!({})).await,
+            ApiProtocol::LegacyV1 => match self.post("health.check", json!({})).await {
+                Ok(val) => Ok(val),
+                Err(ApiError::Api { message, .. })
+                    if message.contains("Unknown API route") || message.contains("UNKNOWN_ACTION") =>
+                {
+                    // Fallback probe: if endpoint is deployed as BPSL REST (?api=tickets)
+                    let _ = self
+                        .send_rest(reqwest::Method::GET, "tickets", &[], None)
+                        .await?;
+                    Ok(json!({ "status": "ok", "protocol": "bpsl_rest", "fallback": true }))
+                }
+                Err(e) => Err(e),
+            },
         }
     }
 
@@ -1792,3 +1830,43 @@ fn parse_employee(data: Value) -> Result<Employee, ApiError> {
 fn parse_reminder(data: Value) -> Result<ServerReminder, ApiError> {
     serde_json::from_value(data).map_err(|e| ApiError::Decode(format!("invalid reminder payload: {e}")))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_response_envelope_unknown_route_string() {
+        let json_str = r#"{"status":"error","error":"Unknown API route."}"#;
+        let env: Result<ResponseEnvelope, _> = serde_json::from_str(json_str);
+        assert!(env.is_ok(), "ResponseEnvelope must parse string error: {:?}", env.err());
+        let env = env.unwrap();
+        assert_eq!(env.error, Some(Value::String("Unknown API route.".to_string())));
+        assert_eq!(env.status, Some("error".to_string()));
+    }
+
+    #[test]
+    fn test_response_envelope_structured_error() {
+        let json_str = r#"{"success":false,"error":{"code":"RATE_LIMIT","message":"lock busy","retryable":true}}"#;
+        let env: Result<ResponseEnvelope, _> = serde_json::from_str(json_str);
+        assert!(env.is_ok(), "ResponseEnvelope must parse structured error: {:?}", env.err());
+        let env = env.unwrap();
+        assert_eq!(env.success, Some(false));
+        if let Some(Value::Object(map)) = env.error {
+            assert_eq!(map.get("code").and_then(|v| v.as_str()), Some("RATE_LIMIT"));
+        } else {
+            panic!("Expected structured error object");
+        }
+    }
+
+    #[test]
+    fn test_response_envelope_success() {
+        let json_str = r#"{"success":true,"data":{"ok":true}}"#;
+        let env: Result<ResponseEnvelope, _> = serde_json::from_str(json_str);
+        assert!(env.is_ok());
+        let env = env.unwrap();
+        assert_eq!(env.success, Some(true));
+        assert!(env.data.is_some());
+    }
+}
+

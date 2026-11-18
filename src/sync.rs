@@ -293,6 +293,7 @@ pub fn switch_sheet_profile_and_sync(profile: &str) -> Result<String, String> {
     let (url, _key, proto) = db::switch_sheet_profile(profile).map_err(|e| e.to_string())?;
     invalidate_employee_cache();
     let _ = reload_client()?;
+    kick();
     Ok(format!("Switched to {} ({})", proto, url))
 }
 
@@ -334,18 +335,28 @@ pub async fn test_connection(base_url: &str, api_key: &str) -> Result<String, St
         employee_code: None,
         protocol,
     };
-    let client = ApiClient::new(cfg).map_err(|e| format!("Client setup error: {e}"))?;
+    let client = ApiClient::new(cfg.clone()).map_err(|e| format!("Client setup error: {e}"))?;
 
     // 1. Health check (tests server reachability & Apps Script responsiveness)
     let health_res = client.health().await.map_err(|e| format!("Server unreachable: {e}"))?;
     let server_status = health_res.get("status").and_then(|s| s.as_str()).unwrap_or("ok");
 
     // 2. Authenticated probe if API key is provided (or REST probe for BpslRest)
-    if protocol == crate::api::ApiProtocol::BpslRest {
-        client.tickets_list(0, 1).await.map_err(|e| {
-            format!("Server is online ({server_status}), but BPSL REST API probe failed: {e}")
+    let is_rest = protocol == crate::api::ApiProtocol::BpslRest
+        || health_res.get("protocol").and_then(|p| p.as_str()) == Some("bpsl_rest");
+
+    if is_rest {
+        let probe_client = if protocol == crate::api::ApiProtocol::BpslRest {
+            client
+        } else {
+            let mut rest_cfg = cfg.clone();
+            rest_cfg.protocol = crate::api::ApiProtocol::BpslRest;
+            ApiClient::new(rest_cfg).unwrap_or(client)
+        };
+        probe_client.tickets_list(0, 1).await.map_err(|e| {
+            format!("Server is online ({server_status}), but Google Sheets API probe failed: {e}")
         })?;
-        Ok(format!("Connected to BPSL REST API successfully! (Server status: {server_status})"))
+        Ok(format!("Connected to Google Sheets API successfully! (Server status: {server_status})"))
     } else if !api_key.is_empty() {
         client.tickets_list(0, 1).await.map_err(|e| {
             format!("Server is online ({server_status}), but API Key authorization failed: {e}")
@@ -1268,6 +1279,24 @@ async fn pull_employees(client: &ApiClient) -> Result<usize, ApiError> {
 /// (used by the Employees page's "Refresh" action).
 pub fn invalidate_employee_cache() {
     let _ = db::sync_meta_set("last_employee_pull_at", "0");
+}
+
+/// Forces the next cycle to refresh tickets immediately from Google Sheets.
+pub fn invalidate_ticket_cache() {
+    let _ = db::sync_meta_set("last_pull_at", "0");
+}
+
+/// Fetches all tickets from Google Sheets immediately in real-time.
+pub async fn pull_tickets_now() -> Result<usize, ApiError> {
+    let client = ensure_client().map_err(ApiError::Network)?;
+    let count = pull(&client).await?;
+    let now = now_epoch();
+    let _ = db::sync_meta_set("last_pull_at", &now.to_string());
+    if count > 0 {
+        with_status(|s| s.revision = s.revision.wrapping_add(1));
+    }
+    with_status(|s| s.last_success_at = Some(crate::state::format_utc(now)));
+    Ok(count)
 }
 
 /// Fetches all employees from Google Sheets immediately in real-time.

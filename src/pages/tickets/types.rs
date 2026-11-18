@@ -246,6 +246,16 @@ impl TicketItem {
         format!("TC-{:04}", self.ticket_id)
     }
 
+    pub fn ticket_number(&self) -> i64 {
+        let digits: String = self.id.chars().filter(|c| c.is_ascii_digit()).collect();
+        if let Ok(num) = digits.parse::<i64>() {
+            if num > 0 {
+                return num;
+            }
+        }
+        self.ticket_id
+    }
+
     #[allow(dead_code)]
     pub fn card_display_title(&self) -> String {
         let prob = self.problem_description.trim();
@@ -380,10 +390,16 @@ pub fn kanban_grid_layout_class(visible_count: usize) -> &'static str {
 }
 
 pub fn initial_tickets() -> Vec<TicketItem> {
-    crate::db::get_all_tickets()
+    let mut list: Vec<TicketItem> = crate::db::get_all_tickets()
         .into_iter()
         .map(TicketItem::from_db_ticket)
-        .collect()
+        .collect();
+    list.sort_by(|a, b| {
+        let num_a = a.ticket_number();
+        let num_b = b.ticket_number();
+        num_b.cmp(&num_a).then_with(|| b.created_on.cmp(&a.created_on))
+    });
+    list
 }
 
 pub fn column_display_label(col: &str) -> &'static str {

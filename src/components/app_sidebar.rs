@@ -21,7 +21,14 @@ pub fn AppSidebar() -> Element {
     let db_sync = try_use_context::<Signal<crate::state::AppDbRevision>>();
     // Read every badge count in one pass; touching `db_sync` registers
     // this component for reloads when the sync worker bumps the revision.
-    let (notes_count, tickets_count, employees_count, reminders_count, active_sheet) = {
+    let (
+        notes_count,
+        tickets_count,
+        employees_count,
+        reminders_count,
+        active_sheet_id,
+        sheet_sources,
+    ) = {
         if let Some(sync) = db_sync {
             let _ = sync();
         }
@@ -30,7 +37,8 @@ pub fn AppSidebar() -> Element {
             crate::db::ticket_count(),
             crate::db::employee_count(),
             crate::db::reminder_count(),
-            crate::db::get_active_sheet_profile(),
+            crate::db::get_active_sheet_source_id(),
+            crate::db::get_all_sheet_sources(),
         )
     };
 
@@ -47,9 +55,72 @@ pub fn AppSidebar() -> Element {
             collapsible: SidebarCollapsible::Icon,
             SidebarHeader {
                 div { class: "flex w-full items-center justify-between px-1",
-                    span { class: "sidebar-text text-xs font-semibold tracking-wider uppercase text-sidebar-foreground/70", "Navigation" }
-                    SidebarTrigger { class: "size-7 border border-sidebar-border/50 hover:bg-sidebar-accent" }
+                    div { class: "sidebar-text px-1 flex flex-col gap-1 w-full",
+                    div { class: "relative w-full",
+                        select {
+                            class: "w-full h-8 pl-2.5 pr-7 text-xs font-medium rounded-md border border-sidebar-border/70 bg-sidebar-accent/50 text-sidebar-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary truncate appearance-none hover:bg-sidebar-accent/80 transition-colors shadow-2xs",
+                            value: "{active_sheet_id}",
+                            onchange: {
+                                let sheet_sources_c = sheet_sources.clone();
+                                let active_id_c = active_sheet_id.clone();
+                                move |e: FormEvent| {
+                                    let chosen = e.value();
+                                    if chosen == "__add_new__" {
+                                        if let Some(mut open_settings) = try_use_context::<Signal<crate::state::OpenSettingsDialog>>() {
+                                            open_settings.set(crate::state::OpenSettingsDialog(true));
+                                        }
+                                        return;
+                                    }
+                                    if chosen == active_id_c {
+                                        return;
+                                    }
+                                    let target_name = sheet_sources_c
+                                        .iter()
+                                        .find(|s| s.id == chosen)
+                                        .map(|s| s.name.clone())
+                                        .unwrap_or_else(|| chosen.clone());
+                                    match crate::sync::switch_sheet_profile_and_sync(&chosen) {
+                                        Ok(_) => {
+                                            if let Some(mut r) = db_sync {
+                                                r.with_mut(|rev| rev.0 += 1);
+                                            }
+                                            if let Some(t) = toast {
+                                                t.success("Switched Sheet", format!("Now syncing from {target_name}."));
+                                            }
+                                        }
+                                        Err(e) => {
+                                            if let Some(t) = toast {
+                                                t.error("Switch Failed", e);
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            for src in sheet_sources.iter() {
+                                option {
+                                    key: "{src.id}",
+                                    value: "{src.id}",
+                                    selected: src.id == active_sheet_id,
+                                    "{src.name}"
+                                }
+                            }
+                            option {
+                                value: "__add_new__",
+                                "+ Add Google Sheet..."
+                            }
+                        }
+                        div { class: "pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground",
+                            svg { class: "size-3.5", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
+                                path { d: "M6 9l6 6 6-6" }
+                            }
+                        }
+                    }
                 }
+                SidebarTrigger { class: "size-7 border border-sidebar-border/50 hover:bg-sidebar-accent" }
+                }
+
+                // Google Sheet Source Selector
+
             }
             SidebarContent {
                 SidebarGroup {
@@ -136,81 +207,6 @@ pub fn AppSidebar() -> Element {
             }
 
             SidebarFooter {
-                div { class: "sidebar-text px-2 pb-2",
-                    div { class: "rounded-lg border border-border/70 bg-muted/40 p-1.5 flex flex-col gap-1",
-                        span { class: "px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground",
-                            "Google Sheet Source"
-                        }
-                        div { class: "grid grid-cols-2 gap-1",
-                            button {
-                                r#type: "button",
-                                title: "BPSL Sheet (No API Key)",
-                                class: if active_sheet == "rest" {
-                                    "cursor-pointer rounded-md bg-primary px-2 py-1 text-[11px] font-semibold text-primary-foreground shadow-2xs transition-colors"
-                                } else {
-                                    "cursor-pointer rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-background hover:text-foreground transition-colors"
-                                },
-                                onclick: {
-                                    let active_sheet_c = active_sheet.clone();
-                                    move |_| {
-                                        if active_sheet_c == "rest" {
-                                            return;
-                                        }
-                                        match crate::sync::switch_sheet_profile_and_sync("rest") {
-                                            Ok(_) => {
-                                                if let Some(mut r) = db_sync {
-                                                    r.with_mut(|rev| rev.0 += 1);
-                                                }
-                                                if let Some(t) = toast {
-                                                    t.success("Switched Sheet", "Now syncing from BPSL Sheet (No API Key).");
-                                                }
-                                            }
-                                            Err(e) => {
-                                                if let Some(t) = toast {
-                                                    t.error("Switch Failed", e);
-                                                }
-                                            }
-                                        }
-                                    }
-                                },
-                                "No Key"
-                            }
-                            button {
-                                r#type: "button",
-                                title: "Legacy TMS Sheet (With API Key)",
-                                class: if active_sheet == "v1" {
-                                    "cursor-pointer rounded-md bg-primary px-2 py-1 text-[11px] font-semibold text-primary-foreground shadow-2xs transition-colors"
-                                } else {
-                                    "cursor-pointer rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-background hover:text-foreground transition-colors"
-                                },
-                                onclick: {
-                                    let active_sheet_c = active_sheet.clone();
-                                    move |_| {
-                                        if active_sheet_c == "v1" {
-                                            return;
-                                        }
-                                        match crate::sync::switch_sheet_profile_and_sync("v1") {
-                                            Ok(_) => {
-                                                if let Some(mut r) = db_sync {
-                                                    r.with_mut(|rev| rev.0 += 1);
-                                                }
-                                                if let Some(t) = toast {
-                                                    t.success("Switched Sheet", "Now syncing from TMS Sheet (API Key).");
-                                                }
-                                            }
-                                            Err(e) => {
-                                                if let Some(t) = toast {
-                                                    t.error("Switch Failed", e);
-                                                }
-                                            }
-                                        }
-                                    }
-                                },
-                                "API Key"
-                            }
-                        }
-                    }
-                }
                 SidebarMenu {
                     SidebarMenuItem {
                         SidebarMenuButton {

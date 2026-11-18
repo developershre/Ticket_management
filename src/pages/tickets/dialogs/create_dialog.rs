@@ -172,7 +172,7 @@ pub fn CreateTicketDialog(mut props: CreateTicketDialogProps) -> Element {
                     &now_str,
                     &now_str,
                 );
-                state.tickets.write().push(new_ticket);
+                state.tickets.write().insert(0, new_ticket);
 
                 crate::sync::enqueue_create(new_id);
 

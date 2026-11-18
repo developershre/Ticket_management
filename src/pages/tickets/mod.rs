@@ -4,7 +4,7 @@ use crate::components::ui::button::Button;
 use crate::components::ui::data_table::DataTable;
 use crate::components::ui::tabs::{Tabs, TabsContent, TabsList, TabsTrigger};
 use crate::components::ui::toast::ToastState;
-use crate::icons::PlusIcon;
+use crate::icons::{PlusIcon, RefreshIcon};
 
 pub mod components;
 pub mod dialogs;
@@ -166,6 +166,16 @@ pub fn Tickets() -> Element {
                 list.push(t.clone());
             }
         }
+
+        // Sort each column in descending order (highest/latest ticket first)
+        for list in map.values_mut() {
+            list.sort_by(|a, b| {
+                let num_a = a.ticket_number();
+                let num_b = b.ticket_number();
+                num_b.cmp(&num_a).then_with(|| b.created_on.cmp(&a.created_on))
+            });
+        }
+
         map
     });
 
@@ -288,15 +298,22 @@ pub fn Tickets() -> Element {
         let filter = advanced_filter.clone();
         move || {
             let list = tickets.read().clone();
-            list.into_iter()
+            let mut res = list.into_iter()
                 .filter(|t| filter.matches(t))
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            res.sort_by(|a, b| {
+                let num_a = a.ticket_number();
+                let num_b = b.ticket_number();
+                num_b.cmp(&num_a).then_with(|| b.created_on.cmp(&a.created_on))
+            });
+            res
         }
     });
 
-    // Fetch employee directory in real-time on mount
+    // Fetch latest tickets and employee directory in real-time on mount
     use_effect(move || {
         spawn(async move {
+            let _ = crate::sync::pull_tickets_now().await;
             let _ = crate::sync::pull_employees_now().await;
         });
     });
@@ -426,7 +443,7 @@ pub fn Tickets() -> Element {
         }
         let numeric_id = db_id.unwrap_or(200 + count as i64);
 
-        tickets.write().push(TicketItem::new(
+        tickets.write().insert(0, TicketItem::new(
             numeric_id,
             &employee,
             &email,
@@ -554,6 +571,27 @@ pub fn Tickets() -> Element {
                 }
                 div { class: "flex items-center gap-2 shrink-0",
                     Button {
+                        variant: "outline",
+                        size: "sm",
+                        class: "h-8 px-3 text-xs gap-1.5 font-medium cursor-pointer shadow-2xs shrink-0",
+                        title: "Fetch the latest tickets from Google Sheets now",
+                        onclick: move |_| {
+                            spawn(async move {
+                                toast.info("Syncing", "Pulling latest tickets from Google Sheets…");
+                                match crate::sync::pull_tickets_now().await {
+                                    Ok(n) => {
+                                        toast.success("Sync Complete", format!("Fetched latest tickets ({n} updated)"));
+                                    }
+                                    Err(e) => {
+                                        toast.warning("Sync Status", format!("{e}"));
+                                    }
+                                }
+                            });
+                        },
+                        RefreshIcon { class: "size-3.5 mr-0.5" }
+                        "Refresh"
+                    }
+                    Button {
                         size: "sm",
                         class: "h-8 px-3 text-xs gap-1.5 font-medium cursor-pointer shadow-sm shrink-0",
                         onclick: move |_| state.open_create(None),
@@ -614,6 +652,7 @@ pub fn Tickets() -> Element {
                         columns: ticket_columns(),
                         row_id: ticket_row_id,
                         search_text: ticket_search_text,
+                        initial_sort: Some(("id".to_string(), false)),
                         on_row_click: move |t: TicketItem| state.open_view(t),
                         on_row_context_menu: move |(t, coords): (TicketItem, (f64, f64))| {
                             table_ctx_ticket.set(Some(t));

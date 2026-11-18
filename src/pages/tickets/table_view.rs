@@ -366,7 +366,7 @@ pub fn ticket_columns() -> Vec<DataTableColumn<TicketItem>> {
             "id",
             "Ticket ID",
             render_id_cell,
-            |t: &TicketItem| SortValue::Number(t.ticket_id),
+            |t: &TicketItem| SortValue::Number(t.ticket_number()),
         ),
         DataTableColumn::new(
             "title",
