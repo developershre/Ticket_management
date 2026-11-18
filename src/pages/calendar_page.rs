@@ -1020,7 +1020,7 @@ pub fn CalendarPage() -> Element {
                     onclick: move |_| inspect_item.set(None),
 
                     div {
-                        class: "relative w-full max-w-2xl max-h-[88vh] overflow-y-auto rounded-xl border border-border/80 bg-card p-6 shadow-2xl transition-all",
+                        class: "relative w-full max-w-2xl max-h-[88vh] overflow-y-auto rounded-xl border border-border/80 bg-card  shadow-2xl transition-all",
                         onclick: move |e| e.stop_propagation(),
 
                         match detail {

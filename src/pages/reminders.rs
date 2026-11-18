@@ -1095,7 +1095,7 @@ pub fn Reminders() -> Element {
             on_clear_completed: move |_| clear_completed(),
             on_set_filter: move |f| category_filter.set(f),
 
-            div { class: "flex flex-col flex-1 w-full h-full p-4 md:p-6 min-h-0 overflow-hidden",
+            div { class: "flex flex-col flex-1 w-full h-full p-4 md: min-h-0 overflow-hidden",
 
                 // Page header
                 div { class: "flex flex-wrap items-center justify-between gap-3 border-b border-border/50 pb-3 mb-3 shrink-0",
@@ -1505,7 +1505,7 @@ pub fn Reminders() -> Element {
             Dialog {
                 open: Some(is_create_open),
                 DialogContent {
-                    class: "max-w-2xl max-h-[92vh] overflow-y-auto p-6 sm:p-8 rounded-xl bg-card border border-border shadow-2xl",
+                    class: "max-w-2xl max-h-[92vh] overflow-y-auto  sm:p-8 rounded-xl bg-card border border-border shadow-2xl",
                     DialogHeader {
                         class: "space-y-1 pb-3 text-left",
                         DialogTitle { class: "text-2xl font-bold tracking-tight text-foreground",
@@ -1721,7 +1721,7 @@ pub fn Reminders() -> Element {
                 Dialog {
                     open: Some(is_detail_open),
                     DialogContent {
-                        class: "max-w-4xl w-full max-h-[92vh] overflow-y-auto p-6 sm:p-8 rounded-2xl border border-border/80 shadow-2xl",
+                        class: "max-w-4xl w-full max-h-[92vh] overflow-y-auto  sm:p-8 rounded-2xl border border-border/80 shadow-2xl",
                         DialogHeader {
                             div { class: "flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-4 mb-2",
                                 div { class: "flex items-center gap-3",

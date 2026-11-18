@@ -558,9 +558,9 @@ pub fn Tickets() -> Element {
         .collect();
 
     rsx! {
-        div { class: "flex flex-col h-[calc(100vh-4rem)] max-h-[calc(100vh-4rem)] w-full gap-3 p-3 sm:p-6 overflow-hidden",
+        div { class: "flex flex-col h-[calc(100vh-4rem)] max-h-[calc(100vh-4rem)] w-full gap-3 p-3 overflow-hidden",
             // Page Header
-            div { class: "flex items-center justify-between gap-3 pb-2 border-b border-border/40 shrink-0",
+            div { class: "flex items-center justify-between gap-3 border-b border-border/40 shrink-0",
                 div { class: "flex items-center gap-3 min-w-0 flex-1",
                     div { class: "flex flex-col min-w-0",
                         h1 { class: "text-lg font-bold tracking-tight text-foreground truncate", "Support Tickets" }

@@ -369,7 +369,7 @@ pub fn Employees() -> Element {
             // ============================================================
             // Directory table (search + department/division facets)
             // ============================================================
-            div { class: "flex flex-1 min-h-0 flex-col gap-3 p-6 overflow-hidden",
+            div { class: "flex flex-1 min-h-0 flex-col gap-3  overflow-hidden",
                 if total_count == 0 {
                     div { class: "flex flex-1 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border/70 bg-card/40 text-center",
                         UsersIcon { class: "size-8 text-muted-foreground/50" }

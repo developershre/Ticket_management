@@ -64,7 +64,7 @@ pub fn Titlebar(props: TitlebarProps) -> Element {
     rsx! {
         header {
             "data-slot": "titlebar",
-            class: "flex py-4 shrink-0 select-none items-center gap-1 border-b border-sidebar-border/60 bg-sidebar",
+            class: "flex py-2 shrink-0 select-none items-center gap-1 border-b border-sidebar-border/60 bg-sidebar",
             // Branding + current page
             div { class: "flex min-w-0 items-center gap-2 pl-2 pr-2",
                 // Logo mark

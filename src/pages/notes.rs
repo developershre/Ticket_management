@@ -173,7 +173,7 @@ pub fn NotesPage() -> Element {
             // ============================================================
             // Notes Content Grid
             // ============================================================
-            main { class: "flex-1 overflow-y-auto p-6",
+            main { class: "flex-1 overflow-y-auto ",
                 if filtered_notes.is_empty() {
                     div { class: "flex flex-col items-center justify-center min-h-[360px] text-center p-8 rounded-2xl border border-dashed border-border/70 bg-card/30",
                         div { class: "flex size-14 items-center justify-center rounded-2xl bg-muted/60 text-muted-foreground mb-3",
