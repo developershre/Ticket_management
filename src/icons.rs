@@ -775,3 +775,127 @@ pub fn RefreshIcon(props: IconProps) -> Element {
         }
     }
 }
+
+#[component]
+pub fn BarChart3Icon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "M3 3v18h18" }
+            path { d: "M18 17V9" }
+            path { d: "M13 17V5" }
+            path { d: "M8 17v-3" }
+        }
+    }
+}
+
+#[component]
+pub fn TrendingUpIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            polyline { points: "23 6 13.5 15.5 8.5 10.5 1 18" }
+            polyline { points: "17 6 23 6 23 12" }
+        }
+    }
+}
+
+#[component]
+pub fn PieChartIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "M21.21 15.89A10 10 0 1 1 8 2.83" }
+            path { d: "M22 12A10 10 0 0 0 12 2v10z" }
+        }
+    }
+}
+
+#[component]
+pub fn CheckCircle2Icon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            circle { cx: "12", cy: "12", r: "10" }
+            path { d: "m9 12 2 2 4-4" }
+        }
+    }
+}
+
+#[component]
+pub fn AlertTriangleIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" }
+            line { x1: "12", y1: "9", x2: "12", y2: "13" }
+            line { x1: "12", y1: "17", x2: "12.01", y2: "17" }
+        }
+    }
+}
+
+#[component]
+pub fn TimerIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            line { x1: "10", y1: "2", x2: "14", y2: "2" }
+            line { x1: "12", y1: "14", x2: "15", y2: "11" }
+            circle { cx: "12", cy: "14", r: "8" }
+        }
+    }
+}
+
+#[component]
+pub fn AwardIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            circle { cx: "12", cy: "8", r: "7" }
+            polyline { points: "8.21 13.89 7 23 12 20 17 23 15.79 13.88" }
+        }
+    }
+}
+

@@ -12,6 +12,7 @@ const POSITION_JS: &str = r#"
 (function(){
 var w=document.querySelector('[data-popup="__UID__"]');
 if(!w)return;
+w.style.zIndex='100';
 w.style.left='0px';
 w.style.top='0px';
 var root=w.closest('__ANCHOR__');

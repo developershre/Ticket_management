@@ -55,6 +55,7 @@ pub fn Titlebar(props: TitlebarProps) -> Element {
         Route::Employees {} => "Employees",
         Route::Reminders {} => "Reminders",
         Route::CalendarPage {} => "Calendar",
+        Route::Analytics {} => "Analytics",
     };
 
     // Shared with WindowControls so the maximize/restore icon stays in sync

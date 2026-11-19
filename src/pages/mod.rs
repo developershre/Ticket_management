@@ -1,3 +1,4 @@
+pub mod analytics;
 pub mod calendar_page;
 pub mod employees;
 pub mod notes;

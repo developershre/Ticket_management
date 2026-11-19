@@ -18,6 +18,7 @@ use components::fab::Fab;
 use components::titlebar::Titlebar;
 use components::ui::sidebar::SidebarProvider;
 use components::ui::toast::ToastProvider;
+use pages::analytics::Analytics;
 use pages::calendar_page::CalendarPage;
 use pages::employees::Employees;
 use pages::notes::NotesPage;
@@ -43,6 +44,8 @@ enum Route {
     Reminders {},
     #[route("/calendar")]
     CalendarPage {},
+    #[route("/analytics")]
+    Analytics {},
 }
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");

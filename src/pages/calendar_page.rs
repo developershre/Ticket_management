@@ -11,15 +11,22 @@ use crate::components::month_calendar::{
 };
 use crate::components::ui::badge::Badge;
 use crate::components::ui::button::Button;
+use crate::components::ui::dialog::{
+    Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+};
 use crate::components::ui::toast::ToastState;
 use crate::db::{
     get_all_notes, get_all_reminders, get_all_tickets, DbNote, DbReminder, DbTicket,
 };
 use crate::icons::{
-    BellIcon, CalendarIcon, ChevronLeftIcon, ChevronRightIcon, ClockIcon, EyeIcon, FilterIcon,
-    GridIcon, ListIcon, PanelRightIcon, SearchIcon, StickyNoteIcon, TicketIcon, UsersIcon, XIcon,
+    BellIcon, CalendarIcon, CheckCircle2Icon, ChevronLeftIcon, ChevronRightIcon, ClockIcon,
+    ExternalLinkIcon, EyeIcon, FileTextIcon, FilterIcon, GridIcon, ListIcon, PanelRightIcon,
+    PaperclipIcon, SearchIcon, StickyNoteIcon, TicketIcon, TimerIcon, UsersIcon, XIcon,
 };
-use crate::pages::tickets::{assignee_color_classes, get_assignee_initials};
+use crate::pages::tickets::{
+    assignee_color_classes, get_assignee_initials,
+    types::{column_display_label, priority_badge, status_badge_variant},
+};
 use crate::state::AppDbRevision;
 
 /// Entity kind for filtering and badge styles.
@@ -64,6 +71,13 @@ pub enum CalendarViewMode {
     Schedule,
 }
 
+/// Perspective: map events by created timestamp or by due date / SLA deadline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DateMappingMode {
+    CreatedDate,
+    DueDate,
+}
+
 /// Polymorphic entity wrapper so any ticket, reminder, or note can be inspected.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
@@ -73,7 +87,7 @@ pub enum CalendarEntityData {
     Note(DbNote),
 }
 
-/// Unified calendar entry created from SQLite records.
+/// Unified calendar entry created from SQLite records with rich helpdesk metadata.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CalendarEntry {
     pub key: String,
@@ -87,15 +101,30 @@ pub struct CalendarEntry {
     pub employee: String,
     pub details: String,
     pub tag: Option<String>,
+    pub department: Option<String>,
+    pub sla_status: Option<String>,
+    pub sla_deadline: Option<String>,
+    pub rating: Option<String>,
     pub data: CalendarEntityData,
 }
 
 fn priority_badge_variant(priority: &str) -> &'static str {
     match priority.to_lowercase().as_str() {
-        "urgent" => "destructive",
+        "critical" | "urgent" => "destructive",
         "high" => "warning",
         "medium" => "info",
         _ => "outline",
+    }
+}
+
+fn sla_badge_classes(sla: &str) -> (&'static str, &'static str) {
+    let lower = sla.to_lowercase();
+    if lower.contains("breach") {
+        ("bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/25", "SLA Breached")
+    } else if lower.contains("within") || lower.contains("met") || lower.contains("ok") {
+        ("bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/25", "Within SLA")
+    } else {
+        ("bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/25", "SLA Active")
     }
 }
 
@@ -138,6 +167,9 @@ pub fn CalendarPage() -> Element {
     let mut date_range = use_signal(|| None::<DateRange>);
     let mut range_pick_step = use_signal(|| 0u8);
 
+    // Date mapping mode: Map items by Created Date vs Due/SLA Date
+    let mut date_mapping = use_signal(|| DateMappingMode::CreatedDate);
+
     // Filtering & search
     let mut item_filter = use_signal(|| ItemFilterType::All);
     let mut search_query = use_signal(String::new);
@@ -160,21 +192,67 @@ pub fn CalendarPage() -> Element {
         if let Some(sync) = db_sync {
             let _ = sync();
         }
+        let mapping = date_mapping();
 
         let mut entries = Vec::new();
 
         // 1. Tickets
         let tickets = get_all_tickets();
         for t in tickets {
-            let date = parse_date_ymd(&t.created_on)
-                .or_else(|| parse_date_ymd(&t.last_updated_on))
-                .unwrap_or(today);
-            let time_str = extract_time_str(&t.created_on);
+            let date = if mapping == DateMappingMode::DueDate {
+                parse_date_ymd(&t.sla_deadline)
+                    .or_else(|| parse_date_ymd(&t.deadline))
+                    .or_else(|| parse_date_ymd(&t.created_on))
+                    .unwrap_or(today)
+            } else {
+                parse_date_ymd(&t.created_on)
+                    .or_else(|| parse_date_ymd(&t.last_updated_on))
+                    .unwrap_or(today)
+            };
+            let time_str = if mapping == DateMappingMode::DueDate && !t.sla_deadline.is_empty() {
+                format!("Due: {}", extract_time_str(&t.sla_deadline))
+            } else {
+                extract_time_str(&t.created_on)
+            };
             let display_id = t
                 .server_ticket_id
                 .clone()
                 .filter(|s| !s.trim().is_empty())
                 .unwrap_or_else(|| format!("TKT-{}", t.ticket_id));
+
+            let emp_clean = if let Some(idx) = t.employee_code.find('(') {
+                t.employee_code[..idx].trim()
+            } else {
+                t.employee_code.trim()
+            };
+            let emp_db = crate::db::find_employee_by_code(emp_clean);
+            let dept = emp_db.as_ref().map(|e| e.department.clone()).or_else(|| {
+                if !t.customer.trim().is_empty() && t.customer.trim() != "Internal" {
+                    Some(t.customer.trim().to_string())
+                } else {
+                    None
+                }
+            });
+
+            let sla_status = if !t.sla_status.trim().is_empty() {
+                Some(t.sla_status.trim().to_string())
+            } else {
+                None
+            };
+
+            let sla_deadline = if !t.sla_deadline.trim().is_empty() {
+                Some(t.sla_deadline.trim().to_string())
+            } else if !t.deadline.trim().is_empty() {
+                Some(t.deadline.trim().to_string())
+            } else {
+                None
+            };
+
+            let rating = if !t.rating_avg_text.trim().is_empty() && t.rating_avg_text.trim() != "0" {
+                Some(t.rating_avg_text.trim().to_string())
+            } else {
+                None
+            };
 
             entries.push(CalendarEntry {
                 key: format!("ticket-{}", t.ticket_id),
@@ -203,6 +281,10 @@ pub fn CalendarPage() -> Element {
                 },
                 details: t.problem_description.clone(),
                 tag: Some(format!("{display_id} • {}", t.category)),
+                department: dept,
+                sla_status,
+                sla_deadline,
+                rating,
                 data: CalendarEntityData::Ticket(t),
             });
         }
@@ -210,7 +292,11 @@ pub fn CalendarPage() -> Element {
         // 2. Reminders
         let reminders = get_all_reminders();
         for r in reminders {
-            let date = parse_date_ymd(&r.created_at).unwrap_or(today);
+            let date = if mapping == DateMappingMode::DueDate {
+                parse_date_ymd(&r.send_at).or_else(|| parse_date_ymd(&r.created_at)).unwrap_or(today)
+            } else {
+                parse_date_ymd(&r.created_at).unwrap_or(today)
+            };
             let time_str = if !r.send_at.is_empty() {
                 format!("Due: {}", crate::state::format_display_time(&r.send_at))
             } else {
@@ -241,6 +327,10 @@ pub fn CalendarPage() -> Element {
                     r.service_category, r.email_address
                 ),
                 tag: Some(display_id),
+                department: None,
+                sla_status: None,
+                sla_deadline: if !r.send_at.is_empty() { Some(r.send_at.clone()) } else { None },
+                rating: None,
                 data: CalendarEntityData::Reminder(r),
             });
         }
@@ -280,6 +370,10 @@ pub fn CalendarPage() -> Element {
                 employee: n.emp_code.clone(),
                 details: n.content.clone(),
                 tag: Some(format!("NOTE-{}", n.id)),
+                department: None,
+                sla_status: None,
+                sla_deadline: None,
+                rating: None,
                 data: CalendarEntityData::Note(n),
             });
         }
@@ -339,7 +433,12 @@ pub fn CalendarPage() -> Element {
                     .as_ref()
                     .map(|t| t.to_lowercase().contains(&q))
                     .unwrap_or(false);
-                if !m_title && !m_sub && !m_emp && !m_det && !m_tag {
+                let m_dept = e
+                    .department
+                    .as_ref()
+                    .map(|d| d.to_lowercase().contains(&q))
+                    .unwrap_or(false);
+                if !m_title && !m_sub && !m_emp && !m_det && !m_tag && !m_dept {
                     return false;
                 }
             }
@@ -553,6 +652,34 @@ pub fn CalendarPage() -> Element {
                             span { "Agenda" }
                         }
                     }
+
+                    // Timeline Mapping Perspective: Created Date vs Due Date / SLA
+                    div { class: "inline-flex items-center rounded-md border border-border/70 bg-card p-0.5 shadow-2xs",
+                        button {
+                            r#type: "button",
+                            class: if date_mapping() == DateMappingMode::CreatedDate {
+                                "flex items-center gap-1 rounded-[4px] bg-primary/10 text-primary font-bold px-2 py-1 text-xs cursor-pointer"
+                            } else {
+                                "flex items-center gap-1 rounded-[4px] text-muted-foreground hover:text-foreground px-2 py-1 text-xs cursor-pointer"
+                            },
+                            title: "Map items by Created Date",
+                            onclick: move |_| date_mapping.set(DateMappingMode::CreatedDate),
+                            ClockIcon { class: "size-3" }
+                            span { "Created" }
+                        }
+                        button {
+                            r#type: "button",
+                            class: if date_mapping() == DateMappingMode::DueDate {
+                                "flex items-center gap-1 rounded-[4px] bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold px-2 py-1 text-xs cursor-pointer"
+                            } else {
+                                "flex items-center gap-1 rounded-[4px] text-muted-foreground hover:text-foreground px-2 py-1 text-xs cursor-pointer"
+                            },
+                            title: "Map items by SLA Deadline / Scheduled Time",
+                            onclick: move |_| date_mapping.set(DateMappingMode::DueDate),
+                            crate::icons::TimerIcon { class: "size-3" }
+                            span { "Due / SLA" }
+                        }
+                    }
                 }
 
                 // Right: Search Input & Panel Toggle
@@ -731,6 +858,7 @@ pub fn CalendarPage() -> Element {
                                 selection_mode: current_mode,
                                 entries: entries.clone(),
                                 on_day_click: move |d| handle_day_click(d),
+                                on_open_item: move |item| inspect_item.set(Some(item)),
                             }
                         },
                         CalendarViewMode::Schedule => rsx! {
@@ -931,7 +1059,7 @@ pub fn CalendarPage() -> Element {
                                             class: "group relative flex flex-col gap-2 rounded-lg border border-border/80 bg-card p-3 shadow-2xs hover:border-primary/50 hover:shadow-sm transition-all border-l-4 {border_color} cursor-pointer",
                                             onclick: move |_| inspect_item.set(Some(item_clone.data.clone())),
 
-                                            // Top Row: Type & Tag + Time + Action
+                                            // Top Row: Type & Tag + Department + Time + Action
                                             div { class: "flex items-center justify-between gap-2",
                                                 div { class: "flex items-center gap-1.5 flex-wrap min-w-0",
                                                     span { class: "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold border {badge_bg}",
@@ -941,6 +1069,11 @@ pub fn CalendarPage() -> Element {
                                                     if let Some(t) = &item.tag {
                                                         span { class: "font-mono text-[10px] text-muted-foreground truncate",
                                                             "{t}"
+                                                        }
+                                                    }
+                                                    if let Some(dept) = &item.department {
+                                                        span { class: "rounded bg-muted text-muted-foreground border border-border/60 px-1.5 py-0 text-[9px] font-semibold truncate max-w-[120px]",
+                                                            "{dept}"
                                                         }
                                                     }
                                                 }
@@ -982,14 +1115,27 @@ pub fn CalendarPage() -> Element {
                                                             "{get_assignee_initials(&item.employee)}"
                                                         }
                                                         span { class: "truncate font-medium text-foreground/80", "{item.subtitle}" }
+                                                        if let Some(r) = &item.rating {
+                                                            span { class: "text-[10px] text-amber-500 font-bold shrink-0", "★ {r}" }
+                                                        }
                                                     } else {
                                                         UsersIcon { class: "size-3 text-muted-foreground shrink-0" }
                                                         span { class: "truncate text-muted-foreground", "{item.subtitle}" }
                                                     }
                                                 }
 
-                                                // Status / Priority Badges
+                                                // Status / Priority / SLA Badges
                                                 div { class: "flex items-center gap-1.5 shrink-0",
+                                                    if let Some(sla) = &item.sla_status {
+                                                        {
+                                                            let (sla_cls, sla_lbl) = sla_badge_classes(sla);
+                                                            rsx! {
+                                                                span { class: "rounded border px-1.5 py-0 text-[9px] font-bold {sla_cls}",
+                                                                    "{sla_lbl}"
+                                                                }
+                                                            }
+                                                        }
+                                                    }
                                                     if item.kind == CalendarItemKind::Ticket {
                                                         Badge {
                                                             variant: "{priority_badge_variant(&item.priority)}",
@@ -1013,231 +1159,517 @@ pub fn CalendarPage() -> Element {
         }
 
             // ========================================================
-            // Detail Inspection Modal Dialog
+            // Detail Inspection Modal Dialog (Shadcn UI Component)
             // ========================================================
-            if let Some(detail) = inspect_item() {
-                div { class: "fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in-0 duration-150",
-                    onclick: move |_| inspect_item.set(None),
+            CalendarInspectDialog { inspect_item }
+        }
+    }
+}
 
-                    div {
-                        class: "relative w-full max-w-2xl max-h-[88vh] overflow-y-auto rounded-xl border border-border/80 bg-card  shadow-2xl transition-all",
-                        onclick: move |e| e.stop_propagation(),
+// ====================================================================
+// Detail Inspection Dialog & Sub-Views (Shadcn UI Components)
+// ====================================================================
 
-                        match detail {
-                            CalendarEntityData::Ticket(t) => {
-                                let display_ticket_id = t.server_ticket_id.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| format!("TKT-{}", t.ticket_id));
-                                rsx! {
-                                    div { class: "flex flex-col gap-4",
-                                        div { class: "flex items-start justify-between border-b border-border/60 pb-3",
-                                            div { class: "flex flex-col gap-1",
-                                                div { class: "flex items-center gap-2",
-                                                    span { class: "rounded bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/25 px-2 py-0.5 text-xs font-bold",
-                                                        "Support Ticket"
-                                                    }
-                                                    span { class: "font-mono text-xs font-bold text-foreground",
-                                                        "{display_ticket_id}"
-                                                    }
-                                                }
-                                                h3 { class: "text-base font-bold text-foreground leading-snug mt-1", "{t.subject}" }
-                                            }
-                                            button {
-                                                r#type: "button",
-                                                class: "p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer",
-                                                onclick: move |_| inspect_item.set(None),
-                                                XIcon { class: "size-4" }
-                                            }
-                                        }
+#[component]
+pub fn CalendarInspectDialog(mut inspect_item: Signal<Option<CalendarEntityData>>) -> Element {
+    let current = inspect_item();
+    let mut is_open = use_signal(|| inspect_item.peek().is_some());
 
-                                    div { class: "grid grid-cols-2 gap-3 text-xs bg-muted/20 p-3 rounded-md border border-border/50",
-                                        div { class: "flex flex-col gap-0.5",
-                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Category" }
-                                            span { class: "font-semibold text-foreground", "{t.category}" }
-                                        }
-                                        div { class: "flex flex-col gap-0.5",
-                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Priority" }
-                                            span { class: "font-semibold text-foreground", "{t.priority}" }
-                                        }
-                                        div { class: "flex flex-col gap-0.5",
-                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Assigned To" }
-                                            span { class: "font-semibold text-foreground", "{t.assigned_to}" }
-                                        }
-                                        div { class: "flex flex-col gap-0.5",
-                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Status" }
-                                            span { class: "font-semibold text-foreground", "{t.kanban_state}" }
-                                        }
-                                        div { class: "flex flex-col gap-0.5",
-                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Created Date" }
-                                            span { class: "font-mono font-medium text-foreground", "{t.created_on}" }
-                                        }
-                                        {
-                                            let emp_clean = if let Some(idx) = t.employee_code.find('(') {
-                                                t.employee_code[..idx].trim()
-                                            } else {
-                                                t.employee_code.trim()
-                                            };
-                                            let emp_db = crate::db::find_employee_by_code(emp_clean);
-                                            let emp_name = emp_db.as_ref().map(|e| e.emp_name.clone()).unwrap_or_else(|| t.employee_code.clone());
-                                            rsx! {
-                                                div { class: "flex flex-col gap-0.5",
-                                                    span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Employee Name" }
-                                                    span { class: "font-semibold text-foreground truncate", "{emp_name}" }
-                                                }
-                                                div { class: "flex flex-col gap-0.5",
-                                                    span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Employee Code" }
-                                                    span { class: "font-mono font-medium text-foreground", "{emp_clean}" }
-                                                }
-                                            }
-                                        }
-                                    }
+    use_effect(move || {
+        let has_item = inspect_item().is_some();
+        if *is_open.peek() != has_item {
+            is_open.set(has_item);
+        }
+    });
 
-                                    if !t.problem_description.is_empty() {
-                                        div { class: "flex flex-col gap-1",
-                                            span { class: "text-[11px] font-bold uppercase tracking-wider text-muted-foreground", "Problem Description" }
-                                            p { class: "text-xs text-foreground/90 bg-card border border-border/60 p-3 rounded-md leading-relaxed whitespace-pre-wrap",
-                                                "{t.problem_description}"
-                                            }
-                                        }
-                                    }
+    use_effect(move || {
+        if !is_open() && inspect_item.peek().is_some() {
+            inspect_item.set(None);
+        }
+    });
 
-                                    div { class: "flex justify-end pt-3 border-t border-border/50",
-                                        Button {
-                                            variant: "outline",
-                                            size: "sm",
-                                            onclick: move |_| inspect_item.set(None),
-                                            "Close"
-                                        }
-                                    }
-                                }
+    let Some(detail) = current else {
+        return rsx! {};
+    };
+
+    rsx! {
+        Dialog { open: is_open,
+            DialogContent {
+                class: "max-w-2xl sm:max-w-3xl w-full rounded-2xl border border-border/80 bg-card p-6 shadow-2xl max-h-[90vh] overflow-y-auto",
+                show_close_button: true,
+
+                match detail {
+                    CalendarEntityData::Ticket(t) => rsx! {
+                        TicketInspectView {
+                            ticket: t,
+                            on_close: move |_| inspect_item.set(None),
+                        }
+                    },
+                    CalendarEntityData::Reminder(r) => rsx! {
+                        ReminderInspectView {
+                            reminder: r,
+                            on_close: move |_| inspect_item.set(None),
+                        }
+                    },
+                    CalendarEntityData::Note(n) => rsx! {
+                        NoteInspectView {
+                            note: n,
+                            on_close: move |_| inspect_item.set(None),
+                        }
+                    },
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn TicketInspectView(ticket: DbTicket, on_close: EventHandler<()>) -> Element {
+    let t = &ticket;
+
+    let display_ticket_id = t
+        .server_ticket_id
+        .clone()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("TKT-{}", t.ticket_id));
+
+    let emp_clean = if let Some(idx) = t.employee_code.find('(') {
+        t.employee_code[..idx].trim()
+    } else {
+        t.employee_code.trim()
+    };
+    let emp_db = crate::db::find_employee_by_code(emp_clean);
+    let emp_name = emp_db
+        .as_ref()
+        .map(|e| e.emp_name.clone())
+        .unwrap_or_else(|| t.employee_code.clone());
+    let emp_dept = emp_db
+        .as_ref()
+        .map(|e| e.department.clone())
+        .unwrap_or_else(|| {
+            if !t.customer.trim().is_empty() && t.customer.trim() != "Internal" {
+                t.customer.trim().to_string()
+            } else {
+                "General".to_string()
+            }
+        });
+
+    let emp_initial = emp_name.chars().next().unwrap_or('U').to_uppercase();
+    let created_fmt = if t.created_on.is_empty() {
+        "Unknown".to_string()
+    } else {
+        crate::state::format_display_12hr(&t.created_on)
+    };
+    let updated_fmt = if t.last_updated_on.is_empty() {
+        String::new()
+    } else {
+        crate::state::format_display_12hr(&t.last_updated_on)
+    };
+    let sla_target_str = if t.sla_deadline.is_empty() {
+        "Standard (24h)".to_string()
+    } else {
+        crate::state::format_display_12hr(&t.sla_deadline)
+    };
+    let pipeline_state_str = if t.stage.is_empty() {
+        t.kanban_state.clone()
+    } else {
+        t.stage.clone()
+    };
+    let attachment_label = if t.attachment_name.is_empty() {
+        "Attachment File".to_string()
+    } else {
+        t.attachment_name.clone()
+    };
+
+    rsx! {
+        div { class: "flex flex-col gap-5",
+            DialogHeader {
+                div { class: "flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-3",
+                    div { class: "flex items-center gap-2 flex-wrap",
+                        Badge {
+                            variant: "info",
+                            class: "font-semibold flex items-center gap-1.5 px-2.5 py-0.5 shadow-2xs",
+                            TicketIcon { class: "size-3.5" }
+                            "Support Ticket"
+                        }
+                        span { class: "font-mono text-xs font-bold text-foreground bg-muted/80 px-2 py-0.5 rounded border border-border/80 shadow-2xs",
+                            "{display_ticket_id}"
+                        }
+                        if !t.category.trim().is_empty() {
+                            Badge {
+                                variant: "secondary",
+                                class: "text-xs font-medium",
+                                "{t.category}"
                             }
-                        },
-                            CalendarEntityData::Reminder(r) => {
-                                rsx! {
-                                    div { class: "flex flex-col gap-4",
-                                    div { class: "flex items-start justify-between border-b border-border/60 pb-3",
-                                        div { class: "flex flex-col gap-1",
-                                            div { class: "flex items-center gap-2",
-                                                span { class: "rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/25 px-2 py-0.5 text-xs font-bold",
-                                                    "Reminder"
-                                                }
-                                                span { class: "font-mono text-xs font-bold text-foreground",
-                                                    "#{r.reminder_id}"
-                                                }
-                                            }
-                                            h3 { class: "text-base font-bold text-foreground leading-snug mt-1", "{r.reminder_message}" }
-                                        }
-                                        button {
-                                            r#type: "button",
-                                            class: "p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer",
-                                            onclick: move |_| inspect_item.set(None),
-                                            XIcon { class: "size-4" }
-                                        }
-                                    }
-
-                                    {
-                                        let emp_code_clean = r.employee_code.trim();
-                                        let emp_db = crate::db::find_employee_by_code(emp_code_clean);
-                                        let recipient_name = emp_db.as_ref().map(|e| e.emp_name.clone()).unwrap_or_else(|| r.employee_name.clone());
-                                        let recipient_email = emp_db.as_ref().map(|e| e.emp_email.clone()).filter(|e| !e.is_empty()).unwrap_or_else(|| r.email_address.clone());
-                                        rsx! {
-                                            div { class: "grid grid-cols-2 gap-3 text-xs bg-muted/20 p-3 rounded-md border border-border/50",
-                                                div { class: "flex flex-col gap-0.5",
-                                                    span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Recipient Name" }
-                                                    span { class: "font-semibold text-foreground", "{recipient_name}" }
-                                                }
-                                                div { class: "flex flex-col gap-0.5",
-                                                    span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Employee Code" }
-                                                    span { class: "font-mono font-semibold text-foreground", "{r.employee_code}" }
-                                                }
-                                                div { class: "flex flex-col gap-0.5",
-                                                    span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Status" }
-                                                    span { class: "font-semibold text-foreground", "{r.status}" }
-                                                }
-                                                div { class: "flex flex-col gap-0.5",
-                                                    span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Scheduled Send Time" }
-                                                    span { class: "font-mono font-medium text-foreground", title: "{r.send_at}", "{crate::state::format_display_time(&r.send_at)}" }
-                                                }
-                                                div { class: "flex flex-col gap-0.5",
-                                                    span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Repeat Frequency" }
-                                                    span { class: "font-mono font-semibold text-foreground uppercase", "{r.repeat_frequency}" }
-                                                }
-                                                div { class: "flex flex-col gap-0.5",
-                                                    span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Created At" }
-                                                    span { class: "font-mono font-medium text-foreground", title: "{r.created_at}", "{crate::state::format_display_time(&r.created_at)}" }
-                                                }
-                                                div { class: "flex flex-col gap-0.5",
-                                                    span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Recipient Email" }
-                                                    span { class: "font-mono text-[11px] text-foreground truncate", "{recipient_email}" }
-                                                }
-                                                if !r.cc_emails.is_empty() {
-                                                    div { class: "col-span-2 flex flex-col gap-0.5 pt-1 border-t border-border/30",
-                                                        span { class: "text-muted-foreground text-[10px] uppercase font-bold", "CC Recipients" }
-                                                        span { class: "font-mono text-[11px] text-foreground truncate", "{r.cc_emails}" }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    div { class: "flex justify-end pt-3 border-t border-border/50",
-                                        Button {
-                                            variant: "outline",
-                                            size: "sm",
-                                            onclick: move |_| inspect_item.set(None),
-                                            "Close"
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                            CalendarEntityData::Note(n) => {
-                                rsx! {
-                                    div { class: "flex flex-col gap-4",
-                                    div { class: "flex items-start justify-between border-b border-border/60 pb-3",
-                                        div { class: "flex flex-col gap-1",
-                                            span { class: "rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25 px-2 py-0.5 text-xs font-bold w-fit",
-                                                "Quick Note"
-                                            }
-                                            h3 { class: "text-base font-bold text-foreground leading-snug mt-1", "Note #{n.id}" }
-                                        }
-                                        button {
-                                            r#type: "button",
-                                            class: "p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer",
-                                            onclick: move |_| inspect_item.set(None),
-                                            XIcon { class: "size-4" }
-                                        }
-                                    }
-
-                                    div { class: "grid grid-cols-2 gap-3 text-xs bg-muted/20 p-3 rounded-md border border-border/50",
-                                        div { class: "flex flex-col gap-0.5",
-                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Employee Code" }
-                                            span { class: "font-mono font-semibold text-foreground", "{n.emp_code}" }
-                                        }
-                                        div { class: "flex flex-col gap-0.5",
-                                            span { class: "text-muted-foreground text-[10px] uppercase font-bold", "Created At" }
-                                            span { class: "font-mono font-medium text-foreground", "{n.created_at}" }
-                                        }
-                                    }
-
-                                    div { class: "flex flex-col gap-1",
-                                        span { class: "text-[11px] font-bold uppercase tracking-wider text-muted-foreground", "Note Content" }
-                                        p { class: "text-xs text-foreground/90 bg-card border border-border/60 p-3 rounded-md leading-relaxed whitespace-pre-wrap",
-                                            "{n.content}"
-                                        }
-                                    }
-
-                                    div { class: "flex justify-end pt-3 border-t border-border/50",
-                                        Button {
-                                            variant: "outline",
-                                            size: "sm",
-                                            onclick: move |_| inspect_item.set(None),
-                                            "Close"
-                                        }
-                                    }
-                                }
-                            }
-                        },
                         }
                     }
+
+                    div { class: "flex items-center gap-1.5 flex-wrap",
+                        Badge {
+                            variant: "{priority_badge(&t.priority)}",
+                            class: "text-xs font-bold capitalize",
+                            "{t.priority}"
+                        }
+                        Badge {
+                            variant: "{status_badge_variant(&t.kanban_state)}",
+                            class: "text-xs font-bold",
+                            "{column_display_label(&t.kanban_state)}"
+                        }
+                        if !t.sla_status.trim().is_empty() {
+                            {
+                                let is_breached = t.sla_status.to_lowercase().contains("breach");
+                                rsx! {
+                                    Badge {
+                                        variant: if is_breached { "destructive" } else { "success" },
+                                        class: "text-xs font-semibold",
+                                        "SLA: {t.sla_status}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                DialogTitle { class: "text-lg sm:text-xl font-bold tracking-tight text-foreground mt-3 leading-snug",
+                    "{t.subject}"
+                }
+
+                DialogDescription { class: "text-xs text-muted-foreground flex items-center gap-1.5 mt-1",
+                    CalendarIcon { class: "size-3.5" }
+                    span { "Reported {created_fmt}" }
+                    if !updated_fmt.is_empty() && updated_fmt != created_fmt {
+                        span { class: "text-muted-foreground/60", "·" }
+                        span { "Updated {updated_fmt}" }
+                    }
+                }
+            }
+
+            // Stakeholders Overview (Requester + Assignee Specialist)
+            div { class: "grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 rounded-xl bg-muted/30 border border-border/60",
+                // Requester
+                div { class: "flex items-center gap-3 min-w-0",
+                    div { class: "flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-xs border border-primary/20 shadow-2xs",
+                        "{emp_initial}"
+                    }
+                    div { class: "flex flex-col min-w-0",
+                        span { class: "text-[10px] font-bold uppercase tracking-wider text-muted-foreground", "Requester" }
+                        span { class: "font-semibold text-foreground text-sm truncate", "{emp_name}" }
+                        span { class: "font-mono text-[11px] text-muted-foreground truncate",
+                            "{emp_dept} · #{emp_clean}"
+                        }
+                    }
+                }
+
+                // Specialist
+                div { class: "flex items-center gap-3 min-w-0 sm:border-l sm:border-border/50 sm:pl-3",
+                    div { class: "flex size-10 shrink-0 items-center justify-center rounded-full text-xs font-extrabold uppercase border shadow-2xs {assignee_color_classes(&t.assigned_to)}",
+                        "{get_assignee_initials(&t.assigned_to)}"
+                    }
+                    div { class: "flex flex-col min-w-0",
+                        span { class: "text-[10px] font-bold uppercase tracking-wider text-muted-foreground", "Assigned Specialist" }
+                        span { class: "font-semibold text-foreground text-sm truncate", "{t.assigned_to}" }
+                        div { class: "flex items-center gap-2 text-[11px] text-muted-foreground",
+                            span { "IT Support" }
+                            if !t.rating_avg_text.trim().is_empty() && t.rating_avg_text.trim() != "0" {
+                                span { class: "text-amber-500 font-bold", "★ {t.rating_avg_text}" }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Key Operational Details Grid
+            div { class: "grid grid-cols-2 sm:grid-cols-4 gap-2.5",
+                div { class: "flex flex-col gap-1 p-3 rounded-lg border border-border/60 bg-muted/15",
+                    div { class: "flex items-center gap-1.5 text-muted-foreground text-[10px] font-bold uppercase tracking-wider",
+                        UsersIcon { class: "size-3.5" }
+                        "Department"
+                    }
+                    span { class: "font-semibold text-foreground text-xs truncate", "{emp_dept}" }
+                }
+
+                div { class: "flex flex-col gap-1 p-3 rounded-lg border border-border/60 bg-muted/15",
+                    div { class: "flex items-center gap-1.5 text-muted-foreground text-[10px] font-bold uppercase tracking-wider",
+                        ClockIcon { class: "size-3.5" }
+                        "Logged Effort"
+                    }
+                    span { class: "font-mono font-bold text-foreground text-xs", "{t.time_spent:.1} hrs" }
+                }
+
+                div { class: "flex flex-col gap-1 p-3 rounded-lg border border-border/60 bg-muted/15",
+                    div { class: "flex items-center gap-1.5 text-muted-foreground text-[10px] font-bold uppercase tracking-wider",
+                        TimerIcon { class: "size-3.5" }
+                        "SLA Target"
+                    }
+                    span { class: "font-mono text-foreground text-xs truncate", "{sla_target_str}" }
+                }
+
+                div { class: "flex flex-col gap-1 p-3 rounded-lg border border-border/60 bg-muted/15",
+                    div { class: "flex items-center gap-1.5 text-muted-foreground text-[10px] font-bold uppercase tracking-wider",
+                        CheckCircle2Icon { class: "size-3.5" }
+                        "Pipeline State"
+                    }
+                    span { class: "font-semibold text-foreground text-xs truncate", "{pipeline_state_str}" }
+                }
+            }
+
+            // Problem Description Box
+            div { class: "flex flex-col gap-1.5",
+                div { class: "flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground",
+                    FileTextIcon { class: "size-3.5" }
+                    "Problem Description"
+                }
+                div { class: "rounded-xl border border-border/70 bg-card p-4 text-xs sm:text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap font-sans shadow-2xs select-text min-h-[64px]",
+                    if t.problem_description.trim().is_empty() {
+                        "No additional problem description recorded."
+                    } else {
+                        "{t.problem_description}"
+                    }
+                }
+            }
+
+            // Attachment Link (if available)
+            if !t.attachment_name.is_empty() || !t.attachment_url.is_empty() {
+                div { class: "flex items-center justify-between gap-2 p-2.5 rounded-lg border border-border/70 bg-muted/20 text-xs",
+                    div { class: "flex items-center gap-2 min-w-0",
+                        PaperclipIcon { class: "size-3.5 text-muted-foreground shrink-0" }
+                        span { class: "font-mono text-xs text-foreground truncate", "{attachment_label}" }
+                    }
+                    if !t.attachment_url.is_empty() {
+                        a {
+                            href: "{t.attachment_url}",
+                            target: "_blank",
+                            class: "flex items-center gap-1 text-primary hover:underline font-semibold shrink-0 text-xs",
+                            "Open File"
+                            ExternalLinkIcon { class: "size-3" }
+                        }
+                    }
+                }
+            }
+
+            // Dialog Footer
+            DialogFooter { class: "flex items-center justify-between border-t border-border/50 pt-4 mt-2",
+                div { class: "flex items-center gap-2 text-xs text-muted-foreground",
+                    span { class: "font-mono text-[11px]", "ID: {display_ticket_id}" }
+                    if !t.rating_avg_text.trim().is_empty() && t.rating_avg_text.trim() != "0" {
+                        span { "·" }
+                        span { class: "text-amber-500 font-bold text-xs", "Rating: ★ {t.rating_avg_text}" }
+                    }
+                }
+                Button {
+                    variant: "outline",
+                    size: "sm",
+                    onclick: move |_| on_close.call(()),
+                    "Close"
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn ReminderInspectView(reminder: DbReminder, on_close: EventHandler<()>) -> Element {
+    let r = &reminder;
+
+    let emp_code_clean = r.employee_code.trim();
+    let emp_db = crate::db::find_employee_by_code(emp_code_clean);
+    let recipient_name = emp_db
+        .as_ref()
+        .map(|e| e.emp_name.clone())
+        .unwrap_or_else(|| r.employee_name.clone());
+    let recipient_email = emp_db
+        .as_ref()
+        .map(|e| e.emp_email.clone())
+        .filter(|e| !e.is_empty())
+        .unwrap_or_else(|| r.email_address.clone());
+
+    let send_at_fmt = crate::state::format_display_12hr(&r.send_at);
+    let created_at_fmt = crate::state::format_display_12hr(&r.created_at);
+
+    rsx! {
+        div { class: "flex flex-col gap-5",
+            DialogHeader {
+                div { class: "flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-3",
+                    div { class: "flex items-center gap-2 flex-wrap",
+                        Badge {
+                            variant: "warning",
+                            class: "font-semibold flex items-center gap-1.5 px-2.5 py-0.5 shadow-2xs",
+                            BellIcon { class: "size-3.5" }
+                            "Reminder"
+                        }
+                        span { class: "font-mono text-xs font-bold text-foreground bg-muted/80 px-2 py-0.5 rounded border border-border/80 shadow-2xs",
+                            "#{r.reminder_id}"
+                        }
+                        if !r.service_category.trim().is_empty() {
+                            Badge {
+                                variant: "secondary",
+                                class: "text-xs font-medium",
+                                "{r.service_category}"
+                            }
+                        }
+                    }
+
+                    div { class: "flex items-center gap-1.5 flex-wrap",
+                        Badge {
+                            variant: if r.status.to_lowercase() == "completed" { "success" } else { "warning" },
+                            class: "text-xs font-bold capitalize",
+                            "{r.status}"
+                        }
+                        Badge {
+                            variant: "secondary",
+                            class: "text-xs font-medium uppercase font-mono",
+                            "{r.repeat_frequency}"
+                        }
+                    }
+                }
+
+                DialogTitle { class: "text-lg sm:text-xl font-bold tracking-tight text-foreground mt-3 leading-snug",
+                    "{r.reminder_message}"
+                }
+
+                DialogDescription { class: "text-xs text-muted-foreground flex items-center gap-1.5 mt-1",
+                    ClockIcon { class: "size-3.5" }
+                    span { "Scheduled for {send_at_fmt}" }
+                }
+            }
+
+            // Recipient Details Card
+            div { class: "grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 rounded-xl bg-muted/30 border border-border/60",
+                div { class: "flex items-center gap-3 min-w-0",
+                    div { class: "flex size-10 shrink-0 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold text-xs border border-amber-500/20 shadow-2xs",
+                        UsersIcon { class: "size-4" }
+                    }
+                    div { class: "flex flex-col min-w-0",
+                        span { class: "text-[10px] font-bold uppercase tracking-wider text-muted-foreground", "Recipient" }
+                        span { class: "font-semibold text-foreground text-sm truncate", "{recipient_name}" }
+                        span { class: "font-mono text-[11px] text-muted-foreground truncate", "#{r.employee_code}" }
+                    }
+                }
+
+                div { class: "flex items-center gap-3 min-w-0 sm:border-l sm:border-border/50 sm:pl-3",
+                    div { class: "flex flex-col min-w-0 justify-center",
+                        span { class: "text-[10px] font-bold uppercase tracking-wider text-muted-foreground", "Target Email Address" }
+                        span { class: "font-mono text-xs text-foreground truncate mt-0.5", "{recipient_email}" }
+                    }
+                }
+            }
+
+            // Operational Timing Grid
+            div { class: "grid grid-cols-2 sm:grid-cols-3 gap-2.5",
+                div { class: "flex flex-col gap-1 p-3 rounded-lg border border-border/60 bg-muted/15",
+                    div { class: "flex items-center gap-1.5 text-muted-foreground text-[10px] font-bold uppercase tracking-wider",
+                        ClockIcon { class: "size-3.5" }
+                        "Send Time"
+                    }
+                    span { class: "font-mono font-medium text-foreground text-xs", "{send_at_fmt}" }
+                }
+
+                div { class: "flex flex-col gap-1 p-3 rounded-lg border border-border/60 bg-muted/15",
+                    div { class: "flex items-center gap-1.5 text-muted-foreground text-[10px] font-bold uppercase tracking-wider",
+                        TimerIcon { class: "size-3.5" }
+                        "Cadence"
+                    }
+                    span { class: "font-semibold text-foreground text-xs uppercase", "{r.repeat_frequency}" }
+                }
+
+                div { class: "flex flex-col gap-1 p-3 rounded-lg border border-border/60 bg-muted/15",
+                    div { class: "flex items-center gap-1.5 text-muted-foreground text-[10px] font-bold uppercase tracking-wider",
+                        CalendarIcon { class: "size-3.5" }
+                        "Created At"
+                    }
+                    span { class: "font-mono font-medium text-foreground text-xs", "{created_at_fmt}" }
+                }
+            }
+
+            // CC emails if present
+            if !r.cc_emails.trim().is_empty() {
+                div { class: "flex flex-col gap-1 p-3 rounded-lg border border-border/60 bg-muted/15 text-xs",
+                    span { class: "text-[10px] font-bold uppercase tracking-wider text-muted-foreground", "CC Email Recipients" }
+                    span { class: "font-mono text-xs text-foreground truncate", "{r.cc_emails}" }
+                }
+            }
+
+            // Dialog Footer
+            DialogFooter { class: "flex items-center justify-between border-t border-border/50 pt-4 mt-2",
+                span { class: "font-mono text-[11px] text-muted-foreground", "Reminder #{r.reminder_id}" }
+                Button {
+                    variant: "outline",
+                    size: "sm",
+                    onclick: move |_| on_close.call(()),
+                    "Close"
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn NoteInspectView(note: DbNote, on_close: EventHandler<()>) -> Element {
+    let n = &note;
+    let created_fmt = crate::state::format_display_12hr(&n.created_at);
+
+    rsx! {
+        div { class: "flex flex-col gap-5",
+            DialogHeader {
+                div { class: "flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-3",
+                    div { class: "flex items-center gap-2",
+                        Badge {
+                            variant: "success",
+                            class: "font-semibold flex items-center gap-1.5 px-2.5 py-0.5 shadow-2xs",
+                            StickyNoteIcon { class: "size-3.5" }
+                            "Quick Note"
+                        }
+                        span { class: "font-mono text-xs font-bold text-foreground bg-muted/80 px-2 py-0.5 rounded border border-border/80 shadow-2xs",
+                            "#{n.id}"
+                        }
+                    }
+                }
+
+                DialogTitle { class: "text-lg sm:text-xl font-bold tracking-tight text-foreground mt-3 leading-snug",
+                    "Knowledge Note #{n.id}"
+                }
+
+                DialogDescription { class: "text-xs text-muted-foreground flex items-center gap-1.5 mt-1",
+                    CalendarIcon { class: "size-3.5" }
+                    span { "Authored by employee #{n.emp_code} on {created_fmt}" }
+                }
+            }
+
+            div { class: "grid grid-cols-2 gap-2.5",
+                div { class: "flex flex-col gap-1 p-3 rounded-lg border border-border/60 bg-muted/15",
+                    div { class: "flex items-center gap-1.5 text-muted-foreground text-[10px] font-bold uppercase tracking-wider",
+                        UsersIcon { class: "size-3.5" }
+                        "Author Code"
+                    }
+                    span { class: "font-mono font-bold text-foreground text-xs", "#{n.emp_code}" }
+                }
+
+                div { class: "flex flex-col gap-1 p-3 rounded-lg border border-border/60 bg-muted/15",
+                    div { class: "flex items-center gap-1.5 text-muted-foreground text-[10px] font-bold uppercase tracking-wider",
+                        CalendarIcon { class: "size-3.5" }
+                        "Timestamp"
+                    }
+                    span { class: "font-mono font-medium text-foreground text-xs", "{created_fmt}" }
+                }
+            }
+
+            div { class: "flex flex-col gap-1.5",
+                div { class: "flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground",
+                    FileTextIcon { class: "size-3.5" }
+                    "Note Content"
+                }
+                div { class: "rounded-xl border border-border/70 bg-card p-4 text-xs sm:text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap font-sans shadow-2xs select-text min-h-[90px]",
+                    "{n.content}"
+                }
+            }
+
+            DialogFooter { class: "flex items-center justify-between border-t border-border/50 pt-4 mt-2",
+                span { class: "font-mono text-[11px] text-muted-foreground", "Note #{n.id}" }
+                Button {
+                    variant: "outline",
+                    size: "sm",
+                    onclick: move |_| on_close.call(()),
+                    "Close"
                 }
             }
         }
@@ -1258,6 +1690,7 @@ struct MonthGridProps {
     selection_mode: DateSelectionMode,
     entries: Vec<CalendarEntry>,
     on_day_click: EventHandler<(u32, u32, u32)>,
+    on_open_item: EventHandler<CalendarEntityData>,
 }
 
 #[component]
@@ -1351,10 +1784,8 @@ fn MonthCalendarView(props: MonthGridProps) -> Element {
                             "hover:bg-muted/30"
                         };
 
-                        // Count items created on this day
-                        let tickets_count = props.entries.iter().filter(|e| e.date == day_date && e.kind == CalendarItemKind::Ticket).count();
-                        let reminders_count = props.entries.iter().filter(|e| e.date == day_date && e.kind == CalendarItemKind::Reminder).count();
-                        let notes_count = props.entries.iter().filter(|e| e.date == day_date && e.kind == CalendarItemKind::Note).count();
+                        let day_items: Vec<&CalendarEntry> = props.entries.iter().filter(|e| e.date == day_date).collect();
+                        let total_day_items = day_items.len();
 
                         rsx! {
                             div {
@@ -1379,46 +1810,54 @@ fn MonthCalendarView(props: MonthGridProps) -> Element {
                                     }
 
                                     // Total created indicator
-                                    if tickets_count + reminders_count + notes_count > 0 {
+                                    if total_day_items > 0 {
                                         span { class: "text-[10px] font-bold text-muted-foreground/70",
-                                            "{tickets_count + reminders_count + notes_count}"
+                                            "{total_day_items}"
                                         }
                                     }
                                 }
 
-                                // Badges stack for created items
-                                div { class: "flex flex-col gap-0.5 sm:gap-1 mt-1 overflow-hidden",
-                                    if tickets_count > 0 {
+                                // Interactive Item Chips on calendar day cell
+                                div { class: "flex flex-col gap-1 mt-1 overflow-hidden",
+                                    for item in day_items.iter().take(2) {
                                         {
-                                            let s_suffix = if tickets_count > 1 { "s" } else { "" };
+                                            let item_data = item.data.clone();
+                                            let on_open = props.on_open_item;
+                                            let (dot_color, chip_bg, chip_border) = match item.kind {
+                                                CalendarItemKind::Ticket => {
+                                                    let dot = match item.priority.to_lowercase().as_str() {
+                                                        "critical" | "urgent" => "bg-rose-500",
+                                                        "high" => "bg-amber-500",
+                                                        "low" => "bg-slate-400",
+                                                        _ => "bg-blue-500",
+                                                    };
+                                                    (dot, "bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/20", "border-blue-500/25")
+                                                },
+                                                CalendarItemKind::Reminder => ("bg-amber-500", "bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20", "border-amber-500/25"),
+                                                CalendarItemKind::Note => ("bg-emerald-500", "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20", "border-emerald-500/25"),
+                                            };
+                                            let short_id = item.tag.as_deref().and_then(|t| t.split(" \u{2022} ").next()).unwrap_or("");
                                             rsx! {
-                                                span { class: "inline-flex items-center gap-1 rounded bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/25 px-1 sm:px-1.5 py-0.5 text-[9px] sm:text-[10px] font-semibold truncate",
-                                                    TicketIcon { class: "size-2.5 shrink-0 hidden sm:inline" }
-                                                    span { class: "truncate", "{tickets_count} ticket{s_suffix}" }
+                                                div {
+                                                    key: "{item.key}",
+                                                    class: "group/chip flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-medium border truncate transition-all {chip_bg} {chip_border}",
+                                                    title: "{item.title} ({item.status})",
+                                                    onclick: move |e| {
+                                                        e.stop_propagation();
+                                                        on_open.call(item_data.clone());
+                                                    },
+                                                    span { class: "size-1.5 shrink-0 rounded-full {dot_color}" }
+                                                    if !short_id.is_empty() {
+                                                        span { class: "font-mono font-bold shrink-0 text-[8.5px] opacity-90", "{short_id}" }
+                                                    }
+                                                    span { class: "truncate opacity-85", "{item.title}" }
                                                 }
                                             }
                                         }
                                     }
-                                    if reminders_count > 0 {
-                                        {
-                                            let s_suffix = if reminders_count > 1 { "s" } else { "" };
-                                            rsx! {
-                                                span { class: "inline-flex items-center gap-1 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/25 px-1 sm:px-1.5 py-0.5 text-[9px] sm:text-[10px] font-semibold truncate",
-                                                    BellIcon { class: "size-2.5 shrink-0 hidden sm:inline" }
-                                                    span { class: "truncate", "{reminders_count} reminder{s_suffix}" }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if notes_count > 0 {
-                                        {
-                                            let s_suffix = if notes_count > 1 { "s" } else { "" };
-                                            rsx! {
-                                                span { class: "inline-flex items-center gap-1 rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25 px-1 sm:px-1.5 py-0.5 text-[9px] sm:text-[10px] font-semibold truncate",
-                                                    StickyNoteIcon { class: "size-2.5 shrink-0 hidden sm:inline" }
-                                                    span { class: "truncate", "{notes_count} note{s_suffix}" }
-                                                }
-                                            }
+                                    if total_day_items > 2 {
+                                        span { class: "text-[9px] font-bold text-muted-foreground/80 px-1 py-0.5 rounded bg-muted/40 w-fit",
+                                            "+{total_day_items - 2} more"
                                         }
                                     }
                                 }
@@ -1524,7 +1963,7 @@ fn ScheduleTimelineListView(props: ScheduleProps) -> Element {
                                 }
 
                                 // Details
-                                div { class: "flex flex-1 flex-col gap-1 min-w-0",
+                                div { class: "flex flex-1 flex-col gap-1.5 min-w-0",
                                     div { class: "flex items-center gap-2 flex-wrap",
                                         span { class: "rounded px-1.5 py-0.5 text-[10px] font-bold border {type_cls}",
                                             "{type_label}"
@@ -1532,12 +1971,62 @@ fn ScheduleTimelineListView(props: ScheduleProps) -> Element {
                                         if let Some(t) = &item.tag {
                                             span { class: "font-mono text-[11px] text-muted-foreground", "{t}" }
                                         }
+                                        if let Some(dept) = &item.department {
+                                            span { class: "rounded bg-muted text-muted-foreground border border-border/60 px-1.5 py-0.5 text-[9px] font-semibold truncate",
+                                                "{dept}"
+                                            }
+                                        }
+                                        if let Some(sla) = &item.sla_status {
+                                            {
+                                                let (sla_cls, sla_lbl) = sla_badge_classes(sla);
+                                                rsx! {
+                                                    span { class: "rounded border px-1.5 py-0 text-[9px] font-bold {sla_cls}",
+                                                        "{sla_lbl}"
+                                                    }
+                                                }
+                                            }
+                                        }
                                         if !item.time_str.is_empty() {
                                             span { class: "text-[10px] text-muted-foreground font-mono ml-auto", "{item.time_str}" }
                                         }
                                     }
                                     h4 { class: "text-sm font-bold text-foreground leading-snug truncate", "{item.title}" }
-                                    p { class: "text-xs text-muted-foreground line-clamp-2", "{item.details}" }
+                                    if !item.details.is_empty() {
+                                        p { class: "text-xs text-muted-foreground line-clamp-2", "{item.details}" }
+                                    }
+
+                                    // Bottom row: Assignee & status
+                                    div { class: "flex items-center justify-between gap-2 pt-1 border-t border-border/40 text-[11px] mt-0.5",
+                                        div { class: "flex items-center gap-1.5 min-w-0",
+                                            if item.kind == CalendarItemKind::Ticket {
+                                                span { class: "flex size-5 shrink-0 items-center justify-center rounded-full text-[9px] font-extrabold uppercase border shadow-2xs {assignee_color_classes(&item.employee)}",
+                                                    "{get_assignee_initials(&item.employee)}"
+                                                }
+                                                span { class: "truncate font-medium text-foreground/80", "{item.subtitle}" }
+                                            } else {
+                                                UsersIcon { class: "size-3 text-muted-foreground shrink-0" }
+                                                span { class: "truncate text-muted-foreground", "{item.subtitle}" }
+                                            }
+                                        }
+
+                                        div { class: "flex items-center gap-1.5 shrink-0",
+                                            if item.kind == CalendarItemKind::Ticket {
+                                                Badge {
+                                                    variant: "{priority_badge_variant(&item.priority)}",
+                                                    class: "text-[10px] py-0 h-4.5 px-1.5",
+                                                    "{item.priority}"
+                                                }
+                                            }
+                                            {
+                                                let (status_cls, status_txt) = status_badge_classes(&item.status);
+                                                rsx! {
+                                                    span { class: "rounded border px-1.5 py-0 text-[10px] font-medium {status_cls}",
+                                                        "{status_txt}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

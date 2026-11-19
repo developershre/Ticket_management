@@ -519,6 +519,7 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
                         div { class: "min-w-[135px] max-w-[220px] shrink-0",
                             Select {
                                 value: Some(filter),
+                                placeholder: filter_placeholder.clone(),
                                 SelectTrigger { class: "h-8 text-xs rounded-md bg-background border-border/80".to_string(),
                                     SelectValue { placeholder: filter_placeholder.clone() }
                                 }
@@ -542,6 +543,7 @@ pub fn DataTable<T: Clone + PartialEq + 'static>(props: DataTableProps<T>) -> El
                         div { class: "min-w-[135px] max-w-[220px] shrink-0",
                             Select {
                                 value: Some(filter2),
+                                placeholder: filter2_placeholder.clone(),
                                 SelectTrigger { class: "h-8 text-xs rounded-md bg-background border-border/80".to_string(),
                                     SelectValue { placeholder: filter2_placeholder.clone() }
                                 }

@@ -32,6 +32,9 @@ pub struct SelectProps {
     #[props(default)]
     pub onchange: Option<EventHandler<String>>,
 
+    #[props(default)]
+    pub class: String,
+
     pub children: Element,
 }
 
@@ -54,10 +57,15 @@ pub fn Select(props: SelectProps) -> Element {
         onchange,
     });
 
+    let is_open = *open.read();
+    let z_class = if is_open { "z-[100]" } else { "z-50" };
+    let z_style = if is_open { "z-index: 100;" } else { "z-index: 50;" };
+
     rsx! {
         div {
             "data-slot": "select",
-            class: "relative inline-block w-full",
+            class: "relative inline-block w-full {z_class} {props.class}",
+            style: "{z_style}",
             {props.children}
         }
     }
@@ -265,7 +273,7 @@ pub fn SelectContent(props: SelectContentProps) -> Element {
         "w-full min-w-[8rem] max-h-64 \
          overflow-y-auto overflow-x-hidden rounded-md border border-border/80 \
          bg-popover/95 backdrop-blur-md p-1.5 text-popover-foreground outline-none \
-         shadow-xl shadow-black/15 ring-1 ring-border/50 animate-in fade-in-0 zoom-in-95 duration-100 {}",
+         shadow-xl shadow-black/15 ring-1 ring-border/50 animate-in fade-in-0 zoom-in-95 duration-100 z-[100] z-50 {}",
         props.class
     );
 
@@ -281,11 +289,13 @@ pub fn SelectContent(props: SelectContentProps) -> Element {
 
         div {
             "data-popup": uid,
-            class: "fixed left-0 top-0 z-[100] invisible",
+            class: "fixed left-0 top-0 z-[100] z-50 invisible",
+            style: "z-index: 100;",
 
             div {
                 "data-slot": "select-content",
                 class: class,
+                style: "z-index: 100;",
                 onmousedown: move |e| {
                     e.stop_propagation();
                 },
