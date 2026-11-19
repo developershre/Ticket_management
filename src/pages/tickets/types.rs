@@ -12,6 +12,7 @@ pub const COLUMN_NAMES: &[&str] = &[
 ];
 
 /// Parses an ID string (e.g. "IT-123", "TC-0004", "123") into an i64 ticket ID.
+#[allow(dead_code)]
 pub fn parse_ticket_num(id: &str) -> Option<i64> {
     let s = id.trim();
     if let Ok(n) = s.parse::<i64>() {
@@ -786,7 +787,7 @@ impl TicketContextState {
                 local_num = Some(list[pos].ticket_id);
             }
         }
-        let num = local_num.or_else(|| parse_ticket_num(ticket_id));
+        let num = local_num.or_else(|| crate::db::find_ticket_local_id(ticket_id));
         if let Some(num) = num {
             let _ = crate::db::update_ticket_status(num, new_status);
             let sheet_kanban = match new_status {
@@ -806,7 +807,7 @@ impl TicketContextState {
                     payload["stage"] = serde_json::json!(stg);
                 }
             }
-            crate::sync::enqueue_update(num, payload);
+            crate::sync::enqueue_update_with_server_id(num, Some(ticket_id.to_string()), payload);
         }
     }
 
@@ -819,10 +820,14 @@ impl TicketContextState {
                 local_num = Some(list[pos].ticket_id);
             }
         }
-        let num = local_num.or_else(|| parse_ticket_num(ticket_id));
+        let num = local_num.or_else(|| crate::db::find_ticket_local_id(ticket_id));
         if let Some(num) = num {
             let _ = crate::db::update_ticket_priority(num, new_priority);
-            crate::sync::enqueue_update(num, serde_json::json!({ "priority": new_priority }));
+            crate::sync::enqueue_update_with_server_id(
+                num,
+                Some(ticket_id.to_string()),
+                serde_json::json!({ "priority": new_priority }),
+            );
         }
     }
 
@@ -835,10 +840,14 @@ impl TicketContextState {
                 local_num = Some(list[pos].ticket_id);
             }
         }
-        let num = local_num.or_else(|| parse_ticket_num(ticket_id));
+        let num = local_num.or_else(|| crate::db::find_ticket_local_id(ticket_id));
         if let Some(num) = num {
             let _ = crate::db::update_ticket_category(num, new_category);
-            crate::sync::enqueue_update(num, serde_json::json!({ "category": new_category }));
+            crate::sync::enqueue_update_with_server_id(
+                num,
+                Some(ticket_id.to_string()),
+                serde_json::json!({ "category": new_category }),
+            );
         }
     }
 
@@ -852,10 +861,14 @@ impl TicketContextState {
                 local_num = Some(list[pos].ticket_id);
             }
         }
-        let num = local_num.or_else(|| parse_ticket_num(ticket_id));
+        let num = local_num.or_else(|| crate::db::find_ticket_local_id(ticket_id));
         if let Some(num) = num {
             let _ = crate::db::update_ticket_assignee(num, new_assignee);
-            crate::sync::enqueue_update(num, serde_json::json!({ "assigned_to": new_assignee }));
+            crate::sync::enqueue_update_with_server_id(
+                num,
+                Some(ticket_id.to_string()),
+                serde_json::json!({ "assigned_to": new_assignee }),
+            );
         }
     }
 
@@ -912,7 +925,7 @@ impl TicketContextState {
             .iter()
             .find(|t| t.id == ticket_id)
             .map(|t| t.ticket_id)
-            .or_else(|| parse_ticket_num(ticket_id));
+            .or_else(|| crate::db::find_ticket_local_id(ticket_id));
 
         if let Some(num) = local_id {
             crate::sync::enqueue_delete(num);

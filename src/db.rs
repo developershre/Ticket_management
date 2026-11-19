@@ -2589,6 +2589,62 @@ pub fn switch_sheet_profile(profile: &str) -> Result<(String, String, String)> {
 
 // ---- ticket ↔ server mapping ----
 
+/// Finds the local SQLite `ticket_id` for a ticket identified by either its server ID (e.g. "TC-0529"),
+/// prefixed ID (e.g. "IT-123"), or raw numeric string.
+pub fn find_ticket_local_id(id_str: &str) -> Option<i64> {
+    let conn = get_connection().ok()?;
+    let trimmed = id_str.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // 1. Exact match on server_ticket_id (e.g. "TC-0529")
+    if let Ok(id) = conn.query_row(
+        "SELECT ticket_id FROM tickets WHERE server_ticket_id = ?1 LIMIT 1",
+        params![trimmed],
+        |r| r.get::<_, i64>(0),
+    ) {
+        return Some(id);
+    }
+    // 2. Strip "IT-" or "it-" prefix
+    if let Some(rest) = trimmed.strip_prefix("IT-").or_else(|| trimmed.strip_prefix("it-")) {
+        if let Ok(n) = rest.parse::<i64>() {
+            if let Ok(id) = conn.query_row(
+                "SELECT ticket_id FROM tickets WHERE ticket_id = ?1 LIMIT 1",
+                params![n],
+                |r| r.get::<_, i64>(0),
+            ) {
+                return Some(id);
+            }
+        }
+    }
+    // 3. Raw integer
+    if let Ok(n) = trimmed.parse::<i64>() {
+        if let Ok(id) = conn.query_row(
+            "SELECT ticket_id FROM tickets WHERE ticket_id = ?1 LIMIT 1",
+            params![n],
+            |r| r.get::<_, i64>(0),
+        ) {
+            return Some(id);
+        }
+    }
+    None
+}
+
+/// True when a ticket has an active CREATE op in the queue.
+pub fn ticket_has_pending_create(local_ticket_id: i64) -> bool {
+    let Ok(conn) = get_connection() else {
+        return false;
+    };
+    conn.query_row(
+        "SELECT COUNT(*) FROM sync_queue \
+         WHERE local_ticket_id = ?1 AND op_type = 'CREATE' \
+           AND status IN ('pending','in_flight','failed')",
+        params![local_ticket_id],
+        |r| r.get::<_, i64>(0),
+    )
+    .unwrap_or(0) > 0
+}
+
 /// Server id of a local ticket (`None` when it never reached the API).
 pub fn server_ticket_id(local_ticket_id: i64) -> Option<String> {
     let conn = get_connection().ok()?;
@@ -2601,6 +2657,7 @@ pub fn server_ticket_id(local_ticket_id: i64) -> Option<String> {
     .ok()
     .flatten()
     .flatten()
+    .filter(|s| !s.trim().is_empty())
 }
 
 /// Records the mapping after a confirmed CREATE/UPDATE and stores the

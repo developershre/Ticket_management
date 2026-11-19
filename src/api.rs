@@ -1414,10 +1414,11 @@ impl ApiClient {
                     .await?
                 } else {
                     let body = to_bpsl_ticket_body(fields);
+                    let route = format!("tickets/{ticket_id}");
                     self.send_rest(
                         reqwest::Method::POST,
-                        "tickets",
-                        &[("id", ticket_id)],
+                        &route,
+                        &[],
                         Some(body),
                     )
                     .await?
@@ -1429,7 +1430,19 @@ impl ApiClient {
                 self.post("tickets.update", Value::Object(data)).await?
             }
         };
-        parse_ticket(data)
+        let mut ticket = parse_ticket(data)?;
+        if ticket.ticket_id.is_empty() {
+            ticket.ticket_id = ticket_id.to_string();
+        }
+        if ticket.last_updated_on.is_empty() {
+            ticket.last_updated_on = crate::state::format_utc(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0),
+            );
+        }
+        Ok(ticket)
     }
 
     /// `POST ?api=tickets/{{ticketId}}/stage` (or `tickets.update` on LegacyV1).
@@ -1449,7 +1462,11 @@ impl ApiClient {
                         Some(json!({ "stage": stage })),
                     )
                     .await?;
-                parse_ticket(data)
+                let mut ticket = parse_ticket(data)?;
+                if ticket.ticket_id.is_empty() {
+                    ticket.ticket_id = ticket_id.to_string();
+                }
+                Ok(ticket)
             }
             ApiProtocol::LegacyV1 => {
                 self.tickets_update(ticket_id, &json!({ "stage": stage }))
@@ -1475,7 +1492,11 @@ impl ApiClient {
                         Some(json!({ "rating": rating })),
                     )
                     .await?;
-                parse_ticket(data)
+                let mut ticket = parse_ticket(data)?;
+                if ticket.ticket_id.is_empty() {
+                    ticket.ticket_id = ticket_id.to_string();
+                }
+                Ok(ticket)
             }
             ApiProtocol::LegacyV1 => {
                 self.tickets_update(
@@ -1492,9 +1513,14 @@ impl ApiClient {
     pub async fn tickets_delete(&self, ticket_id: &str) -> Result<(), ApiError> {
         match self.cfg.protocol {
             ApiProtocol::BpslRest => {
-                let route = format!("tickets/{ticket_id}/delete");
-                self.send_rest(reqwest::Method::POST, &route, &[], Some(json!({})))
-                    .await?;
+                let route = format!("tickets/{ticket_id}");
+                self.send_rest(
+                    reqwest::Method::POST,
+                    &route,
+                    &[],
+                    Some(json!({ "action": "delete" })),
+                )
+                .await?;
             }
             ApiProtocol::LegacyV1 => {
                 self.post("tickets.delete", json!({ "ticket_id": ticket_id }))

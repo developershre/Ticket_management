@@ -703,23 +703,42 @@ async fn execute_op(client: &ApiClient, op: &SyncOp) -> Result<ExecOutcome, ApiE
             let server_id = op
                 .server_ticket_id
                 .clone()
-                .or_else(|| db::server_ticket_id(op.local_ticket_id));
+                .or_else(|| db::server_ticket_id(op.local_ticket_id))
+                .filter(|s| !s.trim().is_empty());
 
             let Some(server_id) = server_id else {
-                // The ticket never reached the server — push the current
-                // row as a create instead (edits to pre-sync tickets).
-                let Some(mut row) = db::ticket_create_payload(op.local_ticket_id) else {
-                    return Ok(ExecOutcome::Superseded); // row is gone
-                };
-                resolve_temp_attachment(client, op.local_ticket_id, &mut row).await;
-                let sanitized = sanitize_ticket_payload(client, &row, true);
-                let remote = client.tickets_create(&sanitized).await?;
-                db::set_ticket_mapping(
-                    op.local_ticket_id,
-                    &remote.ticket_id,
-                    &remote.last_updated_on,
-                )?;
-                return Ok(ExecOutcome::Synced);
+                // If the ticket has a pending CREATE in flight or queued, wait for it
+                if db::ticket_has_pending_create(op.local_ticket_id) {
+                    return Err(ApiError::Api {
+                        code: "WAITING_FOR_CREATE".to_string(),
+                        message: format!("Ticket #{} is awaiting initial server creation", op.local_ticket_id),
+                        retryable: true,
+                        retry_after: Some(2),
+                    });
+                }
+
+                // If no server_id was found, check if an existing row matches on the server
+                if let Some(row) = db::ticket_create_payload(op.local_ticket_id) {
+                    if let Ok(Some(existing)) = find_matching_ticket(client, &row).await {
+                        db::set_ticket_mapping(
+                            op.local_ticket_id,
+                            &existing.ticket_id,
+                            &existing.last_updated_on,
+                        )?;
+                        let mut payload = op.payload.clone();
+                        resolve_temp_attachment(client, op.local_ticket_id, &mut payload).await;
+                        let sanitized = sanitize_ticket_payload(client, &payload, false);
+                        let remote = client.tickets_update(&existing.ticket_id, &sanitized).await?;
+                        db::set_server_last_updated(op.local_ticket_id, &remote.last_updated_on)?;
+                        return Ok(ExecOutcome::Synced);
+                    }
+                }
+
+                eprintln!(
+                    "[sync] WARNING: UPDATE received for unmapped ticket #{} without server_id; dropped to prevent duplicate creation",
+                    op.local_ticket_id
+                );
+                return Ok(ExecOutcome::Superseded);
             };
 
             let mut payload = op.payload.clone();
@@ -1337,6 +1356,18 @@ pub fn enqueue_create(local_ticket_id: i64) {
 pub fn enqueue_update(local_ticket_id: i64, fields: Value) {
     let server_id = db::server_ticket_id(local_ticket_id);
     if let Err(e) = db::enqueue_update(local_ticket_id, server_id, &fields, &now_str()) {
+        eprintln!("[sync] enqueue_update failed: {e}");
+        return;
+    }
+    kick();
+}
+
+/// Queue a partial UPDATE with an explicitly provided server ticket ID.
+pub fn enqueue_update_with_server_id(local_ticket_id: i64, server_id: Option<String>, fields: Value) {
+    let resolved_server_id = server_id
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| db::server_ticket_id(local_ticket_id));
+    if let Err(e) = db::enqueue_update(local_ticket_id, resolved_server_id, &fields, &now_str()) {
         eprintln!("[sync] enqueue_update failed: {e}");
         return;
     }

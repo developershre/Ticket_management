@@ -101,7 +101,7 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
             if !item.stage.is_empty() {
                 payload["stage"] = serde_json::json!(item.stage.clone());
             }
-            crate::sync::enqueue_update(num, payload);
+            crate::sync::enqueue_update_with_server_id(num, Some(src_id.clone()), payload);
 
             if old_kanban != target_col {
                 let label = column_display_label(&target_col);
@@ -146,7 +146,7 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
             if !item.stage.is_empty() {
                 payload["stage"] = serde_json::json!(item.stage.clone());
             }
-            crate::sync::enqueue_update(num, payload);
+            crate::sync::enqueue_update_with_server_id(num, Some(src_id.clone()), payload);
 
             if old_kanban != target_col {
                 let label = column_display_label(&target_col);

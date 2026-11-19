@@ -182,7 +182,13 @@ pub fn EditTicketDialog(mut props: EditTicketDialogProps) -> Element {
                 list[pos] = current.clone();
             }
 
-            let num = current.ticket_id;
+            let num = if current.ticket_id > 0 {
+                current.ticket_id
+            } else if let Some(found) = crate::db::find_ticket_local_id(&current.id) {
+                found
+            } else {
+                current.ticket_id
+            };
             let _ = crate::db::update_ticket_full(
                 num,
                 &emp_combined,
@@ -208,7 +214,11 @@ pub fn EditTicketDialog(mut props: EditTicketDialogProps) -> Element {
             );
 
             if !api_fields.is_empty() {
-                crate::sync::enqueue_update(num, serde_json::Value::Object(api_fields));
+                crate::sync::enqueue_update_with_server_id(
+                    num,
+                    Some(current.id.clone()),
+                    serde_json::Value::Object(api_fields),
+                );
             }
 
             toast.success(
