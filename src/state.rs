@@ -119,6 +119,9 @@ impl AppSettings {
             .unwrap_or(false);
         set_time_format_24hr(is_24);
 
+        let date_pattern = crate::db::sync_meta_get("ui_date_pattern").unwrap_or_else(|| "medium".to_string());
+        set_date_display_style(&date_pattern);
+
         let sound_on = crate::db::sync_meta_get("ui_sound_enabled")
             .map(|v| v != "false")
             .unwrap_or(true);
@@ -163,6 +166,7 @@ impl AppSettings {
 }
 
 static TIME_FORMAT_24HR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static DATE_DISPLAY_STYLE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0); // 0 = Medium, 1 = DMY, 2 = ISO, 3 = D-MMM-Y
 static SOUND_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 static SOUND_VOLUME_PERCENT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(15);
 
@@ -172,6 +176,26 @@ pub fn set_time_format_24hr(is_24hr: bool) {
 
 pub fn is_time_format_24hr() -> bool {
     TIME_FORMAT_24HR.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_date_display_style(style: &str) {
+    let val = match style.to_lowercase().as_str() {
+        "dmy" | "indian" | "uk" => 1,
+        "iso" => 2,
+        "d-mmm-y" | "dmy_dash" => 3,
+        _ => 0,
+    };
+    DATE_DISPLAY_STYLE.store(val, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[allow(dead_code)]
+pub fn get_date_display_style() -> &'static str {
+    match DATE_DISPLAY_STYLE.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => "dmy",
+        2 => "iso",
+        3 => "d-mmm-y",
+        _ => "medium",
+    }
 }
 
 pub fn is_sound_enabled() -> bool {
@@ -189,8 +213,10 @@ pub fn get_sound_volume_float() -> f32 {
 
 pub fn set_sound_volume(vol: &str) {
     let percent = match vol.to_lowercase().as_str() {
+        "mute" => 0,
         "low" => 8,
         "high" => 30,
+        "max" => 50,
         _ => 15,
     };
     SOUND_VOLUME_PERCENT.store(percent, std::sync::atomic::Ordering::Relaxed);
@@ -214,7 +240,7 @@ pub fn play_sound(sound_type: &str) {
                 osc.connect(gain);
                 gain.connect(ctx.destination);
                 var t = '{sound_type}';
-                if (t === 'chime' || t === 'success') {{
+                if (t === 'chime' || t === 'success' || t === 'arpeggio') {{
                     osc.type = 'sine';
                     osc.frequency.setValueAtTime(523.25, ctx.currentTime);
                     osc.frequency.exponentialRampToValueAtTime(659.25, ctx.currentTime + 0.1);
@@ -222,6 +248,27 @@ pub fn play_sound(sound_type: &str) {
                     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
                     osc.start();
                     osc.stop(ctx.currentTime + 0.41);
+                }} else if (t === 'ping' || t === 'bell') {{
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(880, ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+                    osc.start();
+                    osc.stop(ctx.currentTime + 0.36);
+                }} else if (t === 'marimba' || t === 'warm') {{
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(440, ctx.currentTime);
+                    osc.frequency.exponentialRampToValueAtTime(554.37, ctx.currentTime + 0.08);
+                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+                    osc.start();
+                    osc.stop(ctx.currentTime + 0.26);
+                }} else if (t === 'digital') {{
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(600, ctx.currentTime);
+                    osc.frequency.setValueAtTime(900, ctx.currentTime + 0.06);
+                    gain.gain.value = {vol} * 0.4;
+                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+                    osc.start();
+                    osc.stop(ctx.currentTime + 0.19);
                 }} else if (t === 'alert' || t === 'warning') {{
                     osc.type = 'triangle';
                     osc.frequency.setValueAtTime(880, ctx.currentTime);
@@ -253,6 +300,8 @@ pub fn apply_appearance_to_dom(
     oled: bool,
     animations: bool,
 ) {
+    let high_contrast = crate::db::sync_meta_get("ui_high_contrast").map(|v| v == "true").unwrap_or(false);
+    let glassmorphism = crate::db::sync_meta_get("ui_glassmorphism").map(|v| v != "false").unwrap_or(true);
     let js = format!(
         r#"
         (function() {{
@@ -312,6 +361,22 @@ pub fn apply_appearance_to_dom(
             }} else {{
                 root.removeAttribute('data-animations');
                 localStorage.removeItem('bpsl-animations');
+            }}
+            // High Contrast Borders
+            if ({high_contrast}) {{
+                root.setAttribute('data-high-contrast', 'true');
+                localStorage.setItem('bpsl-high-contrast', 'true');
+            }} else {{
+                root.removeAttribute('data-high-contrast');
+                localStorage.removeItem('bpsl-high-contrast');
+            }}
+            // Glassmorphism
+            if (!{glassmorphism}) {{
+                root.setAttribute('data-glassmorphism', 'false');
+                localStorage.setItem('bpsl-glassmorphism', 'false');
+            }} else {{
+                root.removeAttribute('data-glassmorphism');
+                localStorage.removeItem('bpsl-glassmorphism');
             }}
         }})();
         "#
@@ -592,7 +657,7 @@ pub fn arrange_date_time(raw: &str) -> String {
     }
 }
 
-/// Arranges civil date and time parts into a formatted string respecting 12-hour / 24-hour mode.
+/// Arranges civil date and time parts into a formatted string respecting 12-hour / 24-hour mode and date style.
 pub fn arrange_date_time_parts(
     year: u32,
     month: u32,
@@ -603,19 +668,25 @@ pub fn arrange_date_time_parts(
 ) -> String {
     let month_idx = (month.saturating_sub(1) as usize).min(11);
     let month_name = SHORT_MONTH_NAMES[month_idx];
+    let date_str = match DATE_DISPLAY_STYLE.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => format!("{:02}/{:02}/{:04}", day, month, year),
+        2 => format!("{:04}-{:02}-{:02}", year, month, day),
+        3 => format!("{:02}-{}-{:04}", day, month_name, year),
+        _ => format!("{} {:02}, {:04}", month_name, day, year),
+    };
     if include_time {
         if is_time_format_24hr() {
-            format!("{} {:02}, {:04} · {:02}:{:02}", month_name, day, year, hour24, minute)
+            format!("{} · {:02}:{:02}", date_str, hour24, minute)
         } else {
             let am_pm = if hour24 >= 12 { "PM" } else { "AM" };
             let h12 = match hour24 % 12 {
                 0 => 12,
                 other => other,
             };
-            format!("{} {:02}, {:04} · {:02}:{:02} {}", month_name, day, year, h12, minute, am_pm)
+            format!("{} · {:02}:{:02} {}", date_str, h12, minute, am_pm)
         }
     } else {
-        format!("{} {:02}, {:04}", month_name, day, year)
+        date_str
     }
 }
 

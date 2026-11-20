@@ -33,18 +33,51 @@ pub struct EmployeeItem {
 
 impl EmployeeItem {
     fn from_db(e: crate::db::DbEmployee) -> Self {
-        let email = if e.emp_email.contains('@') {
-            e.emp_email
-        } else {
-            String::new()
+        let is_placeholder = |s: &str| -> bool {
+            let lower = s.trim().to_ascii_lowercase();
+            lower.is_empty()
+                || lower == "null"
+                || lower == "undefined"
+                || lower == "n/a"
+                || lower == "na"
+                || lower == "none"
+                || lower == "nil"
+                || lower == "-"
+                || lower == "—"
         };
+
+        let mut email = e.emp_email.trim().to_string();
+        let mut division = e.division.trim().to_string();
+
+        // 1. Swap if email and division were reversed
+        if !email.contains('@') && division.contains('@') {
+            std::mem::swap(&mut email, &mut division);
+        }
+
+        // 2. Validate email: if it doesn't contain '@', it is not an email address
+        if !email.contains('@') {
+            if !is_placeholder(&email) && (division.is_empty() || is_placeholder(&division)) {
+                // If division is empty and email has division text (e.g. "POWER PLANT DIVISION"),
+                // rescue the division text into the division field
+                division = std::mem::take(&mut email);
+            } else {
+                email.clear();
+            }
+        } else if is_placeholder(&email) {
+            email.clear();
+        }
+
+        if is_placeholder(&division) {
+            division.clear();
+        }
+
         EmployeeItem {
             emp_id: e.emp_id,
-            emp_code: e.emp_code,
-            emp_name: e.emp_name,
+            emp_code: e.emp_code.trim().to_string(),
+            emp_name: e.emp_name.trim().to_string(),
             emp_email: email,
-            department: e.department,
-            division: e.division,
+            department: e.department.trim().to_string(),
+            division,
         }
     }
 

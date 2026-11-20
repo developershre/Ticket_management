@@ -207,6 +207,85 @@ html[data-accent="cyan"] .dark {
     --sidebar-primary-foreground: #111318 !important;
 }
 
+html[data-accent="indigo"] {
+    --primary: #4f46e5 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(79, 70, 229, 0.4) !important;
+    --sidebar-primary: #4f46e5 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="indigo"].dark,
+html[data-accent="indigo"] .dark {
+    --primary: #6366f1 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(99, 102, 241, 0.4) !important;
+    --sidebar-primary: #6366f1 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+
+html[data-accent="teal"] {
+    --primary: #0d9488 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(13, 148, 136, 0.4) !important;
+    --sidebar-primary: #0d9488 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="teal"].dark,
+html[data-accent="teal"] .dark {
+    --primary: #14b8a6 !important;
+    --primary-foreground: #111318 !important;
+    --ring: rgba(20, 184, 166, 0.4) !important;
+    --sidebar-primary: #14b8a6 !important;
+    --sidebar-primary-foreground: #111318 !important;
+}
+
+html[data-accent="orange"] {
+    --primary: #ea580c !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(234, 88, 12, 0.4) !important;
+    --sidebar-primary: #ea580c !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="orange"].dark,
+html[data-accent="orange"] .dark {
+    --primary: #f97316 !important;
+    --primary-foreground: #111318 !important;
+    --ring: rgba(249, 115, 22, 0.4) !important;
+    --sidebar-primary: #f97316 !important;
+    --sidebar-primary-foreground: #111318 !important;
+}
+
+html[data-accent="slate"] {
+    --primary: #475569 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(71, 85, 105, 0.4) !important;
+    --sidebar-primary: #475569 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="slate"].dark,
+html[data-accent="slate"] .dark {
+    --primary: #94a3b8 !important;
+    --primary-foreground: #0f172a !important;
+    --ring: rgba(148, 163, 184, 0.4) !important;
+    --sidebar-primary: #94a3b8 !important;
+    --sidebar-primary-foreground: #0f172a !important;
+}
+
+/* High-Contrast Borders */
+html[data-high-contrast="true"] {
+    --border: rgba(0, 0, 0, 0.35) !important;
+}
+html[data-high-contrast="true"].dark,
+html[data-high-contrast="true"] .dark {
+    --border: rgba(255, 255, 255, 0.28) !important;
+}
+
+/* Disable Glassmorphism for Low-End Systems */
+html[data-glassmorphism="false"] * {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
 /* ============================================================
  * OLED Pure Black Dark Mode
  * ============================================================ */

@@ -4,9 +4,6 @@
 
 use dioxus::prelude::*;
 
-use crate::components::ui::select::{
-    Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue,
-};
 use crate::components::ui::sidebar::{
     Sidebar, SidebarCollapsible, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent,
     SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuBadge, SidebarMenuButton,
@@ -52,12 +49,6 @@ pub fn AppSidebar() -> Element {
             None
         }
     };
-
-    let active_sheet_label = sheet_sources
-        .iter()
-        .find(|s| s.id == active_sheet_id)
-        .map(|s| s.name.clone())
-        .unwrap_or_else(|| "Select Sheet...".to_string());
 
     let mut active_sheet_sig = use_signal(|| active_sheet_id.clone());
     if *active_sheet_sig.read() != active_sheet_id {

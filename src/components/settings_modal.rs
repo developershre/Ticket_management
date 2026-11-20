@@ -15,7 +15,10 @@ use dioxus::prelude::*;
 use crate::components::ui::button::Button;
 use crate::components::ui::input::Input;
 use crate::components::ui::toast::ToastState;
-use crate::icons::{AlertCircleIcon, BellIcon, CheckIcon, EyeIcon, KeyIcon, RefreshIcon, SettingsIcon, XIcon};
+use crate::icons::{
+    AlertCircleIcon, BellIcon, CheckIcon, ExternalLinkIcon, EyeIcon, KeyIcon, RefreshIcon, SettingsIcon,
+    TrashIcon, XIcon,
+};
 
 // ============================================================
 // Settings Tab Enum
@@ -74,14 +77,18 @@ struct AccentOption {
     color_hex: &'static str,
 }
 
-const ACCENT_OPTIONS: [AccentOption; 7] = [
+const ACCENT_OPTIONS: [AccentOption; 11] = [
     AccentOption { id: "default", name: "Monochrome", color_hex: "#71717a" },
     AccentOption { id: "blue", name: "Ocean Blue", color_hex: "#3b82f6" },
+    AccentOption { id: "indigo", name: "Indigo Deep", color_hex: "#6366f1" },
     AccentOption { id: "emerald", name: "Emerald Green", color_hex: "#10b981" },
+    AccentOption { id: "teal", name: "Mint Teal", color_hex: "#14b8a6" },
     AccentOption { id: "violet", name: "Royal Purple", color_hex: "#8b5cf6" },
     AccentOption { id: "amber", name: "Amber Gold", color_hex: "#f59e0b" },
+    AccentOption { id: "orange", name: "Sunset Orange", color_hex: "#f97316" },
     AccentOption { id: "rose", name: "Crimson Rose", color_hex: "#f43f5e" },
     AccentOption { id: "cyan", name: "Cyber Cyan", color_hex: "#06b6d4" },
+    AccentOption { id: "slate", name: "Slate Steel", color_hex: "#64748b" },
 ];
 
 // ============================================================
@@ -119,6 +126,9 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
     // Active tab
     let mut active_tab = use_signal(|| SettingsTab::Appearance);
 
+    // Instant search filter across all settings
+    let mut search_query = use_signal(String::new);
+
     // ========================================================
     // TAB 1: Appearance State
     // ========================================================
@@ -133,6 +143,15 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
 
     let initial_date_fmt = crate::db::sync_meta_get("ui_date_format").unwrap_or_else(|| "12hr".to_string());
     let mut date_format = use_signal(|| initial_date_fmt);
+
+    let initial_date_pat = crate::db::sync_meta_get("ui_date_pattern").unwrap_or_else(|| "medium".to_string());
+    let mut date_pattern = use_signal(|| initial_date_pat);
+
+    let initial_high_contrast = crate::db::sync_meta_get("ui_high_contrast").map(|v| v == "true").unwrap_or(false);
+    let mut high_contrast = use_signal(|| initial_high_contrast);
+
+    let initial_glass = crate::db::sync_meta_get("ui_glassmorphism").map(|v| v != "false").unwrap_or(true);
+    let mut glassmorphism = use_signal(|| initial_glass);
 
     let initial_font_scale = crate::db::sync_meta_get("ui_font_scale").unwrap_or_else(|| "auto".to_string());
     let mut font_scale = use_signal(|| initial_font_scale);
@@ -167,11 +186,26 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
     let initial_assignee = crate::db::sync_meta_get("ui_default_assignee").unwrap_or_else(|| "IT Support".to_string());
     let mut default_assignee = use_signal(|| initial_assignee);
 
+    let initial_dept = crate::db::sync_meta_get("ui_default_department").unwrap_or_else(|| "General".to_string());
+    let mut default_department = use_signal(|| initial_dept);
+
+    let initial_page_size = crate::db::sync_meta_get("ui_table_page_size").unwrap_or_else(|| "25".to_string());
+    let mut table_page_size = use_signal(|| initial_page_size);
+
     let initial_hide_cancelled = crate::db::sync_meta_get("ui_kanban_hide_cancelled").map(|v| v == "true").unwrap_or(false);
     let mut kanban_hide_cancelled = use_signal(|| initial_hide_cancelled);
 
     let initial_hide_solved = crate::db::sync_meta_get("ui_kanban_hide_solved").map(|v| v == "true").unwrap_or(false);
     let mut kanban_hide_solved = use_signal(|| initial_hide_solved);
+
+    let initial_kanban_compact = crate::db::sync_meta_get("ui_kanban_compact_cards").map(|v| v == "true").unwrap_or(false);
+    let mut kanban_compact = use_signal(|| initial_kanban_compact);
+
+    let initial_confirm_del = crate::db::sync_meta_get("ui_confirm_deletions").map(|v| v != "false").unwrap_or(true);
+    let mut confirm_deletions = use_signal(|| initial_confirm_del);
+
+    let initial_focus_refresh = crate::db::sync_meta_get("ui_focus_refresh").map(|v| v == "true").unwrap_or(false);
+    let mut focus_refresh = use_signal(|| initial_focus_refresh);
 
     // ========================================================
     // TAB 3: Alerts & Audio State
@@ -179,14 +213,23 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
     let initial_sound_on = crate::db::sync_meta_get("ui_sound_enabled").map(|v| v != "false").unwrap_or(true);
     let mut sound_enabled = use_signal(|| initial_sound_on);
 
+    let initial_tone = crate::db::sync_meta_get("ui_chime_tone").unwrap_or_else(|| "arpeggio".to_string());
+    let mut chime_tone = use_signal(|| initial_tone);
+
     let initial_sound_vol = crate::db::sync_meta_get("ui_sound_volume").unwrap_or_else(|| "medium".to_string());
     let mut sound_volume = use_signal(|| initial_sound_vol);
+
+    let initial_dnd = crate::db::sync_meta_get("ui_dnd_silent_mode").map(|v| v == "true").unwrap_or(false);
+    let mut dnd_mode = use_signal(|| initial_dnd);
 
     let initial_toast_dur = crate::db::sync_meta_get("ui_toast_duration_secs").unwrap_or_else(|| "5".to_string());
     let mut toast_duration = use_signal(|| initial_toast_dur);
 
     let initial_rem_adv = crate::db::sync_meta_get("ui_reminder_advance_mins").unwrap_or_else(|| "15".to_string());
     let mut reminder_advance = use_signal(|| initial_rem_adv);
+
+    let initial_sla_warn = crate::db::sync_meta_get("ui_sla_warning_hours").unwrap_or_else(|| "2".to_string());
+    let mut sla_warning_hours = use_signal(|| initial_sla_warn);
 
     let initial_notify_sync = crate::db::sync_meta_get("sync_notify_on_pull").unwrap_or_else(|| "false".to_string());
     let mut notify_on_pull = use_signal(|| initial_notify_sync == "true");
@@ -215,6 +258,12 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
     let mut test_status = use_signal(|| TestStatus::Idle);
     let mut is_saving = use_signal(|| false);
 
+    let initial_timeout = crate::db::sync_meta_get("sync_network_timeout_secs").unwrap_or_else(|| "25".to_string());
+    let mut network_timeout = use_signal(|| initial_timeout);
+
+    let initial_offline = crate::db::sync_meta_get("sync_offline_mode").map(|v| v == "true").unwrap_or(false);
+    let mut work_offline = use_signal(|| initial_offline);
+
     // ========================================================
     // TAB 5: Sync & Data State
     // ========================================================
@@ -238,6 +287,9 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         let density = card_density.read().clone();
         let anim_val = *animations_enabled.read();
         let fmt = date_format.read().clone();
+        let pat = date_pattern.read().clone();
+        let hc = *high_contrast.read();
+        let gm = *glassmorphism.read();
         let scale = font_scale.read().clone();
         let fam = font_family.read().clone();
         let acc = accent_color.read().clone();
@@ -248,6 +300,9 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         let _ = crate::db::sync_meta_set("ui_card_density", &density);
         let _ = crate::db::sync_meta_set("ui_animations_enabled", if anim_val { "true" } else { "false" });
         let _ = crate::db::sync_meta_set("ui_date_format", &fmt);
+        let _ = crate::db::sync_meta_set("ui_date_pattern", &pat);
+        let _ = crate::db::sync_meta_set("ui_high_contrast", if hc { "true" } else { "false" });
+        let _ = crate::db::sync_meta_set("ui_glassmorphism", if gm { "true" } else { "false" });
         let _ = crate::db::sync_meta_set("ui_font_scale", &scale);
         let _ = crate::db::sync_meta_set("ui_font_family", &fam);
         let _ = crate::db::sync_meta_set("ui_accent_color", &acc);
@@ -268,6 +323,7 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
             });
         }
         crate::state::set_time_format_24hr(fmt == "24hr");
+        crate::state::set_date_display_style(&pat);
         crate::state::apply_appearance_to_dom(&acc, &scale, &density, &rad, &fam, oled, anim_val);
         crate::state::play_sound("success");
 
@@ -277,6 +333,44 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         toast.success("Appearance Saved", "Theme, accent color, typography, and styling updated.");
     };
 
+    // Reset Appearance to Defaults
+    let reset_appearance = move |_| {
+        sidebar_position.set("left".to_string());
+        card_density.set("default".to_string());
+        animations_enabled.set(true);
+        date_format.set("12hr".to_string());
+        date_pattern.set("medium".to_string());
+        high_contrast.set(false);
+        glassmorphism.set(true);
+        font_scale.set("auto".to_string());
+        font_family.set("roboto".to_string());
+        accent_color.set("default".to_string());
+        corner_radius.set("rounded".to_string());
+        oled_dark.set(false);
+
+        let _ = crate::db::sync_meta_set("ui_sidebar_position", "left");
+        let _ = crate::db::sync_meta_set("ui_card_density", "default");
+        let _ = crate::db::sync_meta_set("ui_animations_enabled", "true");
+        let _ = crate::db::sync_meta_set("ui_date_format", "12hr");
+        let _ = crate::db::sync_meta_set("ui_date_pattern", "medium");
+        let _ = crate::db::sync_meta_set("ui_high_contrast", "false");
+        let _ = crate::db::sync_meta_set("ui_glassmorphism", "true");
+        let _ = crate::db::sync_meta_set("ui_font_scale", "auto");
+        let _ = crate::db::sync_meta_set("ui_font_family", "roboto");
+        let _ = crate::db::sync_meta_set("ui_accent_color", "default");
+        let _ = crate::db::sync_meta_set("ui_corner_radius", "rounded");
+        let _ = crate::db::sync_meta_set("ui_oled_dark", "false");
+
+        crate::state::set_time_format_24hr(false);
+        crate::state::set_date_display_style("medium");
+        crate::state::apply_appearance_to_dom("default", "auto", "default", "rounded", "roboto", false, true);
+        crate::state::play_sound("click");
+        if let Some(mut r) = db_sync {
+            r.with_mut(|rev| rev.0 += 1);
+        }
+        toast.info("Defaults Restored", "Appearance settings reset to standard system defaults.");
+    };
+
     // Save Workflow
     let save_workflow = move |_| {
         let landing = default_landing.read().clone();
@@ -284,16 +378,26 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         let prio = default_priority.read().clone();
         let cat = default_category.read().clone();
         let ass = default_assignee.read().clone();
+        let dept = default_department.read().clone();
+        let p_size = table_page_size.read().clone();
         let hide_canc = *kanban_hide_cancelled.read();
         let hide_solv = *kanban_hide_solved.read();
+        let k_compact = *kanban_compact.read();
+        let conf_del = *confirm_deletions.read();
+        let f_refresh = *focus_refresh.read();
 
         let _ = crate::db::sync_meta_set("ui_default_landing_page", &landing);
         let _ = crate::db::sync_meta_set("ui_default_ticket_view", &view);
         let _ = crate::db::sync_meta_set("ui_default_priority", &prio);
         let _ = crate::db::sync_meta_set("ui_default_category", &cat);
         let _ = crate::db::sync_meta_set("ui_default_assignee", &ass);
+        let _ = crate::db::sync_meta_set("ui_default_department", &dept);
+        let _ = crate::db::sync_meta_set("ui_table_page_size", &p_size);
         let _ = crate::db::sync_meta_set("ui_kanban_hide_cancelled", if hide_canc { "true" } else { "false" });
         let _ = crate::db::sync_meta_set("ui_kanban_hide_solved", if hide_solv { "true" } else { "false" });
+        let _ = crate::db::sync_meta_set("ui_kanban_compact_cards", if k_compact { "true" } else { "false" });
+        let _ = crate::db::sync_meta_set("ui_confirm_deletions", if conf_del { "true" } else { "false" });
+        let _ = crate::db::sync_meta_set("ui_focus_refresh", if f_refresh { "true" } else { "false" });
 
         if let Some(mut s) = app_settings {
             s.with_mut(|settings| {
@@ -313,45 +417,266 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         toast.success("Workflow Saved", "Ticket defaults and Kanban column preferences saved.");
     };
 
+    // Reset Workflow to Defaults
+    let reset_workflow = move |_: MouseEvent| {
+        default_landing.set("tickets".to_string());
+        default_ticket_view.set("kanban".to_string());
+        default_priority.set("Medium".to_string());
+        default_category.set("General".to_string());
+        default_assignee.set("IT Support".to_string());
+        default_department.set("General".to_string());
+        table_page_size.set("25".to_string());
+        kanban_hide_cancelled.set(false);
+        kanban_hide_solved.set(false);
+        kanban_compact.set(false);
+        confirm_deletions.set(true);
+        focus_refresh.set(false);
+
+        let _ = crate::db::sync_meta_set("ui_default_landing_page", "tickets");
+        let _ = crate::db::sync_meta_set("ui_default_ticket_view", "kanban");
+        let _ = crate::db::sync_meta_set("ui_default_priority", "Medium");
+        let _ = crate::db::sync_meta_set("ui_default_category", "General");
+        let _ = crate::db::sync_meta_set("ui_default_assignee", "IT Support");
+        let _ = crate::db::sync_meta_set("ui_default_department", "General");
+        let _ = crate::db::sync_meta_set("ui_table_page_size", "25");
+        let _ = crate::db::sync_meta_set("ui_kanban_hide_cancelled", "false");
+        let _ = crate::db::sync_meta_set("ui_kanban_hide_solved", "false");
+        let _ = crate::db::sync_meta_set("ui_kanban_compact_cards", "false");
+        let _ = crate::db::sync_meta_set("ui_confirm_deletions", "true");
+        let _ = crate::db::sync_meta_set("ui_focus_refresh", "false");
+
+        crate::state::play_sound("click");
+        if let Some(mut r) = db_sync {
+            r.with_mut(|rev| rev.0 += 1);
+        }
+        toast.info("Defaults Restored", "Workflow and ticket settings reset to defaults.");
+    };
+
     // Save Notifications & Audio
-    let save_notifications = move |_| {
+    let save_notifications = move |_: MouseEvent| {
         let snd_on = *sound_enabled.read();
+        let tone = chime_tone.read().clone();
         let snd_vol = sound_volume.read().clone();
+        let dnd = *dnd_mode.read();
         let dur_str = toast_duration.read().clone();
         let dur_val: u32 = dur_str.parse().unwrap_or(5);
         let adv_str = reminder_advance.read().clone();
         let adv_val: u32 = adv_str.parse().unwrap_or(15);
+        let sla_str = sla_warning_hours.read().clone();
         let notif_pull = *notify_on_pull.read();
 
-        let _ = crate::db::sync_meta_set("ui_sound_enabled", if snd_on { "true" } else { "false" });
+        let _ = crate::db::sync_meta_set("ui_sound_enabled", if snd_on && !dnd { "true" } else { "false" });
+        let _ = crate::db::sync_meta_set("ui_chime_tone", &tone);
         let _ = crate::db::sync_meta_set("ui_sound_volume", &snd_vol);
+        let _ = crate::db::sync_meta_set("ui_dnd_silent_mode", if dnd { "true" } else { "false" });
         let _ = crate::db::sync_meta_set("ui_toast_duration_secs", &dur_val.to_string());
         let _ = crate::db::sync_meta_set("ui_reminder_advance_mins", &adv_val.to_string());
+        let _ = crate::db::sync_meta_set("ui_sla_warning_hours", &sla_str);
         let _ = crate::db::sync_meta_set("sync_notify_on_pull", if notif_pull { "true" } else { "false" });
 
-        crate::state::set_sound_enabled(snd_on);
+        crate::state::set_sound_enabled(snd_on && !dnd);
         crate::state::set_sound_volume(&snd_vol);
 
         if let Some(mut s) = app_settings {
             s.with_mut(|settings| {
-                settings.sound_enabled = snd_on;
+                settings.sound_enabled = snd_on && !dnd;
                 settings.sound_volume = snd_vol;
                 settings.toast_duration_secs = dur_val;
                 settings.reminder_advance_mins = adv_val;
                 settings.notify_on_remote_pull = notif_pull;
             });
         }
-        crate::state::play_sound("chime");
+        crate::state::play_sound(&tone);
         toast.success("Alerts Saved", "Audio chime, notification duration, and reminder preferences updated.");
     };
 
+    // Reset Notifications
+    let reset_notifications = move |_: MouseEvent| {
+        sound_enabled.set(true);
+        chime_tone.set("arpeggio".to_string());
+        sound_volume.set("medium".to_string());
+        dnd_mode.set(false);
+        toast_duration.set("5".to_string());
+        reminder_advance.set("15".to_string());
+        sla_warning_hours.set("2".to_string());
+        notify_on_pull.set(false);
+
+        let _ = crate::db::sync_meta_set("ui_sound_enabled", "true");
+        let _ = crate::db::sync_meta_set("ui_chime_tone", "arpeggio");
+        let _ = crate::db::sync_meta_set("ui_sound_volume", "medium");
+        let _ = crate::db::sync_meta_set("ui_dnd_silent_mode", "false");
+        let _ = crate::db::sync_meta_set("ui_toast_duration_secs", "5");
+        let _ = crate::db::sync_meta_set("ui_reminder_advance_mins", "15");
+        let _ = crate::db::sync_meta_set("ui_sla_warning_hours", "2");
+        let _ = crate::db::sync_meta_set("sync_notify_on_pull", "false");
+
+        crate::state::set_sound_enabled(true);
+        crate::state::set_sound_volume("medium");
+        crate::state::play_sound("click");
+        toast.info("Defaults Restored", "Alert and audio preferences restored to defaults.");
+    };
+
     // Play test chime
-    let handle_test_sound = move |_| {
+    let handle_test_sound = move |_: MouseEvent| {
         let snd_vol = sound_volume.read().clone();
+        let tone = chime_tone.read().clone();
         crate::state::set_sound_volume(&snd_vol);
         crate::state::set_sound_enabled(true);
-        crate::state::play_sound("chime");
-        toast.info("Audio Test", "Played synthesized chime.");
+        crate::state::play_sound(&tone);
+        toast.info("Audio Test", format!("Played '{tone}' tone preview."));
+    };
+
+    // Export Tickets CSV
+    let handle_export_tickets_csv = move |_: MouseEvent| {
+        let tickets = crate::db::get_all_tickets();
+        let mut csv = String::from("Ticket ID,Employee Code,Email,Category,Subject,Priority,Status,Assigned To,Customer,Time Spent,Created On\n");
+        for t in &tickets {
+            csv.push_str(&format!(
+                "\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\"\n",
+                t.ticket_id,
+                t.employee_code.replace('"', "\"\""),
+                t.email_address.replace('"', "\"\""),
+                t.category.replace('"', "\"\""),
+                t.subject.replace('"', "\"\""),
+                t.priority.replace('"', "\"\""),
+                t.status.replace('"', "\"\""),
+                t.assigned_to.replace('"', "\"\""),
+                t.customer.replace('"', "\"\""),
+                t.time_spent,
+                t.created_on.replace('"', "\"\""),
+            ));
+        }
+        let escaped = csv.replace('\\', "\\\\").replace('`', "\\`").replace('$', "\\$");
+        let js = format!(
+            r#"
+            (function() {{
+                try {{
+                    const blob = new Blob([`{escaped}`], {{ type: 'text/csv;charset=utf-8;' }});
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'bpsl_tickets_' + new Date().toISOString().slice(0,10) + '.csv';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }} catch(e) {{ console.error('CSV export failed', e); }}
+            }})();
+            "#
+        );
+        let _ = document::eval(&js);
+        crate::state::play_sound("success");
+        toast.success("CSV Exported", format!("Exported {} tickets to CSV file.", tickets.len()));
+    };
+
+    // Export Employees CSV
+    let handle_export_employees_csv = move |_: MouseEvent| {
+        let emps = crate::db::get_all_employees();
+        let mut csv = String::from("Employee ID,Employee Code,Full Name,Email,Department,Division\n");
+        for e in &emps {
+            csv.push_str(&format!(
+                "\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\"\n",
+                e.emp_id,
+                e.emp_code.replace('"', "\"\""),
+                e.emp_name.replace('"', "\"\""),
+                e.emp_email.replace('"', "\"\""),
+                e.department.replace('"', "\"\""),
+                e.division.replace('"', "\"\""),
+            ));
+        }
+        let escaped = csv.replace('\\', "\\\\").replace('`', "\\`").replace('$', "\\$");
+        let js = format!(
+            r#"
+            (function() {{
+                try {{
+                    const blob = new Blob([`{escaped}`], {{ type: 'text/csv;charset=utf-8;' }});
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'bpsl_employees_' + new Date().toISOString().slice(0,10) + '.csv';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }} catch(e) {{ console.error('CSV export failed', e); }}
+            }})();
+            "#
+        );
+        let _ = document::eval(&js);
+        crate::state::play_sound("success");
+        toast.success("CSV Exported", format!("Exported {} employees to CSV file.", emps.len()));
+    };
+
+    // Export Reminders CSV
+    let handle_export_reminders_csv = move |_: MouseEvent| {
+        let rems = crate::db::get_all_reminders();
+        let mut csv = String::from("Reminder ID,Employee Code,Employee Name,Email,Service Category,Message,Send At,Status\n");
+        for r in &rems {
+            csv.push_str(&format!(
+                "\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\"\n",
+                r.reminder_id,
+                r.employee_code.replace('"', "\"\""),
+                r.employee_name.replace('"', "\"\""),
+                r.email_address.replace('"', "\"\""),
+                r.service_category.replace('"', "\"\""),
+                r.reminder_message.replace('"', "\"\""),
+                r.send_at.replace('"', "\"\""),
+                r.status.replace('"', "\"\""),
+            ));
+        }
+        let escaped = csv.replace('\\', "\\\\").replace('`', "\\`").replace('$', "\\$");
+        let js = format!(
+            r#"
+            (function() {{
+                try {{
+                    const blob = new Blob([`{escaped}`], {{ type: 'text/csv;charset=utf-8;' }});
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'bpsl_reminders_' + new Date().toISOString().slice(0,10) + '.csv';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }} catch(e) {{ console.error('CSV export failed', e); }}
+            }})();
+            "#
+        );
+        let _ = document::eval(&js);
+        crate::state::play_sound("success");
+        toast.success("CSV Exported", format!("Exported {} reminders to CSV file.", rems.len()));
+    };
+
+    // Clear Transient Sync Errors
+    let handle_clear_sync_errors_ui = move |_: MouseEvent| {
+        match crate::db::clear_sync_errors() {
+            Ok(_) => {
+                crate::state::play_sound("success");
+                toast.success("Errors Cleared", "Cleared transient sync error records and refreshed status.");
+                if let Some(mut r) = db_sync {
+                    r.with_mut(|rev| rev.0 += 1);
+                }
+            }
+            Err(e) => {
+                toast.error("Clear Failed", format!("{e}"));
+            }
+        }
+    };
+
+    // Open Sheet URL in External Browser
+    let handle_open_sheet_browser = {
+        let base_url = base_url;
+        move |_: MouseEvent| {
+            let url = base_url.read().trim().to_string();
+            if url.is_empty() {
+                toast.warning("No URL Configured", "Please enter a valid Google Apps Script or Spreadsheet URL first.");
+                return;
+            }
+            let escaped = url.replace('\\', "\\\\").replace('\'', "\\'");
+            let js = format!("window.open('{escaped}', '_blank');");
+            let _ = document::eval(&js);
+            toast.info("Browser Launched", "Opened Google Sheet endpoint in default browser.");
+        }
     };
 
     // Export Data JSON
@@ -359,16 +684,19 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         let tickets = crate::db::get_all_tickets();
         let reminders = crate::db::get_all_reminders();
         let notes = crate::db::get_all_notes();
+        let employees = crate::db::get_all_employees();
         let export_payload = serde_json::json!({
             "application": "BPSL IT Support",
-            "version": "1.1.0",
+            "version": "1.1.2",
             "exported_at": crate::state::format_utc(crate::sync::now_epoch()),
             "ticket_count": tickets.len(),
             "reminder_count": reminders.len(),
             "note_count": notes.len(),
+            "employee_count": employees.len(),
             "tickets": tickets,
             "reminders": reminders,
             "notes": notes,
+            "employees": employees,
         });
 
         if let Ok(json_string) = serde_json::to_string_pretty(&export_payload) {
@@ -398,7 +726,7 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
             );
             let _ = document::eval(&js);
             crate::state::play_sound("success");
-            toast.success("Backup Exported", format!("Exported {} tickets, {} reminders, {} notes to JSON.", tickets.len(), reminders.len(), notes.len()));
+            toast.success("Backup Exported", format!("Exported {} tickets, {} reminders, {} notes, {} employees to JSON.", tickets.len(), reminders.len(), notes.len(), employees.len()));
         } else {
             toast.error("Export Error", "Failed to generate JSON string.");
         }
@@ -528,14 +856,17 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         test_status.set(TestStatus::Testing);
 
         spawn(async move {
+            let start = std::time::Instant::now();
             match crate::sync::test_connection(&url, &key).await {
                 Ok(msg) => {
+                    let elapsed = start.elapsed().as_millis();
                     crate::state::play_sound("success");
-                    test_status.set(TestStatus::Success(msg));
+                    test_status.set(TestStatus::Success(format!("{msg} · Latency: {elapsed} ms")));
                 }
                 Err(err) => {
+                    let elapsed = start.elapsed().as_millis();
                     crate::state::play_sound("alert");
-                    test_status.set(TestStatus::Error(err));
+                    test_status.set(TestStatus::Error(format!("{err} ({elapsed} ms)")));
                 }
             }
         });
@@ -548,6 +879,8 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         let prof = active_profile.read().clone();
         let proto = api_protocol.read().trim().to_string();
         let name = current_profile_name.read().trim().to_string();
+        let timeout_str = network_timeout.read().trim().to_string();
+        let offline = *work_offline.read();
 
         if url.is_empty() {
             toast.error("Validation Error", "Google Apps Script Web App URL cannot be empty.");
@@ -555,6 +888,9 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         }
 
         is_saving.set(true);
+
+        let _ = crate::db::sync_meta_set("sync_network_timeout_secs", &timeout_str);
+        let _ = crate::db::sync_meta_set("sync_offline_mode", if offline { "true" } else { "false" });
 
         let mut list = sheet_sources.write();
         if let Some(item) = list.iter_mut().find(|s| s.id == prof) {
@@ -647,11 +983,11 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
 
     rsx! {
         div {
-            class: "fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-dialog-overlay",
+            class: "fixed inset-0 z-50 flex min-h-full items-center justify-center overflow-y-auto bg-black/60 backdrop-blur-xs p-3 sm:p-6 animate-dialog-overlay",
             onclick: handle_close,
 
             div {
-                class: "relative top-125 left-130 w-full max-w-5xl transform transition-transform ease-out duration-100 rounded-2xl border border-border/80 bg-card text-card-foreground shadow-2xl animate-dialog-content flex flex-col max-h-[92vh] overflow-hidden",
+                class: "relative z-50 w-full max-w-5xl my-auto rounded-2xl border border-border/80 bg-card text-card-foreground shadow-2xl animate-modal-pop flex flex-col max-h-[92vh] overflow-hidden outline-none",
                 onclick: move |e: MouseEvent| e.stop_propagation(),
 
                 // HEADER
@@ -673,6 +1009,36 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                     }
                 }
 
+                // INSTANT SETTINGS SEARCH BAR
+                div { class: "border-b border-border/50 px-6 py-2.5 bg-muted/15 flex items-center gap-3 shrink-0",
+                    div { class: "relative flex-1 flex items-center",
+                        div { class: "absolute left-3 flex items-center text-muted-foreground pointer-events-none",
+                            crate::icons::SearchIcon { class: "size-3.5" }
+                        }
+                        input {
+                            r#type: "text",
+                            class: "w-full pl-9 pr-8 h-8 rounded-lg border border-border/70 bg-background text-xs font-medium placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/20 transition-all",
+                            placeholder: "Search all settings (e.g. sound, accent, sync, department, date, csv, backup, timeout, kanban)...",
+                            value: search_query.read().clone(),
+                            oninput: move |e: FormEvent| search_query.set(e.value()),
+                        }
+                        if !search_query.read().is_empty() {
+                            button {
+                                r#type: "button",
+                                title: "Clear search filter",
+                                class: "absolute right-2 p-1 text-muted-foreground hover:text-foreground cursor-pointer rounded",
+                                onclick: move |_| search_query.set(String::new()),
+                                XIcon { class: "size-3.5" }
+                            }
+                        }
+                    }
+                    if !search_query.read().is_empty() {
+                        span { class: "text-[11px] font-medium text-primary bg-primary/10 px-2.5 py-1 rounded-md shrink-0 border border-primary/20",
+                            "Search Active"
+                        }
+                    }
+                }
+
                 // BODY: TAB NAV + CONTENT
                 div { class: "flex flex-1 overflow-hidden min-h-0",
 
@@ -682,8 +1048,24 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                             {
                                 let t = *tab;
                                 let is_active = *active_tab.read() == t;
+                                let q = search_query.read().to_lowercase().trim().to_string();
+                                let is_searching = !q.is_empty();
+                                let tab_matches = if is_searching {
+                                    match t {
+                                        SettingsTab::Appearance => "appearance theme color accent dark light oled radius corner font scale density time date sidebar animation contrast glass blur".contains(&q),
+                                        SettingsTab::Workflow => "workflow landing ticket kanban priority category assignee technician department table page delete confirm focus refresh".contains(&q),
+                                        SettingsTab::Notifications => "alert audio sound chime volume tone bell ping toast reminder advance pull notify sla breach dnd silent".contains(&q),
+                                        SettingsTab::Api => "api url key sheet source protocol connection test employee code timeout offline".contains(&q),
+                                        SettingsTab::SyncData => "sync cadence interval queue conflict export backup csv json import restore vacuum optimize cache clean reset".contains(&q),
+                                        SettingsTab::About => "about version system shortcut keyboard diagnostic cpu os database stats".contains(&q),
+                                    }
+                                } else {
+                                    false
+                                };
                                 let cls = if is_active {
                                     "bg-primary/10 text-primary font-semibold border-primary/30 shadow-2xs"
+                                } else if tab_matches {
+                                    "bg-primary/5 text-primary/90 font-medium border-primary/20"
                                 } else {
                                     "text-muted-foreground hover:bg-muted hover:text-foreground border-transparent"
                                 };
@@ -691,22 +1073,27 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                     button {
                                         key: "{t.label()}",
                                         r#type: "button",
-                                        class: "flex items-center gap-2.5 w-full text-left rounded-lg px-3 py-2 text-xs border transition-all duration-150 cursor-pointer active:scale-[0.98] {cls}",
+                                        class: "flex items-center justify-between w-full text-left rounded-lg px-3 py-2 text-xs border transition-all duration-150 cursor-pointer active:scale-[0.98] {cls}",
                                         onclick: move |_| {
                                             crate::state::play_sound("click");
                                             active_tab.set(t);
                                         },
-                                        svg {
-                                            class: "size-4 shrink-0",
-                                            view_box: "0 0 24 24",
-                                            fill: "none",
-                                            stroke: "currentColor",
-                                            stroke_width: "2",
-                                            stroke_linecap: "round",
-                                            stroke_linejoin: "round",
-                                            path { d: "{t.icon_path()}" }
+                                        div { class: "flex items-center gap-2.5 min-w-0 flex-1",
+                                            svg {
+                                                class: "size-4 shrink-0",
+                                                view_box: "0 0 24 24",
+                                                fill: "none",
+                                                stroke: "currentColor",
+                                                stroke_width: "2",
+                                                stroke_linecap: "round",
+                                                stroke_linejoin: "round",
+                                                path { d: "{t.icon_path()}" }
+                                            }
+                                            span { class: "truncate", "{t.label()}" }
                                         }
-                                        span { class: "truncate", "{t.label()}" }
+                                        if tab_matches {
+                                            span { class: "size-2 rounded-full bg-primary shrink-0 animate-pulse" }
+                                        }
                                     }
                                 }
                             }
@@ -714,7 +1101,7 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
 
                         // Version badge at bottom of rail
                         div { class: "mt-auto pt-4 px-2 flex items-center justify-between",
-                            span { class: "text-[10px] text-muted-foreground/60 font-mono", "v1.1.0" }
+                            span { class: "text-[10px] text-muted-foreground/60 font-mono", "v1.1.2" }
                             span { class: "text-[10px] text-primary/70 font-medium", "Dioxus 0.7" }
                         }
                     }
@@ -818,7 +1205,7 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                                         key: "{val}",
                                                         r#type: "button",
                                                         class: format!(
-                                                            "rounded-md px-2.5 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
+                                                             "rounded-md px-2.5 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
                                                             if is_active { "bg-primary text-primary-foreground border-primary shadow-xs font-semibold" } else { "bg-card text-foreground border-border hover:border-primary/50" }
                                                         ),
                                                         onclick: {
@@ -973,7 +1360,7 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                 // Time Display Format
                                 SettingRow {
                                     title: "Time Display Format",
-                                    description: "How timestamps and due dates appear in tickets, reminders, and calendar.",
+                                    description: "How timestamps appear in tickets, reminders, and calendar.",
                                     div { class: "flex gap-1.5",
                                         for (val, label) in [("12hr", "12-Hour (AM/PM)"), ("24hr", "24-Hour")] {
                                             {
@@ -1000,6 +1387,89 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                             }
                                         }
                                     }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Date Display Pattern
+                                SettingRow {
+                                    title: "Date Display Pattern",
+                                    description: "Preferred arrangement for civil dates across tickets and tables.",
+                                    div { class: "flex gap-1.5 flex-wrap",
+                                        for (val, label) in [
+                                            ("medium", "Nov 20, 2026 (Default)"),
+                                            ("dmy", "20/11/2026 (Indian)"),
+                                            ("iso", "2026-11-20 (ISO)"),
+                                            ("d-mmm-y", "20-Nov-2026"),
+                                        ] {
+                                            {
+                                                let is_active = *date_pattern.read() == val;
+                                                let val_str = val.to_string();
+                                                rsx! {
+                                                    button {
+                                                        key: "{val}",
+                                                        r#type: "button",
+                                                        class: format!(
+                                                            "rounded-md px-2.5 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
+                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs font-semibold" } else { "bg-card text-foreground border-border hover:border-primary/50" }
+                                                        ),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| {
+                                                                date_pattern.set(v.clone());
+                                                                crate::state::set_date_display_style(&v);
+                                                            }
+                                                        },
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // High Contrast Borders Toggle
+                                SettingToggle {
+                                    title: "High-Contrast Element Borders",
+                                    description: "Enhance visual separation with darker and higher-contrast element borders.",
+                                    checked: *high_contrast.read(),
+                                    on_toggle: move |_| {
+                                        let next = !*high_contrast.read();
+                                        high_contrast.set(next);
+                                        let _ = crate::db::sync_meta_set("ui_high_contrast", if next { "true" } else { "false" });
+                                        let cur_acc = accent_color.read().clone();
+                                        let cur_scale = font_scale.read().clone();
+                                        let cur_density = card_density.read().clone();
+                                        let cur_rad = corner_radius.read().clone();
+                                        let cur_fam = font_family.read().clone();
+                                        let cur_oled = *oled_dark.read();
+                                        let cur_anim = *animations_enabled.read();
+                                        crate::state::apply_appearance_to_dom(&cur_acc, &cur_scale, &cur_density, &cur_rad, &cur_fam, cur_oled, cur_anim);
+                                    },
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Glassmorphism Toggle
+                                SettingToggle {
+                                    title: "Translucent Glassmorphism & Blur",
+                                    description: "Enable frosted backdrop-blur effects (disable for low-end graphics acceleration).",
+                                    checked: *glassmorphism.read(),
+                                    on_toggle: move |_| {
+                                        let next = !*glassmorphism.read();
+                                        glassmorphism.set(next);
+                                        let _ = crate::db::sync_meta_set("ui_glassmorphism", if next { "true" } else { "false" });
+                                        let cur_acc = accent_color.read().clone();
+                                        let cur_scale = font_scale.read().clone();
+                                        let cur_density = card_density.read().clone();
+                                        let cur_rad = corner_radius.read().clone();
+                                        let cur_fam = font_family.read().clone();
+                                        let cur_oled = *oled_dark.read();
+                                        let cur_anim = *animations_enabled.read();
+                                        crate::state::apply_appearance_to_dom(&cur_acc, &cur_scale, &cur_density, &cur_rad, &cur_fam, cur_oled, cur_anim);
+                                    },
                                 }
 
                                 div { class: "border-t border-border/50" }
@@ -1070,8 +1540,14 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                     }
                                 }
 
-                                // Save Appearance
-                                div { class: "flex justify-end pt-3 border-t border-border/50",
+                                // Save & Reset Appearance
+                                div { class: "flex items-center justify-between pt-3 border-t border-border/50",
+                                    button {
+                                        r#type: "button",
+                                        class: "text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer underline-offset-4 hover:underline",
+                                        onclick: reset_appearance,
+                                        "Reset Defaults"
+                                    }
                                     Button {
                                         variant: "default",
                                         class: "h-9 text-xs px-4 font-semibold cursor-pointer shadow-xs gap-1.5",
@@ -1233,6 +1709,99 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
 
                                 div { class: "border-t border-border/50" }
 
+                                // Default Department
+                                div { class: "flex flex-col gap-1.5",
+                                    label { class: "text-xs font-semibold text-foreground flex items-center justify-between",
+                                        span { "Default Ticket Department" }
+                                        span { class: "text-[10px] text-muted-foreground font-mono", "DEPARTMENT" }
+                                    }
+                                    select {
+                                        value: "{default_department}",
+                                        onchange: move |e: FormEvent| default_department.set(e.value()),
+                                        class: "w-full font-medium text-xs h-9 rounded-md border border-input bg-background px-3 focus:border-primary focus:outline-none transition-colors",
+                                        option { value: "General", "General / Any Department" }
+                                        option { value: "OPERATION", "OPERATION" }
+                                        option { value: "STORES", "STORES" }
+                                        option { value: "QUALITY CONTROL", "QUALITY CONTROL" }
+                                        option { value: "MECHANICAL", "MECHANICAL" }
+                                        option { value: "ELECTRICAL DEPARTMENT(E&I)", "ELECTRICAL DEPARTMENT(E&I)" }
+                                        option { value: "FINANCE AND ACCOUNTS", "FINANCE AND ACCOUNTS" }
+                                        option { value: "CORPORATE", "CORPORATE" }
+                                        option { value: "IT SUPPORT", "IT SUPPORT" }
+                                    }
+                                    span { class: "text-[11px] text-muted-foreground",
+                                        "Pre-selected department when logging support issues."
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Table Pagination Rows
+                                SettingRow {
+                                    title: "Table Pagination Rows per Page",
+                                    description: "Maximum tickets and employees shown before paging in data tables.",
+                                    div { class: "flex gap-1.5",
+                                        for (val, label) in [("15", "15 Rows"), ("25", "25 Rows"), ("50", "50 Rows"), ("100", "100 Rows"), ("all", "All Rows")] {
+                                            {
+                                                let is_active = *table_page_size.read() == val;
+                                                let val_str = val.to_string();
+                                                rsx! {
+                                                    button {
+                                                        key: "{val}",
+                                                        r#type: "button",
+                                                        class: format!(
+                                                            "rounded-md px-2.5 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
+                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs font-semibold" } else { "bg-card text-foreground border-border hover:border-primary/50" }
+                                                        ),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| table_page_size.set(v.clone())
+                                                        },
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Kanban Compact Cards
+                                SettingToggle {
+                                    title: "Compact Kanban Card Layout",
+                                    description: "Display condensed ticket cards with tighter paddings to fit more items on screen.",
+                                    checked: *kanban_compact.read(),
+                                    on_toggle: move |_| {
+                                        let next = !*kanban_compact.read();
+                                        kanban_compact.set(next);
+                                    },
+                                }
+
+                                // Confirm Deletions Safety Toggle
+                                SettingToggle {
+                                    title: "Confirm Before Permanent Deletions",
+                                    description: "Prompt with a safety confirmation dialog before deleting tickets, reminders, or notes.",
+                                    checked: *confirm_deletions.read(),
+                                    on_toggle: move |_| {
+                                        let next = !*confirm_deletions.read();
+                                        confirm_deletions.set(next);
+                                    },
+                                }
+
+                                // Auto Refresh on Window Focus
+                                SettingToggle {
+                                    title: "Auto-Refresh on Window Focus",
+                                    description: "Silently check for remote sheet changes when switching back to this application window.",
+                                    checked: *focus_refresh.read(),
+                                    on_toggle: move |_| {
+                                        let next = !*focus_refresh.read();
+                                        focus_refresh.set(next);
+                                    },
+                                }
+
+                                div { class: "border-t border-border/50" }
+
                                 // Kanban Column Visibility Toggles
                                 SettingToggle {
                                     title: "Hide 'Cancelled' Column on Kanban",
@@ -1254,8 +1823,14 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                     },
                                 }
 
-                                // Save Workflow
-                                div { class: "flex justify-end pt-3 border-t border-border/50",
+                                // Save Workflow & Reset Row
+                                div { class: "flex items-center justify-between pt-3 border-t border-border/50",
+                                    button {
+                                        r#type: "button",
+                                        class: "text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer underline-offset-4 hover:underline",
+                                        onclick: reset_workflow,
+                                        "Reset Defaults"
+                                    }
                                     Button {
                                         variant: "default",
                                         class: "h-9 text-xs px-4 font-semibold cursor-pointer shadow-xs gap-1.5",
@@ -1284,6 +1859,46 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                         crate::state::set_sound_enabled(next);
                                     },
                                 }
+
+                                // Chime Melody Tone Picker
+                                SettingRow {
+                                    title: "Notification Chime Melody Tone",
+                                    description: "Select the audio synthesizer melody played on success and updates.",
+                                    div { class: "flex gap-1.5 flex-wrap",
+                                        for (val, label) in [
+                                            ("arpeggio", "Arpeggio (Harmonic)"),
+                                            ("ping", "Subtle Ping"),
+                                            ("bell", "Classic Bell"),
+                                            ("marimba", "Warm Marimba"),
+                                            ("digital", "Digital Beep"),
+                                        ] {
+                                            {
+                                                let is_active = *chime_tone.read() == val;
+                                                let val_str = val.to_string();
+                                                rsx! {
+                                                    button {
+                                                        key: "{val}",
+                                                        r#type: "button",
+                                                        class: format!(
+                                                            "rounded-md px-2.5 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
+                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs font-semibold" } else { "bg-card text-foreground border-border hover:border-primary/50" }
+                                                        ),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| {
+                                                                chime_tone.set(v.clone());
+                                                                crate::state::play_sound(&v);
+                                                            }
+                                                        },
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
 
                                 // Audio Volume Selector
                                 SettingRow {
@@ -1320,6 +1935,57 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                             onclick: handle_test_sound,
                                             BellIcon { class: "size-3.5" }
                                             "Test Sound"
+                                        }
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Do Not Disturb / Silent Mode Toggle
+                                SettingToggle {
+                                    title: "Do Not Disturb (Silent Mode)",
+                                    description: "Mute all audio chimes and sound effects while keeping desktop toast visuals active.",
+                                    checked: *dnd_mode.read(),
+                                    on_toggle: move |_| {
+                                        let next = !*dnd_mode.read();
+                                        dnd_mode.set(next);
+                                    },
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // SLA Breach Advance Warning
+                                SettingRow {
+                                    title: "SLA Due Date Warning Horizon",
+                                    description: "Warn in advance when tickets approach their resolution deadline.",
+                                    div { class: "flex gap-1.5 flex-wrap",
+                                        for (val, label) in [
+                                            ("0", "Disabled"),
+                                            ("1", "1h Before"),
+                                            ("2", "2h Before"),
+                                            ("4", "4h Before"),
+                                            ("8", "8h Before"),
+                                            ("24", "24h Before"),
+                                        ] {
+                                            {
+                                                let is_active = *sla_warning_hours.read() == val;
+                                                let val_str = val.to_string();
+                                                rsx! {
+                                                    button {
+                                                        key: "{val}",
+                                                        r#type: "button",
+                                                        class: format!(
+                                                            "rounded-md px-2.5 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
+                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs font-semibold" } else { "bg-card text-foreground border-border hover:border-primary/50" }
+                                                        ),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| sla_warning_hours.set(v.clone())
+                                                        },
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -1406,8 +2072,14 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                     },
                                 }
 
-                                // Save Notifications
-                                div { class: "flex justify-end pt-3 border-t border-border/50",
+                                // Save Notifications & Reset
+                                div { class: "flex items-center justify-between pt-3 border-t border-border/50",
+                                    button {
+                                        r#type: "button",
+                                        class: "text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer underline-offset-4 hover:underline",
+                                        onclick: reset_notifications,
+                                        "Reset Defaults"
+                                    }
                                     Button {
                                         variant: "default",
                                         class: "h-9 text-xs px-4 font-semibold cursor-pointer shadow-xs gap-1.5",
@@ -1540,20 +2212,30 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                         span { "Google Apps Script Web App URL" }
                                         span { class: "text-[10px] text-muted-foreground font-mono", "TMS_API_BASE_URL" }
                                     }
-                                    Input {
-                                        r#type: "text",
-                                        placeholder: "https://script.google.com/macros/s/AKfycb.../exec",
-                                        value: "{base_url}",
-                                        oninput: move |e: FormEvent| {
-                                            let val = e.value();
-                                            base_url.set(val.clone());
-                                            let cur_id = active_profile.read().clone();
-                                            let mut list = sheet_sources.write();
-                                            if let Some(item) = list.iter_mut().find(|s| s.id == cur_id) {
-                                                item.base_url = val;
-                                            }
-                                        },
-                                        class: "font-mono text-xs h-9 rounded-md border border-input bg-background px-3 focus:border-primary",
+                                    div { class: "flex items-center gap-2",
+                                        Input {
+                                            r#type: "text",
+                                            placeholder: "https://script.google.com/macros/s/AKfycb.../exec",
+                                            value: "{base_url}",
+                                            oninput: move |e: FormEvent| {
+                                                let val = e.value();
+                                                base_url.set(val.clone());
+                                                let cur_id = active_profile.read().clone();
+                                                let mut list = sheet_sources.write();
+                                                if let Some(item) = list.iter_mut().find(|s| s.id == cur_id) {
+                                                    item.base_url = val;
+                                                }
+                                            },
+                                            class: "font-mono text-xs h-9 rounded-md border border-input bg-background px-3 focus:border-primary flex-1",
+                                        }
+                                        Button {
+                                            variant: "outline",
+                                            class: "h-9 text-xs px-3 shadow-2xs gap-1.5 shrink-0 cursor-pointer",
+                                            onclick: handle_open_sheet_browser,
+                                            title: "Open script endpoint in default external browser",
+                                            ExternalLinkIcon { class: "size-3.5" }
+                                            "Open Sheet"
+                                        }
                                     }
                                     span { class: "text-[11px] text-muted-foreground",
                                         "Paste the Web App URL deployed from your Google Apps Script editor (must end in /exec)."
@@ -1643,6 +2325,56 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                         "Your company employee code used for ticket authorship and reminder notifications."
                                     }
                                 }
+
+                                div { class: "border-t border-border/50" }
+
+                                // HTTP Network Request Timeout
+                                SettingRow {
+                                    title: "HTTP Request Timeout",
+                                    description: "Maximum seconds to await response from Google Sheets before failing gracefully.",
+                                    div { class: "flex gap-1.5 flex-wrap",
+                                        for (val, label) in [
+                                            ("10", "10s (Fast)"),
+                                            ("15", "15s (Normal)"),
+                                            ("25", "25s (Recommended)"),
+                                            ("45", "45s (Slow net)"),
+                                            ("60", "60s (Long)"),
+                                        ] {
+                                            {
+                                                let is_active = *network_timeout.read() == val;
+                                                let val_str = val.to_string();
+                                                rsx! {
+                                                    button {
+                                                        key: "{val}",
+                                                        r#type: "button",
+                                                        class: format!(
+                                                            "rounded-md px-2.5 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
+                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs font-semibold" } else { "bg-card text-foreground border-border hover:border-primary/50" }
+                                                        ),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| network_timeout.set(v.clone())
+                                                        },
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Offline / Local Mode Toggle
+                                SettingToggle {
+                                    title: "Offline / Low-Bandwidth Mode",
+                                    description: "Operate entirely from the local SQLite cache without triggering background HTTP polling.",
+                                    checked: *work_offline.read(),
+                                    on_toggle: move |_| {
+                                        let next = !*work_offline.read();
+                                        work_offline.set(next);
+                                    },
+                                }
+
+                                div { class: "border-t border-border/50" }
 
                                 // Test Connection Box
                                 div { class: "flex flex-col gap-2 rounded-xl border border-border/70 bg-muted/30 p-3.5",
@@ -1789,11 +2521,58 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                         "Retry Failed Ops"
                                     }
                                     Button {
+                                        variant: "outline",
+                                        class: "h-8 text-xs px-3 cursor-pointer shadow-2xs gap-1.5 hover:text-destructive",
+                                        onclick: handle_clear_sync_errors_ui,
+                                        title: "Clear sticky error messages from sync logs and status badge",
+                                        TrashIcon { class: "size-3.5" }
+                                        "Clear Error Cache"
+                                    }
+                                    Button {
                                         variant: "default",
                                         class: "h-8 text-xs px-3 font-semibold cursor-pointer shadow-xs gap-1.5 ml-auto",
                                         onclick: save_sync_settings,
                                         CheckIcon { class: "size-3.5" }
                                         "Save Sync Interval"
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50 my-1" }
+
+                                // CSV Selective Data Exports
+                                div { class: "rounded-xl border border-border/70 bg-muted/20 p-4 flex flex-col gap-3",
+                                    div { class: "flex flex-col gap-0.5",
+                                        span { class: "text-xs font-bold text-foreground uppercase tracking-wider", "Selective CSV Data Exports" }
+                                        span { class: "text-[11px] text-muted-foreground", "Download table-specific spreadsheets for reporting, auditing, or Excel import." }
+                                    }
+                                    div { class: "flex items-center gap-2.5 pt-1 flex-wrap",
+                                        Button {
+                                            variant: "outline",
+                                            class: "h-8 text-xs px-3 cursor-pointer shadow-2xs gap-1.5 bg-card hover:bg-muted",
+                                            onclick: handle_export_tickets_csv,
+                                            svg { class: "size-3.5", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
+                                                path { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" }
+                                            }
+                                            "Tickets CSV"
+                                        }
+                                        Button {
+                                            variant: "outline",
+                                            class: "h-8 text-xs px-3 cursor-pointer shadow-2xs gap-1.5 bg-card hover:bg-muted",
+                                            onclick: handle_export_employees_csv,
+                                            svg { class: "size-3.5", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
+                                                path { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" }
+                                            }
+                                            "Employees CSV"
+                                        }
+                                        Button {
+                                            variant: "outline",
+                                            class: "h-8 text-xs px-3 cursor-pointer shadow-2xs gap-1.5 bg-card hover:bg-muted",
+                                            onclick: handle_export_reminders_csv,
+                                            svg { class: "size-3.5", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
+                                                path { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" }
+                                            }
+                                            "Reminders CSV"
+                                        }
                                     }
                                 }
 

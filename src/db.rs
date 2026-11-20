@@ -1156,13 +1156,47 @@ pub fn get_all_employees() -> Vec<DbEmployee> {
     };
 
     let rows = stmt.query_map([], |row| {
+        let mut emp_email: String = row.get(3)?;
+        let mut division: String = row.get(5)?;
+
+        let is_placeholder = |s: &str| -> bool {
+            let lower = s.trim().to_ascii_lowercase();
+            lower.is_empty()
+                || lower == "null"
+                || lower == "undefined"
+                || lower == "n/a"
+                || lower == "na"
+                || lower == "none"
+                || lower == "nil"
+                || lower == "-"
+                || lower == "—"
+        };
+
+        if !emp_email.contains('@') && division.contains('@') {
+            std::mem::swap(&mut emp_email, &mut division);
+        }
+
+        if !emp_email.contains('@') {
+            if !is_placeholder(&emp_email) && (division.is_empty() || is_placeholder(&division)) {
+                division = std::mem::take(&mut emp_email);
+            } else {
+                emp_email.clear();
+            }
+        } else if is_placeholder(&emp_email) {
+            emp_email.clear();
+        }
+
+        if is_placeholder(&division) {
+            division.clear();
+        }
+
         Ok(DbEmployee {
             emp_id: row.get(0)?,
             emp_code: row.get(1)?,
             emp_name: row.get(2)?,
-            emp_email: row.get(3)?,
+            emp_email,
             department: row.get(4)?,
-            division: row.get(5)?,
+            division,
         })
     });
 
@@ -1227,24 +1261,8 @@ pub fn invalidate_employee_lookup_cache() {
 }
 
 fn load_employee_cache_map(path: &Path) -> Option<std::collections::HashMap<String, DbEmployee>> {
-    let conn = get_connection().ok()?;
-    let mut stmt = conn
-        .prepare("SELECT emp_id, COALESCE(emp_code, ''), emp_name, COALESCE(emp_email, ''), COALESCE(department, ''), COALESCE(division, '') FROM USERS WHERE is_deleted = 0")
-        .ok()?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok(DbEmployee {
-                emp_id: row.get(0)?,
-                emp_code: row.get(1)?,
-                emp_name: row.get(2)?,
-                emp_email: row.get(3)?,
-                department: row.get(4)?,
-                division: row.get(5)?,
-            })
-        })
-        .ok()?;
     let mut map = std::collections::HashMap::new();
-    for emp in rows.flatten() {
+    for emp in get_all_employees() {
         let c = emp.emp_code.trim().to_lowercase();
         if !c.is_empty() {
             map.entry(c).or_insert_with(|| emp.clone());
@@ -2367,6 +2385,14 @@ pub fn failed_op_count() -> i64 {
         |r| r.get(0),
     )
     .unwrap_or(0)
+}
+
+/// Clears last_error from all sync queue entries and resets active sync error metadata.
+pub fn clear_sync_errors() -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute("UPDATE sync_queue SET last_error = NULL WHERE last_error IS NOT NULL", [])?;
+    let _ = sync_meta_set("last_sync_error", "");
+    Ok(())
 }
 
 // ---- sync metadata ----

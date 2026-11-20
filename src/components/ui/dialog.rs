@@ -110,38 +110,19 @@ pub fn DialogContent(props: DialogContentProps) -> Element {
     } else {
         "max-w-lg"
     };
-    let class = format!(
-        "fixed left-1/2 top-1/2 z-50 grid w-[calc(100%-2rem)] {max_w_fallback} -translate-x-1/2 -translate-y-1/2 \
-         gap-4 border border-border/80 bg-card p-5 sm:p-6 rounded-xl shadow-2xl \
-         animate-dialog-content outline-none {}",
+    let card_class = format!(
+        "relative z-50 w-full {max_w_fallback} my-auto rounded-xl border border-border/80 bg-card p-5 sm:p-6 shadow-2xl \
+         animate-modal-pop outline-none text-left flex flex-col gap-4 {}",
         props.class
     );
 
     rsx! {
-        // Backdrop overlay
+        // Full screen backdrop overlay with centering viewport and vertical scroll support
         div {
-            class: "fixed inset-0 z-50 bg-black/75 backdrop-blur-sm animate-dialog-overlay",
-            onmousedown: move |e| {
-                e.stop_propagation();
-                ctx.open.set(false);
-            },
+            class: "fixed inset-0 z-50 overflow-y-auto bg-black/75 backdrop-blur-sm animate-dialog-overlay flex min-h-full items-center justify-center p-3 sm:p-6",
             onclick: move |e| {
                 e.stop_propagation();
                 ctx.open.set(false);
-            },
-        }
-
-        // Dialog container
-        div {
-            class: class,
-            role: "dialog",
-            "aria-modal": "true",
-            tabindex: "-1",
-            onmousedown: move |e| {
-                e.stop_propagation();
-            },
-            onclick: move |e| {
-                e.stop_propagation();
             },
             onkeydown: move |e| {
                 if e.key() == Key::Escape {
@@ -149,34 +130,50 @@ pub fn DialogContent(props: DialogContentProps) -> Element {
                 }
             },
 
-            if props.show_close_button {
-                button {
-                    r#type: "button",
-                    title: "Close dialog (Esc)",
-                    "aria-label": "Close dialog",
-                    class: "absolute right-3.5 top-3.5 z-50 flex size-8 items-center justify-center rounded-full \
-                            text-muted-foreground/80 hover:text-foreground hover:bg-muted/80 \
-                            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring \
-                            transition-all duration-150 cursor-pointer shadow-xs",
-                    onclick: move |e| {
-                        e.stop_propagation();
+            // Dialog container card
+            div {
+                class: card_class,
+                role: "dialog",
+                "aria-modal": "true",
+                tabindex: "-1",
+                onclick: move |e| {
+                    e.stop_propagation();
+                },
+                onkeydown: move |e| {
+                    if e.key() == Key::Escape {
                         ctx.open.set(false);
-                    },
-                    svg {
-                        class: "size-4",
-                        view_box: "0 0 24 24",
-                        fill: "none",
-                        stroke: "currentColor",
-                        stroke_width: "2",
-                        stroke_linecap: "round",
-                        stroke_linejoin: "round",
-                        path { d: "M18 6L6 18M6 6l12 12" }
                     }
-                    span { class: "sr-only", "Close" }
-                }
-            }
+                },
 
-            {props.children}
+                if props.show_close_button {
+                    button {
+                        r#type: "button",
+                        title: "Close dialog (Esc)",
+                        "aria-label": "Close dialog",
+                        class: "absolute right-3.5 top-3.5 z-50 flex size-8 items-center justify-center rounded-full \
+                                text-muted-foreground/80 hover:text-foreground hover:bg-muted/80 \
+                                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring \
+                                transition-all duration-150 cursor-pointer shadow-xs",
+                        onclick: move |e| {
+                            e.stop_propagation();
+                            ctx.open.set(false);
+                        },
+                        svg {
+                            class: "size-4",
+                            view_box: "0 0 24 24",
+                            fill: "none",
+                            stroke: "currentColor",
+                            stroke_width: "2",
+                            stroke_linecap: "round",
+                            stroke_linejoin: "round",
+                            path { d: "M18 6L6 18M6 6l12 12" }
+                        }
+                        span { class: "sr-only", "Close" }
+                    }
+                }
+
+                {props.children}
+            }
         }
     }
 }
