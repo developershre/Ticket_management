@@ -146,7 +146,7 @@ pub fn CreateTicketDialog(mut props: CreateTicketDialogProps) -> Element {
         match crate::db::create_ticket_full(&input) {
             Ok(new_id) => {
                 let real_id_str = format!("IT-{new_id}");
-                let now_str = "Just now".to_string();
+                let now_str = crate::state::format_local_now();
                 let new_ticket = TicketItem::new(
                     new_id,
                     &emp_combined,

@@ -54,13 +54,8 @@ pub fn AppSidebar() -> Element {
         Sidebar {
             collapsible: SidebarCollapsible::Icon,
             SidebarHeader {
-                div { class: "flex flex-col gap-2.5 w-full px-1.5 py-1",
-                    div { class: "flex items-center justify-between w-full",
-                        span { class: "sidebar-text text-[11px] font-bold tracking-wider uppercase text-muted-foreground/80 select-none", "Navigation" }
-                        SidebarTrigger { class: "size-7 border border-sidebar-border/50 hover:bg-sidebar-accent text-muted-foreground hover:text-foreground" }
-                    }
+                div { class: "flex flex-row items-center gap-2.5 w-full px-1.5 py-1",
                     div { class: "sidebar-text flex flex-col gap-1 w-full",
-                        span { class: "text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 select-none", "Google Sheet Source" }
                         div { class: "relative w-full",
                             select {
                                 class: "w-full h-8 pl-2.5 pr-7 text-xs font-medium rounded-md border border-sidebar-border/80 bg-sidebar-accent/50 text-sidebar-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary truncate appearance-none hover:bg-sidebar-accent/80 transition-colors shadow-2xs",
@@ -121,6 +116,7 @@ pub fn AppSidebar() -> Element {
                             }
                         }
                     }
+                    SidebarTrigger { class: "size-7 border border-sidebar-border/50 hover:bg-sidebar-accent text-muted-foreground hover:text-foreground" }
                 }
             }
             SidebarContent {

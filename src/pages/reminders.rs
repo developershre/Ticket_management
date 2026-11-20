@@ -1391,7 +1391,7 @@ pub fn Reminders() -> Element {
                                                     div { class: "flex items-center justify-between text-xs text-muted-foreground pt-0.5",
                                                         div { class: "flex items-center gap-1.5",
                                                             ClockIcon { class: "size-3.5 text-muted-foreground" }
-                                                            span { title: "{when}", "{crate::state::format_display_12hr(&when)}" }
+                                                            span { title: "{when}", "{crate::state::arrange_date_time(&when)}" }
                                                         }
                                                         span { class: "text-[11px] font-medium text-foreground truncate max-w-[140px]",
                                                             "{reminder.display_name()}"
@@ -2006,7 +2006,7 @@ pub fn Reminders() -> Element {
                                             }
                                         }
                                         span { class: "font-medium text-foreground text-xs leading-snug", title: "{r.send_at}",
-                                            "{crate::state::format_display_12hr(&r.send_at)}"
+                                            "{crate::state::arrange_date_time(&r.send_at)}"
                                         }
                                         span { class: "text-[10px] text-muted-foreground", "Target schedule timing" }
                                     }
@@ -2028,7 +2028,7 @@ pub fn Reminders() -> Element {
                                             "Email Sent At"
                                         }
                                         {
-                                            let sent_disp = crate::state::format_display_12hr(&r.email_sent_at);
+                                            let sent_disp = crate::state::arrange_date_time(&r.email_sent_at);
                                             let is_sent = !r.email_sent_at.is_empty() && r.email_sent_at != "Not sent yet" && r.email_sent_at != "Not sent";
                                             rsx! {
                                                 span {
@@ -2050,7 +2050,7 @@ pub fn Reminders() -> Element {
                                             "Created At"
                                         }
                                         span { class: "font-medium text-foreground text-xs leading-snug", title: "{r.created_at}",
-                                            "{crate::state::format_display_12hr(&r.created_at)}"
+                                            "{crate::state::arrange_date_time(&r.created_at)}"
                                         }
                                         span { class: "text-[10px] text-muted-foreground", "Initial creation record" }
                                     }
@@ -2074,7 +2074,7 @@ pub fn Reminders() -> Element {
                                             "Last Updated"
                                         }
                                         span { class: "font-medium text-foreground text-xs leading-snug", title: "{r.last_updated_at}",
-                                            "{crate::state::format_display_12hr(&r.last_updated_at)}"
+                                            "{crate::state::arrange_date_time(&r.last_updated_at)}"
                                         }
                                         span { class: "text-[10px] text-muted-foreground", "Most recent status sync" }
                                     }

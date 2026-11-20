@@ -6,7 +6,7 @@
 use dioxus::prelude::*;
 
 use crate::components::month_calendar::{
-    days_in_month, extract_time_str, first_day_of_month, format_date_pretty, format_ymd,
+    days_in_month, first_day_of_month, format_date_pretty, format_ymd,
     parse_date_ymd, DateRange, MONTH_NAMES, SHORT_MONTH_NAMES,
 };
 use crate::components::ui::badge::Badge;
@@ -210,9 +210,9 @@ pub fn CalendarPage() -> Element {
                     .unwrap_or(today)
             };
             let time_str = if mapping == DateMappingMode::DueDate && !t.sla_deadline.is_empty() {
-                format!("Due: {}", extract_time_str(&t.sla_deadline))
+                format!("Due: {}", crate::state::arrange_time_only(&t.sla_deadline))
             } else {
-                extract_time_str(&t.created_on)
+                crate::state::arrange_time_only(&t.created_on)
             };
             let display_id = t
                 .server_ticket_id
@@ -298,9 +298,9 @@ pub fn CalendarPage() -> Element {
                 parse_date_ymd(&r.created_at).unwrap_or(today)
             };
             let time_str = if !r.send_at.is_empty() {
-                format!("Due: {}", crate::state::format_display_time(&r.send_at))
+                format!("Due: {}", crate::state::arrange_time_only(&r.send_at))
             } else {
-                crate::state::format_display_time(&r.created_at)
+                crate::state::arrange_time_only(&r.created_at)
             };
             let display_id = if !r.server_reminder_id.is_empty() {
                 r.server_reminder_id.clone()
@@ -339,7 +339,7 @@ pub fn CalendarPage() -> Element {
         let notes = get_all_notes();
         for n in notes {
             let date = parse_date_ymd(&n.created_at).unwrap_or(today);
-            let time_str = extract_time_str(&n.created_at);
+            let time_str = crate::state::arrange_time_only(&n.created_at);
             let (title, subtitle) = if let Some((t, d)) = n.content.split_once(" — ") {
                 (t.trim().to_string(), d.trim().to_string())
             } else if let Some((t, d)) = n.content.split_once('\n') {
@@ -1258,17 +1258,17 @@ fn TicketInspectView(ticket: DbTicket, on_close: EventHandler<()>) -> Element {
     let created_fmt = if t.created_on.is_empty() {
         "Unknown".to_string()
     } else {
-        crate::state::format_display_12hr(&t.created_on)
+        crate::state::arrange_date_time(&t.created_on)
     };
     let updated_fmt = if t.last_updated_on.is_empty() {
         String::new()
     } else {
-        crate::state::format_display_12hr(&t.last_updated_on)
+        crate::state::arrange_date_time(&t.last_updated_on)
     };
     let sla_target_str = if t.sla_deadline.is_empty() {
         "Standard (24h)".to_string()
     } else {
-        crate::state::format_display_12hr(&t.sla_deadline)
+        crate::state::arrange_date_time(&t.sla_deadline)
     };
     let pipeline_state_str = if t.stage.is_empty() {
         t.kanban_state.clone()
@@ -1483,8 +1483,8 @@ fn ReminderInspectView(reminder: DbReminder, on_close: EventHandler<()>) -> Elem
         .filter(|e| !e.is_empty())
         .unwrap_or_else(|| r.email_address.clone());
 
-    let send_at_fmt = crate::state::format_display_12hr(&r.send_at);
-    let created_at_fmt = crate::state::format_display_12hr(&r.created_at);
+    let send_at_fmt = crate::state::arrange_date_time(&r.send_at);
+    let created_at_fmt = crate::state::arrange_date_time(&r.created_at);
 
     rsx! {
         div { class: "flex flex-col gap-5",
@@ -1606,7 +1606,7 @@ fn ReminderInspectView(reminder: DbReminder, on_close: EventHandler<()>) -> Elem
 #[component]
 fn NoteInspectView(note: DbNote, on_close: EventHandler<()>) -> Element {
     let n = &note;
-    let created_fmt = crate::state::format_display_12hr(&n.created_at);
+    let created_fmt = crate::state::arrange_date_time(&n.created_at);
 
     rsx! {
         div { class: "flex flex-col gap-5",

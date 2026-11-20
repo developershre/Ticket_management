@@ -581,7 +581,7 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                                     let priority = ticket.priority.clone();
                                                     let category = ticket.category.clone();
                                                     let deadline = ticket.deadline.clone();
-                                                    let disp_due = crate::state::format_display_12hr(&deadline);
+                                                    let disp_due = crate::state::arrange_date_time(&deadline);
 
                                                     let is_dragged = dragged_id.read().as_deref() == Some(&id);
                                                     let is_card_over = drag_over_card.read().as_deref() == Some(&id) && !is_dragged;
@@ -744,13 +744,13 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                                                             if !ticket.created_on.is_empty() {
                                                                                 div { class: "flex items-center gap-1 text-[10px] text-muted-foreground/70",
                                                                                     span { class: "shrink-0", "Created:" }
-                                                                                    span { class: "font-mono", "{crate::state::format_display_12hr(&ticket.created_on)}" }
+                                                                                    span { class: "font-mono", "{crate::state::arrange_date_time(&ticket.created_on)}" }
                                                                                 }
                                                                             }
                                                                             if !ticket.last_updated_on.is_empty() {
                                                                                 div { class: "flex items-center gap-1 text-[10px] text-muted-foreground/70",
                                                                                     span { class: "shrink-0", "Updated:" }
-                                                                                    span { class: "font-mono", "{crate::state::format_display_12hr(&ticket.last_updated_on)}" }
+                                                                                    span { class: "font-mono", "{crate::state::arrange_date_time(&ticket.last_updated_on)}" }
                                                                                 }
                                                                             }
                                                                         }

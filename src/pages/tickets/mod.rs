@@ -414,12 +414,12 @@ pub fn Tickets() -> Element {
         let category = "General".to_string();
         let priority = "Medium".to_string();
         let assignee = "GR".to_string();
-        let created_at = "Just now".to_string();
+        let created_at = crate::state::format_local_now();
 
         if employee.is_empty() {
             toast.error(
                 "No employee configured",
-                "Set TMS_EMPLOYEE_CODE (env or .env) to an existing sheet Employee Code before quick-adding tickets.",
+                "Configure your Default Employee Code in Settings before quick-adding tickets.",
             );
             return;
         }

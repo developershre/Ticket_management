@@ -44,32 +44,41 @@ fn resolve_db_path() -> PathBuf {
                     let _ = std::fs::create_dir_all(&app_dir);
                     let target_db = app_dir.join("management.db");
                     if !target_db.exists() {
-                        let seed_empty = parent.join("../assets/database.db");
-                        let seed_mgmt = parent.join("management.db");
-                        if seed_empty.exists() {
-                            let _ = std::fs::copy(&seed_empty, &target_db);
-                        } else if seed_mgmt.exists() {
-                            let _ = std::fs::copy(&seed_mgmt, &target_db);
+                        let seed_candidates = [
+                            parent.join("management.db"),
+                            parent.join("empty.db"),
+                            parent.join("resources").join("management.db"),
+                            parent.join("resources").join("empty.db"),
+                            parent.join("../assets/database.db"),
+                        ];
+                        for seed in &seed_candidates {
+                            if seed.exists() {
+                                let _ = std::fs::copy(seed, &target_db);
+                                break;
+                            }
                         }
                     }
-                    if target_db.exists() {
-                        return target_db;
-                    }
+                    // In a system install, ALWAYS return target_db in AppData so SQLite can write
+                    return target_db;
                 }
             }
         }
     }
 
-    // Development / portable mode: use local management.db if present in working directory
-    let local = Path::new("management.db");
-    if local.exists() {
-        return local.to_path_buf();
-    }
+    // Portable / development mode: look right next to the executable first
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
-            let candidate = parent.join("management.db");
-            if candidate.exists() {
-                return candidate;
+            let next_to_exe = parent.join("management.db");
+            if next_to_exe.exists() {
+                return next_to_exe;
+            }
+            // If empty.db was bundled next to exe, copy it to management.db
+            let empty_seed = parent.join("empty.db");
+            if empty_seed.exists() && is_dir_writable(parent) {
+                let _ = std::fs::copy(&empty_seed, &next_to_exe);
+                if next_to_exe.exists() {
+                    return next_to_exe;
+                }
             }
             if let Some(up) = parent.parent() {
                 let candidate2 = up.join("management.db");
@@ -77,7 +86,22 @@ fn resolve_db_path() -> PathBuf {
                     return candidate2;
                 }
             }
+            // Working directory fallback if it already exists
+            let local = Path::new("management.db");
+            if local.exists() {
+                return local.to_path_buf();
+            }
+            // If parent folder is writable, keep management.db directly alongside the executable
+            if is_dir_writable(parent) {
+                return next_to_exe;
+            }
         }
+    }
+
+    // Working directory fallback
+    let local = Path::new("management.db");
+    if local.exists() {
+        return local.to_path_buf();
     }
     PathBuf::from("management.db")
 }
@@ -463,6 +487,7 @@ pub fn init_database() -> Result<()> {
     // 1c. Employee cache schema (nullable/duplicate emails + division —
     //     the shape the sheet's employees.list actually returns).
     ensure_user_schema(&conn)?;
+    sanitize_user_cache(&conn)?;
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS sync_queue (
@@ -510,6 +535,59 @@ pub fn init_database() -> Result<()> {
          next_attempt_at = NULL WHERE status = 'in_flight'",
         [],
     )?;
+
+    // Seed Google Sheet configuration in sync_meta if not already present.
+    // If an existing .env is present, migrate its settings into the database.
+    // If not, default to the built-in REST endpoint. This allows the application
+    // to run 100% standalone from the single SQLite database.
+    let existing_url: Option<String> = conn
+        .query_row(
+            "SELECT value FROM sync_meta WHERE key = 'system_api_base_url'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten();
+
+    if existing_url.is_none() || existing_url.as_deref() == Some("") {
+        let (dot_url, dot_key, dot_emp, dot_proto) = crate::api::ApiConfig::read_dotenv_values();
+        let base_url = dot_url.unwrap_or_else(|| DEFAULT_REST_SHEET_URL.to_string());
+        let _ = conn.execute(
+            "INSERT INTO sync_meta (key, value) VALUES ('system_api_base_url', ?1) \
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![base_url],
+        );
+        if let Some(key) = dot_key {
+            if !key.trim().is_empty() {
+                let _ = conn.execute(
+                    "INSERT INTO sync_meta (key, value) VALUES ('system_api_key', ?1) \
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![key],
+                );
+            }
+        }
+        if let Some(emp) = dot_emp {
+            if !emp.trim().is_empty() {
+                let _ = conn.execute(
+                    "INSERT INTO sync_meta (key, value) VALUES ('system_employee_code', ?1) \
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![emp],
+                );
+            }
+        }
+        let proto = dot_proto.unwrap_or_else(|| "rest".to_string());
+        let _ = conn.execute(
+            "INSERT INTO sync_meta (key, value) VALUES ('system_api_protocol', ?1) \
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![proto],
+        );
+        let _ = conn.execute(
+            "INSERT INTO sync_meta (key, value) VALUES ('active_sheet_source_id', 'rest') \
+             ON CONFLICT(key) DO NOTHING",
+            [],
+        );
+    }
 
     drop(conn);
     let _ = deduplicate_reminders_db();
@@ -617,7 +695,7 @@ pub fn update_ticket_status(ticket_id: i64, new_kanban_state: &str) -> Result<()
     conn.execute(
         r#"
         UPDATE tickets
-        SET kanban_state = ?1, status = ?2, last_updated_on = CURRENT_TIMESTAMP
+        SET kanban_state = ?1, status = ?2, last_updated_on = datetime('now', '+330 minutes')
         WHERE ticket_id = ?3
         "#,
         params![new_kanban_state, new_status, ticket_id],
@@ -654,7 +732,7 @@ pub fn update_ticket_kanban_and_stage(
         conn.execute(
             r#"
             UPDATE tickets
-            SET kanban_state = ?1, stage = ?2, status = ?3, last_updated_on = CURRENT_TIMESTAMP
+            SET kanban_state = ?1, stage = ?2, status = ?3, last_updated_on = datetime('now', '+330 minutes')
             WHERE ticket_id = ?4
             "#,
             params![new_kanban_state, stg, status_str, ticket_id],
@@ -663,7 +741,7 @@ pub fn update_ticket_kanban_and_stage(
         conn.execute(
             r#"
             UPDATE tickets
-            SET kanban_state = ?1, status = ?2, last_updated_on = CURRENT_TIMESTAMP
+            SET kanban_state = ?1, status = ?2, last_updated_on = datetime('now', '+330 minutes')
             WHERE ticket_id = ?3
             "#,
             params![new_kanban_state, status_str, ticket_id],
@@ -731,6 +809,7 @@ impl Default for NewTicketInput {
 /// and returns the generated `ticket_id`.
 pub fn create_ticket_full(input: &NewTicketInput) -> Result<i64> {
     let conn = get_connection()?;
+    let now_local = crate::state::format_local_now();
     conn.execute(
         r#"
         INSERT INTO tickets (
@@ -740,7 +819,7 @@ pub fn create_ticket_full(input: &NewTicketInput) -> Result<i64> {
             rating_avg_text, kanban_state, stage, status, created_on, last_updated_on
         ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-            ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22
         )
         "#,
         params![
@@ -764,6 +843,8 @@ pub fn create_ticket_full(input: &NewTicketInput) -> Result<i64> {
             input.kanban_state,
             input.stage,
             input.status,
+            now_local,
+            now_local,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -814,7 +895,7 @@ pub fn delete_ticket(ticket_id: i64) -> Result<()> {
 pub fn update_ticket_priority(ticket_id: i64, new_priority: &str) -> Result<()> {
     let conn = get_connection()?;
     conn.execute(
-        "UPDATE tickets SET priority = ?1, last_updated_on = CURRENT_TIMESTAMP WHERE ticket_id = ?2",
+        "UPDATE tickets SET priority = ?1, last_updated_on = datetime('now', '+330 minutes') WHERE ticket_id = ?2",
         params![new_priority, ticket_id],
     )?;
     Ok(())
@@ -824,7 +905,7 @@ pub fn update_ticket_priority(ticket_id: i64, new_priority: &str) -> Result<()> 
 pub fn update_ticket_category(ticket_id: i64, new_category: &str) -> Result<()> {
     let conn = get_connection()?;
     conn.execute(
-        "UPDATE tickets SET category = ?1, last_updated_on = CURRENT_TIMESTAMP WHERE ticket_id = ?2",
+        "UPDATE tickets SET category = ?1, last_updated_on = datetime('now', '+330 minutes') WHERE ticket_id = ?2",
         params![new_category, ticket_id],
     )?;
     Ok(())
@@ -834,7 +915,7 @@ pub fn update_ticket_category(ticket_id: i64, new_category: &str) -> Result<()> 
 pub fn update_ticket_assignee(ticket_id: i64, new_assignee: &str) -> Result<()> {
     let conn = get_connection()?;
     conn.execute(
-        "UPDATE tickets SET assigned_to = ?1, last_updated_on = CURRENT_TIMESTAMP WHERE ticket_id = ?2",
+        "UPDATE tickets SET assigned_to = ?1, last_updated_on = datetime('now', '+330 minutes') WHERE ticket_id = ?2",
         params![new_assignee, ticket_id],
     )?;
     Ok(())
@@ -889,7 +970,7 @@ pub fn update_ticket_full(
             kanban_state = ?18,
             stage = ?19,
             status = ?20,
-            last_updated_on = CURRENT_TIMESTAMP
+            last_updated_on = datetime('now', '+330 minutes')
         WHERE ticket_id = ?21
         "#,
         params![
@@ -1148,7 +1229,7 @@ pub fn invalidate_employee_lookup_cache() {
 fn load_employee_cache_map(path: &Path) -> Option<std::collections::HashMap<String, DbEmployee>> {
     let conn = get_connection().ok()?;
     let mut stmt = conn
-        .prepare("SELECT emp_id, emp_code, emp_name, emp_email, department, division FROM USERS WHERE is_deleted = 0")
+        .prepare("SELECT emp_id, COALESCE(emp_code, ''), emp_name, COALESCE(emp_email, ''), COALESCE(department, ''), COALESCE(division, '') FROM USERS WHERE is_deleted = 0")
         .ok()?;
     let rows = stmt
         .query_map([], |row| {
@@ -1343,17 +1424,24 @@ pub fn replace_employees(employees: &[crate::api::Employee]) -> Result<()> {
              VALUES (?1, ?2, ?3, ?4, ?5, 1, 0)",
         )?;
         for e in employees {
-            let email = if e.email.trim().is_empty() {
+            let mut emp = e.clone();
+            crate::api::normalize_employee(&mut emp);
+            let email = if emp.email.trim().is_empty() || !emp.email.contains('@') {
                 None
             } else {
-                Some(e.email.trim())
+                Some(emp.email.trim().to_string())
+            };
+            let division = if emp.division.trim().is_empty() {
+                None
+            } else {
+                Some(emp.division.trim().to_string())
             };
             stmt.execute(params![
-                e.employee_code.trim(),
-                e.employee_name.trim(),
+                emp.employee_code.trim(),
+                emp.employee_name.trim(),
                 email,
-                e.department.trim(),
-                e.division.trim(),
+                emp.department.trim(),
+                division,
             ])?;
         }
     }
@@ -1790,6 +1878,43 @@ fn ensure_user_schema(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Cleans up any misplaced employee email / division data in the local USERS cache:
+/// 1. Sheet alignment quirk: if an employee had no email, upstream column shifting
+///    placed their division (e.g. "POWER PLANT DIVISION") into the email column while
+///    leaving division empty. Moves the division text to `division` and clears `emp_email`.
+/// 2. Any email string without '@' or placeholder text ("null", "undefined", "N/A", "—")
+///    is converted to SQL NULL so the UI renders clean empty states and no unwanted
+///    strings are used.
+/// 3. Division placeholders ("null", "undefined", "—") are cleared to NULL.
+fn sanitize_user_cache(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        -- 1. Where emp_email contains a division name and division is empty, preserve division
+        UPDATE USERS SET
+            division = TRIM(emp_email),
+            emp_email = NULL
+        WHERE emp_email IS NOT NULL
+          AND emp_email NOT LIKE '%@%'
+          AND TRIM(emp_email) != ''
+          AND LOWER(TRIM(emp_email)) NOT IN ('null', 'undefined', 'n/a', 'na', 'none', 'nil', '-', '—')
+          AND (division IS NULL OR TRIM(division) = '' OR division = '—' OR division = '-');
+
+        -- 2. Set any remaining non-email or placeholder text in emp_email to NULL
+        UPDATE USERS SET
+            emp_email = NULL
+        WHERE emp_email IS NOT NULL
+          AND (emp_email NOT LIKE '%@%' OR LOWER(TRIM(emp_email)) IN ('null', 'undefined', 'n/a', 'na', 'none', 'nil', '-', '—'));
+
+        -- 3. Clean up placeholder text in division
+        UPDATE USERS SET
+            division = NULL
+        WHERE division IS NOT NULL
+          AND (TRIM(division) = '' OR LOWER(TRIM(division)) IN ('null', 'undefined', 'n/a', 'na', 'none', 'nil', '-', '—'));
+        "#,
+    )?;
+    Ok(())
+}
+
 /// One queued local mutation awaiting confirmation from the API.
 #[derive(Clone, Debug)]
 pub struct SyncOp {
@@ -2213,6 +2338,35 @@ pub fn latest_active_error() -> Option<String> {
     .optional()
     .ok()
     .flatten()
+}
+
+/// Most recent error among terminal failed ops.
+pub fn latest_failed_error() -> Option<String> {
+    let conn = get_connection().ok()?;
+    conn.query_row(
+        "SELECT last_error FROM sync_queue \
+         WHERE status = 'failed' AND last_error IS NOT NULL \
+         ORDER BY op_id DESC LIMIT 1",
+        [],
+        |r| r.get(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+}
+
+/// Count of permanently failed ops in sync_queue.
+pub fn failed_op_count() -> i64 {
+    let conn = match get_connection() {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+    conn.query_row(
+        "SELECT COUNT(*) FROM sync_queue WHERE status = 'failed'",
+        [],
+        |r| r.get(0),
+    )
+    .unwrap_or(0)
 }
 
 // ---- sync metadata ----
@@ -3427,16 +3581,26 @@ pub fn enqueue_reminder_delete(
 // ============================================================
 
 pub fn create_employee_db(emp: &crate::api::Employee) -> Result<i64> {
+    let mut normalized = emp.clone();
+    crate::api::normalize_employee(&mut normalized);
     let conn = get_connection()?;
     conn.execute(
         "INSERT INTO USERS (emp_code, emp_name, emp_email, department, division, active, is_deleted) \
          VALUES (?1, ?2, ?3, ?4, ?5, 1, 0)",
         params![
-            emp.employee_code.trim(),
-            emp.employee_name.trim(),
-            if emp.email.trim().is_empty() { None } else { Some(emp.email.trim()) },
-            emp.department.trim(),
-            emp.division.trim(),
+            normalized.employee_code.trim(),
+            normalized.employee_name.trim(),
+            if normalized.email.trim().is_empty() || !normalized.email.contains('@') {
+                None
+            } else {
+                Some(normalized.email.trim().to_string())
+            },
+            normalized.department.trim(),
+            if normalized.division.trim().is_empty() {
+                None
+            } else {
+                Some(normalized.division.trim().to_string())
+            },
         ],
     )?;
     invalidate_employee_lookup_cache();
@@ -3450,19 +3614,27 @@ pub fn update_employee_db(
     department: &str,
     division: &str,
 ) -> Result<()> {
+    let email_trimmed = emp_email.trim();
+    let email = if email_trimmed.is_empty() || !email_trimmed.contains('@') {
+        None
+    } else {
+        Some(email_trimmed)
+    };
+    let div_trimmed = division.trim();
+    let div = if div_trimmed.is_empty() {
+        None
+    } else {
+        Some(div_trimmed)
+    };
     let conn = get_connection()?;
     conn.execute(
         "UPDATE USERS SET emp_name = ?1, emp_email = ?2, department = ?3, division = ?4 \
          WHERE emp_code = ?5 AND is_deleted = 0",
         params![
             emp_name.trim(),
-            if emp_email.trim().is_empty() {
-                None
-            } else {
-                Some(emp_email.trim())
-            },
+            email,
             department.trim(),
-            division.trim(),
+            div,
             emp_code.trim(),
         ],
     )?;

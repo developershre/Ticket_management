@@ -69,9 +69,9 @@ struct CollectionVariable {
 impl ApiConfig {
     /// Resolution order:
     /// 1. User-configured custom settings saved in SQLite `sync_meta`
-    /// 2. `TMS_API_BASE_URL`, `TMS_API_KEY`, `TMS_EMPLOYEE_CODE`, `TMS_API_PROTOCOL` env vars or `.env` file
+    /// 2. `TMS_API_BASE_URL`, `TMS_API_KEY`, `TMS_EMPLOYEE_CODE`, `TMS_API_PROTOCOL` env vars or `.env` file (optional override)
     /// 3. `base_url`/`baseUrl` & `api_key` variables of `TMS_API.postman_collection.json`
-    ///    (searched in working dir, next to executable and one level above)
+    /// 4. Built-in default Google Sheet REST endpoint (`crate::db::DEFAULT_REST_SHEET_URL`)
     pub fn load() -> Result<ApiConfig, String> {
         let (sys_url, sys_key, sys_emp) = crate::db::get_system_api_config();
         let sys_proto = crate::db::get_system_api_protocol();
@@ -88,9 +88,7 @@ impl ApiConfig {
 
         let base_url = env_url
             .or(file_url)
-            .ok_or_else(|| {
-                "Missing TMS_API_BASE_URL. Please define TMS_API_BASE_URL in your .env file or environment.".to_string()
-            })?;
+            .unwrap_or_else(|| crate::db::DEFAULT_REST_SHEET_URL.to_string());
         let api_key = if raw_proto.as_deref() == Some("rest") && !has_sys_key {
             String::new()
         } else {
@@ -112,6 +110,11 @@ impl ApiConfig {
             employee_code,
             protocol,
         })
+    }
+
+    /// Reads key-value pairs from `.env` in candidate paths (optional override).
+    pub fn read_dotenv_values() -> (Option<String>, Option<String>, Option<String>, Option<String>) {
+        Self::from_dotenv_file()
     }
 
     /// Reads key-value pairs from `.env` in candidate paths.
@@ -756,6 +759,58 @@ pub struct Employee {
     pub email: String,
 }
 
+/// Normalizes an employee record returned from Google Sheets or REST API:
+/// 1. Strips leading and trailing whitespace from all fields.
+/// 2. Resolves sheet column swapping: if `division` has an '@' (it's an email)
+///    and `email` does not, swap them.
+/// 3. If `email` contains no '@', it is not a valid email address:
+///    - If `division` is empty and `email` has division text (e.g. "POWER PLANT DIVISION"),
+///      move that text into `division`.
+///    - Otherwise, or if placeholder (e.g. "null", "undefined", "N/A"), clear `email`.
+/// 4. Cleans up placeholder text in `division` (e.g. "null", "undefined", "—", "-").
+pub fn normalize_employee(emp: &mut Employee) {
+    emp.employee_code = emp.employee_code.trim().to_string();
+    emp.employee_name = emp.employee_name.trim().to_string();
+    emp.department = emp.department.trim().to_string();
+    emp.division = emp.division.trim().to_string();
+    emp.email = emp.email.trim().to_string();
+
+    // 1. Swap if email and division were inverted by upstream sheet column alignment
+    if !emp.email.contains('@') && emp.division.contains('@') {
+        std::mem::swap(&mut emp.email, &mut emp.division);
+    }
+
+    // 2. Validate email: must contain '@' and not be a placeholder
+    let is_placeholder = |s: &str| -> bool {
+        let lower = s.to_ascii_lowercase();
+        lower.is_empty()
+            || lower == "null"
+            || lower == "undefined"
+            || lower == "n/a"
+            || lower == "na"
+            || lower == "none"
+            || lower == "nil"
+            || lower == "-"
+            || lower == "—"
+    };
+
+    if !emp.email.contains('@') {
+        if !is_placeholder(&emp.email) && emp.division.is_empty() {
+            // Non-email string in email slot while division is empty -> this is the division
+            emp.division = std::mem::take(&mut emp.email);
+        } else {
+            emp.email.clear();
+        }
+    } else if is_placeholder(&emp.email) {
+        emp.email.clear();
+    }
+
+    // 3. Clean up division placeholder values
+    if is_placeholder(&emp.division) {
+        emp.division.clear();
+    }
+}
+
 // ============================================================
 // Reminder row (shape verified against the live `reminders.*` & sheet)
 // ============================================================
@@ -920,8 +975,8 @@ impl ApiClient {
             .user_agent("BPSL-IT-Support/1.0")
             .redirect(reqwest::redirect::Policy::limited(10))
             .tcp_nodelay(true)
-            .pool_idle_timeout(Some(Duration::from_secs(90)))
-            .pool_max_idle_per_host(10)
+            .pool_idle_timeout(Some(Duration::from_secs(15)))
+            .pool_max_idle_per_host(5)
             .build()
             .map_err(|e| format!("HTTP client init failed: {e}"))?;
         Ok(Self {
@@ -965,19 +1020,28 @@ impl ApiClient {
                 data: data.clone(),
             };
 
-            let resp = self
+            let resp = match self
                 .http
                 .post(&self.cfg.base_url)
                 .json(&envelope)
                 .send()
                 .await
-                .map_err(|e| {
-                    if e.is_timeout() {
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    let err_str = e.to_string();
+                    let is_refused = err_str.contains("refused") || err_str.contains("127.0.0.1");
+                    if !is_refused && attempts < MAX_LOCK_ATTEMPTS {
+                        tokio::time::sleep(Duration::from_millis(500 * attempts as u64)).await;
+                        continue;
+                    }
+                    return Err(if e.is_timeout() {
                         ApiError::Timeout
                     } else {
-                        ApiError::Network(e.to_string())
-                    }
-                })?;
+                        ApiError::Network(err_str)
+                    });
+                }
+            };
 
             let status = resp.status();
             let retry_after = resp
@@ -986,10 +1050,16 @@ impl ApiClient {
                 .and_then(|v| v.to_str().ok())
                 .and_then(parse_retry_after);
 
-            let text = resp
-                .text()
-                .await
-                .map_err(|e| ApiError::Network(format!("failed to read response: {e}")))?;
+            let text = match resp.text().await {
+                Ok(t) => t,
+                Err(e) => {
+                    if attempts < MAX_LOCK_ATTEMPTS {
+                        tokio::time::sleep(Duration::from_secs(1 * attempts as u64)).await;
+                        continue;
+                    }
+                    return Err(ApiError::Network(format!("failed to read response: {e}")));
+                }
+            };
 
             let text_trimmed = text.trim();
             if text_trimmed.is_empty() {
@@ -1044,7 +1114,18 @@ impl ApiClient {
                     .unwrap_or(false)
             });
 
-            if is_success && envelope.error.is_none() {
+            let has_real_error = match &envelope.error {
+                None | Some(Value::Null) => false,
+                Some(Value::String(s)) => {
+                    let trimmed = s.trim();
+                    !trimmed.is_empty()
+                        && !trimmed.eq_ignore_ascii_case("null")
+                        && !trimmed.eq_ignore_ascii_case("none")
+                }
+                Some(_) => true,
+            };
+
+            if is_success && !has_real_error {
                 return Ok(envelope.data.unwrap_or(Value::Null));
             }
 
@@ -1153,13 +1234,22 @@ impl ApiClient {
                 req = req.json(b);
             }
 
-            let resp = req.send().await.map_err(|e| {
-                if e.is_timeout() {
-                    ApiError::Timeout
-                } else {
-                    ApiError::Network(e.to_string())
+            let resp = match req.send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    let err_str = e.to_string();
+                    let is_refused = err_str.contains("refused") || err_str.contains("127.0.0.1");
+                    if !is_refused && attempts < MAX_LOCK_ATTEMPTS {
+                        tokio::time::sleep(Duration::from_millis(500 * attempts as u64)).await;
+                        continue;
+                    }
+                    return Err(if e.is_timeout() {
+                        ApiError::Timeout
+                    } else {
+                        ApiError::Network(err_str)
+                    });
                 }
-            })?;
+            };
 
             let status = resp.status();
             let retry_after = resp
@@ -1168,10 +1258,16 @@ impl ApiClient {
                 .and_then(|v| v.to_str().ok())
                 .and_then(parse_retry_after);
 
-            let text = resp
-                .text()
-                .await
-                .map_err(|e| ApiError::Network(format!("failed to read response: {e}")))?;
+            let text = match resp.text().await {
+                Ok(t) => t,
+                Err(e) => {
+                    if attempts < MAX_LOCK_ATTEMPTS {
+                        tokio::time::sleep(Duration::from_secs(1 * attempts as u64)).await;
+                        continue;
+                    }
+                    return Err(ApiError::Network(format!("failed to read response: {e}")));
+                }
+            };
 
             let text_trimmed = text.trim();
             if text_trimmed.is_empty() {
@@ -1231,10 +1327,20 @@ impl ApiClient {
                 if err.is_null() {
                     None
                 } else if let Some(s) = err.as_str() {
-                    Some(s.to_string())
+                    let trimmed = s.trim();
+                    if trimmed.is_empty()
+                        || trimmed.eq_ignore_ascii_case("null")
+                        || trimmed.eq_ignore_ascii_case("none")
+                    {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    }
                 } else {
                     err.get("message")
                         .and_then(|m| m.as_str())
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("null"))
                         .map(ToString::to_string)
                 }
             });
@@ -1596,9 +1702,7 @@ impl ApiClient {
                 if let Ok(mut emp) = serde_json::from_value::<Employee>(value.clone()) {
                     if !emp.employee_name.trim().is_empty() || !emp.employee_code.trim().is_empty()
                     {
-                        if !emp.email.contains('@') && emp.division.contains('@') {
-                            std::mem::swap(&mut emp.email, &mut emp.division);
-                        }
+                        normalize_employee(&mut emp);
                         items.push(emp);
                     }
                 }
@@ -1847,9 +1951,7 @@ fn parse_employee(data: Value) -> Result<Employee, ApiError> {
         .unwrap_or(data);
     let mut emp: Employee = serde_json::from_value(unwrapped)
         .map_err(|e| ApiError::Decode(format!("invalid employee payload: {e}")))?;
-    if !emp.email.contains('@') && emp.division.contains('@') {
-        std::mem::swap(&mut emp.email, &mut emp.division);
-    }
+    normalize_employee(&mut emp);
     Ok(emp)
 }
 

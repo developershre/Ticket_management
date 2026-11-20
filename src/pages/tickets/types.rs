@@ -421,15 +421,11 @@ pub fn format_card_datetime(raw: &str) -> String {
     if s.is_empty() {
         return "N/A".to_string();
     }
-    if let Some((y, m, d, h, mi)) = crate::state::parse_datetime_flexible(s) {
-        let am_pm = if h >= 12 { "PM" } else { "AM" };
-        let h12 = match h % 12 {
-            0 => 12,
-            other => other,
-        };
-        format!("{:04}-{:02}-{:02} {:02}:{:02} {}", y, m, d, h12, mi, am_pm)
+    let formatted = crate::state::arrange_date_time(s);
+    if formatted.is_empty() {
+        "N/A".to_string()
     } else {
-        s.to_string()
+        formatted
     }
 }
 

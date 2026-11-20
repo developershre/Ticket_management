@@ -61,15 +61,9 @@ pub fn format_iso8601(y: u32, m: u32, d: u32, h: u32, mi: u32) -> String {
     format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:00+05:30")
 }
 
-/// Formats civil parts into a human-friendly string.
+/// Formats civil parts into a human-friendly string using the unified datetime arranger.
 pub fn format_human_datetime(y: u32, m: u32, d: u32, h: u32, mi: u32) -> String {
-    let am_pm = if h >= 12 { "PM" } else { "AM" };
-    let h12 = match h % 12 {
-        0 => 12,
-        other => other,
-    };
-    let month_idx = (m.saturating_sub(1) as usize).min(11);
-    format!("{} {:02}, {:04} • {:02}:{:02} {}", MONTH_NAMES[month_idx], d, y, h12, mi, am_pm)
+    crate::state::arrange_date_time_parts(y, m, d, h, mi, true)
 }
 
 fn get_wheel_delta_y(e: &WheelEvent) -> f64 {

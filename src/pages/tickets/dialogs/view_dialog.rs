@@ -34,8 +34,8 @@ pub fn ViewTicketDialog(mut props: ViewTicketDialogProps) -> Element {
                         let prio_variant = priority_badge(&ticket.priority);
                         let sla_cls = sla_badge_class(&ticket.sla_status);
                         let initial_letter = ticket.emp_name().chars().next().unwrap_or('U');
-                        let disp_deadline = if ticket.deadline.is_empty() { "None set".to_string() } else { crate::state::format_display_12hr(&ticket.deadline) };
-                        let disp_sla_deadline = if ticket.sla_deadline.is_empty() { "None set".to_string() } else { crate::state::format_display_12hr(&ticket.sla_deadline) };
+                        let disp_deadline = if ticket.deadline.is_empty() { "None set".to_string() } else { crate::state::arrange_date_time(&ticket.deadline) };
+                        let disp_sla_deadline = if ticket.sla_deadline.is_empty() { "None set".to_string() } else { crate::state::arrange_date_time(&ticket.sla_deadline) };
 
                         rsx! {
                             DialogHeader {
@@ -64,8 +64,8 @@ pub fn ViewTicketDialog(mut props: ViewTicketDialogProps) -> Element {
 
                                 DialogTitle { class: "text-lg font-bold text-foreground mt-3 leading-snug", "{ticket.subject}" }
                                 {
-                                    let disp_c = crate::state::format_display_12hr(&ticket.created_on);
-                                    let disp_u = crate::state::format_display_12hr(&ticket.last_updated_on);
+                                    let disp_c = crate::state::arrange_date_time(&ticket.created_on);
+                                    let disp_u = crate::state::arrange_date_time(&ticket.last_updated_on);
                                     rsx! {
                                         DialogDescription { class: "text-xs text-muted-foreground mt-0.5",
                                             "Reported on {disp_c} · Last updated: {disp_u}"

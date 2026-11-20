@@ -267,6 +267,10 @@ pub fn parse_date_ymd(s: &str) -> Option<(u32, u32, u32)> {
     if s.is_empty() {
         return None;
     }
+    // Prefer full flexible parser which handles timezone conversion
+    if let Some((y, m, d, _, _)) = crate::state::parse_datetime_flexible(s) {
+        return Some((y, m, d));
+    }
     let date_part = s.split([' ', 'T']).next()?;
     if date_part.contains('-') {
         let parts: Vec<&str> = date_part.split('-').collect();
@@ -314,15 +318,8 @@ pub fn parse_date_ymd(s: &str) -> Option<(u32, u32, u32)> {
     None
 }
 
-/// Extracts time portion from datetime string (e.g. "14:30:00" or "02:30 PM").
+/// Extracts and arranges time portion from datetime string (e.g. "14:30:00" or "02:30 PM"),
+/// formatted according to 12-hour or 24-hour setting.
 pub fn extract_time_str(s: &str) -> String {
-    let s = s.trim();
-    if let Some(pos) = s.find([' ', 'T']) {
-        let rest = s[pos + 1..].trim();
-        let clean = rest.trim_end_matches('Z');
-        if !clean.is_empty() {
-            return clean.to_string();
-        }
-    }
-    String::new()
+    crate::state::arrange_time_only(s)
 }

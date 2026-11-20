@@ -25,6 +25,79 @@ mod tests {
         (db_path, lock)
     }
 
+    #[test]
+    fn test_ticket_real_timestamps_preserved() {
+        use crate::state::{arrange_date_time, arrange_time_only};
+        // Verify real ticket timestamps from production sheets retain their exact time
+        assert_eq!(arrange_date_time("2026-04-15 03:56 PM"), "Apr 15, 2026 · 03:56 PM");
+        assert_eq!(arrange_date_time("2026-04-17 02:19 PM"), "Apr 17, 2026 · 02:19 PM");
+        assert_eq!(arrange_date_time("2026-07-02 12:14 PM"), "Jul 02, 2026 · 12:14 PM");
+        assert_eq!(arrange_date_time("2026-06-06 04:53 PM"), "Jun 06, 2026 · 04:53 PM");
+        assert_eq!(arrange_date_time("2026-09-09 04:40 PM"), "Sep 09, 2026 · 04:40 PM");
+        assert_eq!(arrange_date_time("2026-08-04 11:07 AM"), "Aug 04, 2026 · 11:07 AM");
+        assert_eq!(arrange_date_time("2026-10-29 10:46 AM"), "Oct 29, 2026 · 10:46 AM");
+        assert_eq!(arrange_date_time("2026-11-12 10:21 AM"), "Nov 12, 2026 · 10:21 AM");
+
+        // Verify arrange_time_only extracts clean times
+        assert_eq!(arrange_time_only("2026-11-12 10:21 AM"), "10:21 AM");
+        assert_eq!(arrange_time_only("2026-04-15 03:56 PM"), "03:56 PM");
+    }
+
+    #[test]
+    fn test_employee_email_normalization_and_database_sanitization() {
+        let (_path, _lock) = setup_test_db();
+
+        // 1. Test normalize_employee in memory
+        let mut emp_with_division_in_email = crate::api::Employee {
+            employee_code: "11093".to_string(),
+            employee_name: "ABHISHEK VISHWAKARMA".to_string(),
+            department: "OPERATION".to_string(),
+            division: "".to_string(),
+            email: "POWER PLANT DIVISION".to_string(),
+        };
+        crate::api::normalize_employee(&mut emp_with_division_in_email);
+        assert_eq!(emp_with_division_in_email.email, "", "Email without '@' must be cleared");
+        assert_eq!(emp_with_division_in_email.division, "POWER PLANT DIVISION", "Division must be preserved");
+
+        let mut emp_swapped = crate::api::Employee {
+            employee_code: "10001".to_string(),
+            employee_name: "AMIT SHARMA".to_string(),
+            department: "FINANCE AND ACCOUNTS".to_string(),
+            division: "aks@bhagwatipower.com".to_string(),
+            email: "SPONGE IRON DIVISION".to_string(),
+        };
+        crate::api::normalize_employee(&mut emp_swapped);
+        assert_eq!(emp_swapped.email, "aks@bhagwatipower.com");
+        assert_eq!(emp_swapped.division, "SPONGE IRON DIVISION");
+
+        let mut emp_placeholder = crate::api::Employee {
+            employee_code: "99999".to_string(),
+            employee_name: "TEST PLACEHOLDER".to_string(),
+            department: "IT".to_string(),
+            division: "null".to_string(),
+            email: "undefined".to_string(),
+        };
+        crate::api::normalize_employee(&mut emp_placeholder);
+        assert_eq!(emp_placeholder.email, "");
+        assert_eq!(emp_placeholder.division, "");
+
+        // 2. Test replace_employees and DB persistence
+        let emps = vec![
+            emp_with_division_in_email,
+            emp_swapped,
+            emp_placeholder,
+        ];
+        db::replace_employees(&emps).expect("replace employees");
+
+        let found = db::find_employee_by_code("11093").expect("found employee");
+        assert_eq!(found.emp_email, "", "Database email must be empty");
+        assert_eq!(found.division, "POWER PLANT DIVISION", "Database division must be preserved");
+
+        let found_swapped = db::find_employee_by_code("10001").expect("found swapped");
+        assert_eq!(found_swapped.emp_email, "aks@bhagwatipower.com");
+        assert_eq!(found_swapped.division, "SPONGE IRON DIVISION");
+    }
+
     /// Test 1: Updating a pending reminder
     #[test]
     fn test_updating_pending_reminder() {
@@ -515,47 +588,80 @@ mod tests {
         assert!(db::matches_emp_query("11082", "Rajesh Kumar", "rajesh@bpsl.com", "rajesh@bpsl.com"));
     }
 
-    /// Test 12: 12-hour format display in UI while preserving clean data
+    /// Test 12: Unified arrange_date_time helper display in UI while preserving clean data
     #[test]
     fn test_12hr_format_display() {
-        use crate::state::format_display_12hr;
+        use crate::state::arrange_date_time;
 
         // ISO 8601 with explicit IST timezone
-        let out1 = format_display_12hr("2026-11-06T14:30:00+05:30");
+        let out1 = arrange_date_time("2026-11-06T14:30:00+05:30");
         assert_eq!(out1, "Nov 06, 2026 · 02:30 PM");
 
         // UTC timestamp ending in 'Z' converts to local IST (+05:30)
         // 07:00 UTC + 5h30m = 12:30 IST (the exact user scenario reported)
-        let out_user = format_display_12hr("2026-11-05T07:00:00.000Z");
+        let out_user = arrange_date_time("2026-11-05T07:00:00.000Z");
         assert_eq!(out_user, "Nov 05, 2026 · 12:30 PM");
 
-        let out2 = format_display_12hr("2026-11-06T09:15:00Z");
+        let out2 = arrange_date_time("2026-11-06T09:15:00Z");
         assert_eq!(out2, "Nov 06, 2026 · 02:45 PM");
 
-        // SQL/Google Sheets timestamps without explicit timezone default to UTC and convert to IST (+05:30)
-        let out_sheet = format_display_12hr("2026-11-05 07:00:00");
-        assert_eq!(out_sheet, "Nov 05, 2026 · 12:30 PM");
+        // Timestamps without explicit timezone are already local civil time (IST) from Indian Google Sheets / users
+        let out_sheet = arrange_date_time("2026-11-05 07:00:00");
+        assert_eq!(out_sheet, "Nov 05, 2026 · 07:00 AM");
 
-        let out3 = format_display_12hr("2026-11-04 18:24:26");
-        assert_eq!(out3, "Nov 04, 2026 · 11:54 PM");
+        let out3 = arrange_date_time("2026-11-04 18:24:26");
+        assert_eq!(out3, "Nov 04, 2026 · 06:24 PM");
+
+        // Indian 12-hour AM/PM timestamps from sheet
+        let out_ampm1 = arrange_date_time("2026-04-15 03:56 PM");
+        assert_eq!(out_ampm1, "Apr 15, 2026 · 03:56 PM");
+
+        let out_ampm2 = arrange_date_time("2026-10-29 10:46 AM");
+        assert_eq!(out_ampm2, "Oct 29, 2026 · 10:46 AM");
+
+        let out_ampm3 = arrange_date_time("2026-07-02 12:14 PM");
+        assert_eq!(out_ampm3, "Jul 02, 2026 · 12:14 PM");
+
+        // Indian DD/MM/YYYY slash format
+        let out_slash = arrange_date_time("31/10/2026 16:32:00");
+        assert_eq!(out_slash, "Oct 31, 2026 · 04:32 PM");
 
         // Date only
-        let out4 = format_display_12hr("2026-11-06");
+        let out4 = arrange_date_time("2026-11-06");
         assert_eq!(out4, "Nov 06, 2026");
 
         // Pre-formatted human text is preserved
-        let out5 = format_display_12hr("Today · 2:00 PM");
+        let out5 = arrange_date_time("Today · 2:00 PM");
         assert_eq!(out5, "Today · 2:00 PM");
 
         // parse_to_iso8601 ensures explicit +05:30 offset is sent to Google Sheets
-        assert_eq!(crate::sync::parse_to_iso8601("2026-11-05 07:00:00"), "2026-11-05T12:30:00+05:30");
+        assert_eq!(crate::sync::parse_to_iso8601("2026-11-05 07:00:00"), "2026-11-05T07:00:00+05:30");
         assert_eq!(crate::sync::parse_to_iso8601("2026-11-05T07:00:00.000Z"), "2026-11-05T12:30:00+05:30");
         assert_eq!(crate::sync::parse_to_iso8601("2026-11-05T12:30:00+05:30"), "2026-11-05T12:30:00+05:30");
 
         // 24-Hour format toggle in Settings dynamically reflects in UI
         crate::state::set_time_format_24hr(true);
-        let out_24hr = format_display_12hr("2026-11-05T14:30:00+05:30");
+        let out_24hr = arrange_date_time("2026-11-05T14:30:00+05:30");
         assert_eq!(out_24hr, "Nov 05, 2026 · 14:30");
         crate::state::set_time_format_24hr(false); // Reset back to default 12-hour
+    }
+
+    /// Test 13: Application runs standalone from database without .env file
+    #[test]
+    fn test_standalone_database_without_env_file() {
+        let (_path, _lock) = setup_test_db();
+
+        // 1. ApiConfig loads cleanly even without .env or TMS_API_BASE_URL
+        let cfg = crate::api::ApiConfig::load().expect("ApiConfig must load from database defaults");
+        assert_eq!(cfg.base_url, db::DEFAULT_REST_SHEET_URL);
+        assert_eq!(cfg.protocol, crate::api::ApiProtocol::BpslRest);
+
+        // 2. Modifying sheet URL in database reflects immediately in ApiConfig
+        let custom_url = "https://script.google.com/macros/s/CUSTOM_SHEET_ID/exec";
+        db::save_system_api_config(custom_url, "", "10081").expect("save config to sync_meta");
+
+        let updated_cfg = crate::api::ApiConfig::load().expect("ApiConfig must reload updated config");
+        assert_eq!(updated_cfg.base_url, custom_url);
+        assert_eq!(updated_cfg.employee_code.as_deref(), Some("10081"));
     }
 }

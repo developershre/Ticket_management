@@ -5,17 +5,40 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Returns the current UTC date as `(year, month, day)`.
+/// Returns the current local date (Asia/Kolkata, UTC+05:30) as `(year, month, day)`.
 ///
 /// Uses `std` only (no chrono dependency) via Howard Hinnant's
 /// "civil_from_days" algorithm.
 pub fn get_real_current_date() -> (u32, u32, u32) {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
+        .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
+    let local_secs = secs + LOCAL_TZ_OFFSET_SECS;
 
-    civil_from_days((secs / 86_400) as i64)
+    civil_from_days(local_secs.div_euclid(86_400))
+}
+
+/// Returns current local time in Asia/Kolkata (UTC+05:30) as `(year, month, day, hour, minute, second)`.
+pub fn get_local_now_parts() -> (u32, u32, u32, u32, u32, u32) {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let local_secs = secs + LOCAL_TZ_OFFSET_SECS;
+    let days = local_secs.div_euclid(86_400);
+    let rem = local_secs.rem_euclid(86_400);
+    let (y, m, d) = civil_from_days(days);
+    let h = (rem / 3600) as u32;
+    let mi = ((rem % 3600) / 60) as u32;
+    let s = (rem % 60) as u32;
+    (y, m, d, h, mi, s)
+}
+
+/// Formats current local time in Asia/Kolkata (UTC+05:30) as `YYYY-MM-DD HH:MM:SS`.
+pub fn format_local_now() -> String {
+    let (y, m, d, h, mi, s) = get_local_now_parts();
+    format!("{y:04}-{m:02}-{d:02} {h:02}:{mi:02}:{s:02}")
 }
 
 /// Formats a Unix timestamp (seconds) as `YYYY-MM-DD HH:MM:SS` in UTC.
@@ -149,88 +172,166 @@ fn parse_tz_offset(s: &str, sign: i64) -> Option<i64> {
     }
 }
 
-/// Helper to parse datetime parts from flexible string formats (ISO 8601, SQL, etc.)
-/// and convert any UTC timestamp (ending in 'Z' or offset) to local civil parts in Asia/Kolkata (UTC+05:30).
+/// Helper to parse datetime parts from flexible string formats (ISO 8601, SQL, 12-hour AM/PM,
+/// Indian DD/MM/YYYY, etc.) and ensure local civil parts in Asia/Kolkata (UTC+05:30).
+///
+/// Rules:
+/// 1. Timestamps without explicit timezone indicator (e.g. "2026-04-15 03:56 PM", "2026-10-31 16:32:00")
+///    are local civil wall-clock time from Indian Google Sheets / users. They are retained as-is.
+/// 2. Timestamps with explicit 'Z' or UTC offset (e.g. "2026-11-05T07:00:00.000Z") are converted from
+///    UTC to local IST (+05:30).
+/// 3. Timestamps with AM/PM (e.g. "10:21 AM", "03:56 PM", "12:14 PM") are properly parsed to 24-hour hours.
 pub fn parse_datetime_flexible(s: &str) -> Option<(u32, u32, u32, u32, u32)> {
     let s = s.trim();
     if s.is_empty() {
         return None;
     }
-    if s.len() >= 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
-        let y: u32 = s[0..4].parse().ok()?;
-        let m: u32 = s[5..7].parse().ok()?;
-        let d: u32 = s[8..10].parse().ok()?;
 
-        if s.len() >= 16 {
-            let time_part = if s.contains('T') {
-                s.split('T').nth(1)?
-            } else if s.contains(' ') {
-                s.split(' ').nth(1)?
+    // Split into date and time tokens
+    let (date_str, time_str) = if let Some(t_idx) = s.find(['T', 't']) {
+        (&s[..t_idx], s[t_idx + 1..].trim())
+    } else {
+        let mut tokens = s.split_whitespace();
+        let first = tokens.next()?;
+        let rest: Vec<&str> = tokens.collect();
+        (first, if rest.is_empty() { "" } else { s[first.len()..].trim() })
+    };
+
+    // 1. Parse Date: supports YYYY-MM-DD, YYYY/MM/DD, DD-MM-YYYY, DD/MM/YYYY, MM/DD/YYYY
+    let (y, m, d) = if date_str.contains('-') {
+        let parts: Vec<&str> = date_str.split('-').collect();
+        if parts.len() == 3 {
+            if parts[0].len() == 4 {
+                (parts[0].parse().ok()?, parts[1].parse().ok()?, parts[2].parse().ok()?)
+            } else if parts[2].len() == 4 {
+                (parts[2].parse().ok()?, parts[1].parse().ok()?, parts[0].parse().ok()?)
             } else {
-                return Some((y, m, d, 0, 0));
-            };
-            if time_part.len() >= 5 {
-                let h: u32 = time_part[0..2].parse().ok()?;
-                let mi: u32 = time_part[3..5].parse().ok()?;
-                let sec: u32 = if time_part.len() >= 8 && time_part.as_bytes()[5] == b':' {
-                    time_part[6..8].parse().unwrap_or(0)
-                } else {
-                    0
-                };
-
-                // Check for explicit timezone indicator
-                let is_utc_z = time_part.ends_with('Z') || time_part.ends_with('z');
-                let offset_opt = if let Some(plus_idx) = time_part.find('+') {
-                    parse_tz_offset(&time_part[plus_idx..], 1)
-                } else if let Some(minus_idx) = time_part[2..].find('-').map(|i| i + 2) {
-                    parse_tz_offset(&time_part[minus_idx..], -1)
-                } else if is_utc_z {
-                    Some(0)
-                } else {
-                    None
-                };
-
-                match offset_opt {
-                    Some(offset_secs) if offset_secs == LOCAL_TZ_OFFSET_SECS => {
-                        // Already in local timezone (+05:30)
-                        return Some((y, m, d, h, mi));
-                    }
-                    Some(offset_secs) => {
-                        // Convert to UTC epoch, then add local offset (+19,800s)
-                        let civil_epoch = epoch_from_civil(y, m, d)
-                            + (h as i64 * 3600)
-                            + (mi as i64 * 60)
-                            + (sec as i64);
-                        let utc_epoch = civil_epoch - offset_secs;
-                        let local_epoch = utc_epoch + LOCAL_TZ_OFFSET_SECS;
-
-                        let (ly, lm, ld) = civil_from_epoch(local_epoch);
-                        let lsecs = local_epoch.rem_euclid(86_400);
-                        let lh = (lsecs / 3600) as u32;
-                        let lmi = ((lsecs % 3600) / 60) as u32;
-                        return Some((ly, lm, ld, lh, lmi));
-                    }
-                    None => {
-                        // No timezone indicator provided -> default to UTC since SQLite
-                        // CURRENT_TIMESTAMP and Google Sheets/Apps Script server values are in UTC.
-                        let civil_epoch = epoch_from_civil(y, m, d)
-                            + (h as i64 * 3600)
-                            + (mi as i64 * 60)
-                            + (sec as i64);
-                        let local_epoch = civil_epoch + LOCAL_TZ_OFFSET_SECS;
-
-                        let (ly, lm, ld) = civil_from_epoch(local_epoch);
-                        let lsecs = local_epoch.rem_euclid(86_400);
-                        let lh = (lsecs / 3600) as u32;
-                        let lmi = ((lsecs % 3600) / 60) as u32;
-                        return Some((ly, lm, ld, lh, lmi));
-                    }
-                }
+                return None;
             }
+        } else {
+            return None;
         }
+    } else if date_str.contains('/') {
+        let parts: Vec<&str> = date_str.split('/').collect();
+        if parts.len() == 3 {
+            if parts[0].len() == 4 {
+                (parts[0].parse().ok()?, parts[1].parse().ok()?, parts[2].parse().ok()?)
+            } else if parts[2].len() == 4 {
+                let p0: u32 = parts[0].parse().ok()?;
+                let p1: u32 = parts[1].parse().ok()?;
+                let yr: u32 = parts[2].parse().ok()?;
+                if p0 > 12 && p1 <= 12 {
+                    (yr, p1, p0)
+                } else if p1 > 12 && p0 <= 12 {
+                    (yr, p0, p1)
+                } else {
+                    // Default to DD/MM/YYYY
+                    (yr, p1, p0)
+                }
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+
+    if time_str.is_empty() {
         return Some((y, m, d, 0, 0));
     }
-    None
+
+    // 2. Parse Time
+    let is_pm = time_str.contains("PM") || time_str.contains("pm");
+    let is_am = time_str.contains("AM") || time_str.contains("am");
+
+    // Remove AM/PM
+    let clean_time = time_str
+        .replace("PM", "")
+        .replace("pm", "")
+        .replace("AM", "")
+        .replace("am", "");
+    let mut clean_time = clean_time.trim();
+
+    // Check timezone indicator
+    let is_utc_z = clean_time.ends_with('Z') || clean_time.ends_with('z');
+    if is_utc_z {
+        clean_time = clean_time.trim_end_matches(['Z', 'z']).trim();
+    }
+
+    let (clean_time_core, offset_opt) = if is_utc_z {
+        (clean_time, Some(0))
+    } else if let Some(plus_idx) = clean_time.find('+') {
+        let offset = parse_tz_offset(&clean_time[plus_idx..], 1);
+        (clean_time[..plus_idx].trim(), offset)
+    } else if let Some(minus_idx) = clean_time.find('-') {
+        let offset = parse_tz_offset(&clean_time[minus_idx..], -1);
+        (clean_time[..minus_idx].trim(), offset)
+    } else {
+        (clean_time, None)
+    };
+
+    let time_parts: Vec<&str> = clean_time_core.split(':').collect();
+    if time_parts.is_empty() {
+        return Some((y, m, d, 0, 0));
+    }
+
+    let mut h: u32 = time_parts[0].trim().parse().ok()?;
+    let mi: u32 = if time_parts.len() >= 2 {
+        time_parts[1].trim().parse().ok()?
+    } else {
+        0
+    };
+    let sec: u32 = if time_parts.len() >= 3 {
+        time_parts[2]
+            .trim()
+            .split('.')
+            .next()
+            .unwrap_or("0")
+            .parse()
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    // Apply AM/PM adjustment
+    if is_pm && h < 12 {
+        h += 12;
+    } else if is_am && h == 12 {
+        h = 0;
+    }
+
+    match offset_opt {
+        None => {
+            // No explicit timezone -> local civil wall clock time in India (IST)
+            Some((y, m, d, h, mi))
+        }
+        Some(offset_secs) if offset_secs == LOCAL_TZ_OFFSET_SECS => {
+            // Already in local timezone (+05:30)
+            Some((y, m, d, h, mi))
+        }
+        Some(offset_secs) => {
+            // Explicit timezone provided (e.g. UTC 'Z' or other offset).
+            // Convert to UTC epoch, then add local IST offset (+19,800s).
+            let civil_epoch = epoch_from_civil(y, m, d)
+                + (h as i64 * 3600)
+                + (mi as i64 * 60)
+                + (sec as i64);
+            let utc_epoch = civil_epoch - offset_secs;
+            let local_epoch = utc_epoch + LOCAL_TZ_OFFSET_SECS;
+
+            let (ly, lm, ld) = civil_from_epoch(local_epoch);
+            let lsecs = local_epoch.rem_euclid(86_400);
+            let lh = (lsecs / 3600) as u32;
+            let lmi = ((lsecs % 3600) / 60) as u32;
+            Some((ly, lm, ld, lh, lmi))
+        }
+    }
 }
 
 /// Normalizes any timestamp string into standard ISO 8601 format with explicit +05:30 offset.
@@ -249,44 +350,124 @@ pub fn to_ist_iso8601(raw: &str) -> String {
     }
 }
 
-/// Formats any ISO 8601 or SQL timestamp for display, obeying the user's
-/// 12-hour or 24-hour preference configured in Settings.
-pub fn format_display_12hr(raw: &str) -> String {
-    format_display_time(raw)
-}
-
-/// Formats any ISO 8601 or SQL timestamp for the UI according to current settings.
-/// Examples:
-/// - In 12-hour mode: "2026-11-06T14:30:00+05:30" -> "Nov 06, 2026 · 02:30 PM"
-/// - In 24-hour mode: "2026-11-06T14:30:00+05:30" -> "Nov 06, 2026 · 14:30"
-pub fn format_display_time(raw: &str) -> String {
+/// Primary unified helper to arrange any date and time into a clean, human-readable display string
+/// according to the user's 12-hour or 24-hour setting.
+///
+/// Handles:
+/// - ISO 8601 strings (e.g. "2026-11-05T07:00:00.000Z" -> "Nov 05, 2026 · 12:30 PM")
+/// - 12-hour AM/PM timestamps (e.g. "2026-04-15 03:56 PM" -> "Apr 15, 2026 · 03:56 PM")
+/// - SQL timestamps (e.g. "2026-11-04 18:24:26" -> "Nov 04, 2026 · 06:24 PM")
+/// - Indian date formats (e.g. "31/10/2026 16:32:00" -> "Oct 31, 2026 · 04:32 PM")
+/// - Date-only strings (e.g. "2026-11-06" -> "Nov 06, 2026")
+/// - Relative labels (e.g. "Today · 2:00 PM", "Tomorrow", "Just now" -> preserved)
+/// - Empty / None strings -> returns empty string
+pub fn arrange_date_time(raw: &str) -> String {
     let s = raw.trim();
     if s.is_empty() {
         return String::new();
     }
     // If it's already a relative word, return as-is
-    if s.starts_with("Today") || s.starts_with("Tomorrow") || s.starts_with("Next Week") || s == "Not sent yet" || s == "Not sent" {
+    if s.starts_with("Today")
+        || s.starts_with("Tomorrow")
+        || s.starts_with("Next Week")
+        || s == "Not sent yet"
+        || s == "Not sent"
+        || s == "Just now"
+    {
         return s.to_string();
     }
 
     if let Some((y, m, d, h, mi)) = parse_datetime_flexible(s) {
-        let month_idx = (m.saturating_sub(1) as usize).min(11);
-        let month_name = SHORT_MONTH_NAMES[month_idx];
-        if s.len() >= 16 || s.contains('T') || s.contains(':') {
-            if is_time_format_24hr() {
-                format!("{} {:02}, {:04} · {:02}:{:02}", month_name, d, y, h, mi)
-            } else {
-                let am_pm = if h >= 12 { "PM" } else { "AM" };
-                let h12 = match h % 12 {
-                    0 => 12,
-                    other => other,
-                };
-                format!("{} {:02}, {:04} · {:02}:{:02} {}", month_name, d, y, h12, mi, am_pm)
-            }
-        } else {
-            format!("{} {:02}, {:04}", month_name, d, y)
-        }
+        arrange_date_time_parts(
+            y,
+            m,
+            d,
+            h,
+            mi,
+            s.len() >= 16 || s.contains('T') || s.contains(':'),
+        )
     } else {
         s.to_string()
     }
+}
+
+/// Arranges civil date and time parts into a formatted string respecting 12-hour / 24-hour mode.
+pub fn arrange_date_time_parts(
+    year: u32,
+    month: u32,
+    day: u32,
+    hour24: u32,
+    minute: u32,
+    include_time: bool,
+) -> String {
+    let month_idx = (month.saturating_sub(1) as usize).min(11);
+    let month_name = SHORT_MONTH_NAMES[month_idx];
+    if include_time {
+        if is_time_format_24hr() {
+            format!("{} {:02}, {:04} · {:02}:{:02}", month_name, day, year, hour24, minute)
+        } else {
+            let am_pm = if hour24 >= 12 { "PM" } else { "AM" };
+            let h12 = match hour24 % 12 {
+                0 => 12,
+                other => other,
+            };
+            format!("{} {:02}, {:04} · {:02}:{:02} {}", month_name, day, year, h12, minute, am_pm)
+        }
+    } else {
+        format!("{} {:02}, {:04}", month_name, day, year)
+    }
+}
+
+/// Arranges only the date part of a timestamp string (e.g. "Nov 12, 2026").
+#[allow(dead_code)]
+pub fn arrange_date_only(raw: &str) -> String {
+    let s = raw.trim();
+    if s.is_empty() {
+        return String::new();
+    }
+    if let Some((y, m, d, _, _)) = parse_datetime_flexible(s) {
+        let month_idx = (m.saturating_sub(1) as usize).min(11);
+        format!("{} {:02}, {:04}", SHORT_MONTH_NAMES[month_idx], d, y)
+    } else {
+        s.to_string()
+    }
+}
+
+/// Arranges only the time part of a timestamp string (e.g. "10:21 AM" or "10:21" in 24hr mode).
+pub fn arrange_time_only(raw: &str) -> String {
+    let s = raw.trim();
+    if s.is_empty() {
+        return String::new();
+    }
+    if let Some((_, _, _, h, mi)) = parse_datetime_flexible(s) {
+        if is_time_format_24hr() {
+            format!("{h:02}:{mi:02}")
+        } else {
+            let am_pm = if h >= 12 { "PM" } else { "AM" };
+            let h12 = match h % 12 {
+                0 => 12,
+                other => other,
+            };
+            format!("{h12:02}:{mi:02} {am_pm}")
+        }
+    } else if let Some(pos) = s.find([' ', 'T']) {
+        let rest = s[pos + 1..].trim();
+        let clean = rest.trim_end_matches(['Z', 'z']);
+        clean.to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// Formats any ISO 8601 or SQL timestamp for display, obeying the user's
+/// 12-hour or 24-hour preference configured in Settings.
+#[allow(dead_code)]
+pub fn format_display_12hr(raw: &str) -> String {
+    arrange_date_time(raw)
+}
+
+/// Formats any ISO 8601 or SQL timestamp for the UI according to current settings.
+#[allow(dead_code)]
+pub fn format_display_time(raw: &str) -> String {
+    arrange_date_time(raw)
 }

@@ -324,7 +324,7 @@ pub fn render_assignee_cell(t: &TicketItem) -> Element {
 
 pub fn render_created_cell(t: &TicketItem) -> Element {
     let created = t.created_at.clone();
-    let disp = crate::state::format_display_12hr(&created);
+    let disp = crate::state::arrange_date_time(&created);
     rsx! {
         span {
             title: "{created}",
