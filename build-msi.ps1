@@ -26,15 +26,13 @@ if (Test-Path (Join-Path $wixTools "candle.exe")) {
     Write-Host "[Env] Using local WiX toolset from tools\wix" -ForegroundColor DarkGray
 }
 
-# 2. Generate a 100% clean empty database with all tables and 0 rows
-Write-Host "`n[1/3] Generating clean empty SQLite database (empty.db) with all tables..." -ForegroundColor Yellow
-node (Join-Path $PSScriptRoot "scripts\generate_empty_db.js") "empty.db"
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Failed to generate empty.db."
-}
-
-# Also ensure management.db in repo root is cleaned so development starts fresh
+# 2. Generate a 100% clean database (management.db) with all tables and 0 rows
+Write-Host "`n[1/3] Generating clean SQLite database (management.db) with all tables..." -ForegroundColor Yellow
 node (Join-Path $PSScriptRoot "scripts\generate_empty_db.js") "management.db"
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Failed to generate management.db."
+}
+Copy-Item "management.db" "empty.db" -Force
 
 # 3. Build and package .msi installer
 $mode = if ($DebugBuild) { "" } else { "--release" }

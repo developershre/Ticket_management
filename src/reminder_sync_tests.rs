@@ -25,6 +25,61 @@ mod tests {
         (db_path, lock)
     }
 
+    #[test]
+    fn test_employee_email_normalization_and_database_sanitization() {
+        let (_path, _lock) = setup_test_db();
+
+        // 1. Test normalize_employee in memory
+        let mut emp_with_division_in_email = crate::api::Employee {
+            employee_code: "11093".to_string(),
+            employee_name: "ABHISHEK VISHWAKARMA".to_string(),
+            department: "OPERATION".to_string(),
+            division: "".to_string(),
+            email: "POWER PLANT DIVISION".to_string(),
+        };
+        crate::api::normalize_employee(&mut emp_with_division_in_email);
+        assert_eq!(emp_with_division_in_email.email, "", "Email without '@' must be cleared");
+        assert_eq!(emp_with_division_in_email.division, "POWER PLANT DIVISION", "Division must be preserved");
+
+        let mut emp_swapped = crate::api::Employee {
+            employee_code: "10001".to_string(),
+            employee_name: "AMIT SHARMA".to_string(),
+            department: "FINANCE AND ACCOUNTS".to_string(),
+            division: "aks@bhagwatipower.com".to_string(),
+            email: "SPONGE IRON DIVISION".to_string(),
+        };
+        crate::api::normalize_employee(&mut emp_swapped);
+        assert_eq!(emp_swapped.email, "aks@bhagwatipower.com");
+        assert_eq!(emp_swapped.division, "SPONGE IRON DIVISION");
+
+        let mut emp_placeholder = crate::api::Employee {
+            employee_code: "99999".to_string(),
+            employee_name: "TEST PLACEHOLDER".to_string(),
+            department: "IT".to_string(),
+            division: "null".to_string(),
+            email: "undefined".to_string(),
+        };
+        crate::api::normalize_employee(&mut emp_placeholder);
+        assert_eq!(emp_placeholder.email, "");
+        assert_eq!(emp_placeholder.division, "");
+
+        // 2. Test replace_employees and DB persistence
+        let emps = vec![
+            emp_with_division_in_email,
+            emp_swapped,
+            emp_placeholder,
+        ];
+        db::replace_employees(&emps).expect("replace employees");
+
+        let found = db::find_employee_by_code("11093").expect("found employee");
+        assert_eq!(found.emp_email, "", "Database email must be empty");
+        assert_eq!(found.division, "POWER PLANT DIVISION", "Database division must be preserved");
+
+        let found_swapped = db::find_employee_by_code("10001").expect("found swapped");
+        assert_eq!(found_swapped.emp_email, "aks@bhagwatipower.com");
+        assert_eq!(found_swapped.division, "SPONGE IRON DIVISION");
+    }
+
     /// Test 1: Updating a pending reminder
     #[test]
     fn test_updating_pending_reminder() {
@@ -557,5 +612,24 @@ mod tests {
         let out_24hr = format_display_12hr("2026-11-05T14:30:00+05:30");
         assert_eq!(out_24hr, "Nov 05, 2026 · 14:30");
         crate::state::set_time_format_24hr(false); // Reset back to default 12-hour
+    }
+
+    /// Test 13: Application runs standalone from database without .env file
+    #[test]
+    fn test_standalone_database_without_env_file() {
+        let (_path, _lock) = setup_test_db();
+
+        // 1. ApiConfig loads cleanly even without .env or TMS_API_BASE_URL
+        let cfg = crate::api::ApiConfig::load().expect("ApiConfig must load from database defaults");
+        assert_eq!(cfg.base_url, db::DEFAULT_REST_SHEET_URL);
+        assert_eq!(cfg.protocol, crate::api::ApiProtocol::BpslRest);
+
+        // 2. Modifying sheet URL in database reflects immediately in ApiConfig
+        let custom_url = "https://script.google.com/macros/s/CUSTOM_SHEET_ID/exec";
+        db::save_system_api_config(custom_url, "", "10081").expect("save config to sync_meta");
+
+        let updated_cfg = crate::api::ApiConfig::load().expect("ApiConfig must reload updated config");
+        assert_eq!(updated_cfg.base_url, custom_url);
+        assert_eq!(updated_cfg.employee_code.as_deref(), Some("10081"));
     }
 }

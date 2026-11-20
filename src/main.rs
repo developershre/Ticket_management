@@ -102,9 +102,12 @@ fn main() {
     }
 
     // Initialize SQLite database adhering to DATABASE.SQL schema
+    let active_db = db::db_path();
+    println!("[BPSL IT Support DB] Active database: {}", active_db.display());
     if let Err(e) = db::init_database() {
         eprintln!(
-            "[BPSL IT Support DB] Warning: database init failed: {:?}",
+            "[BPSL IT Support DB] Warning: database init failed at '{}': {:?}",
+            active_db.display(),
             e
         );
     }

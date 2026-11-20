@@ -149,6 +149,8 @@ static WAKE: Mutex<bool> = Mutex::new(false);
 static WAKE_CV: Condvar = Condvar::new();
 static STARTED: OnceLock<()> = OnceLock::new();
 static CLIENT: RwLock<Option<Arc<ApiClient>>> = RwLock::new(None);
+static PULL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static EMP_PULL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Wake the worker for an immediate sync cycle (called after every local
 /// ticket mutation). Safe from any thread; coalesces — multiple kicks
@@ -522,11 +524,11 @@ pub async fn run_cycle() {
     // ---- Final status ----
     let pending = db::pending_op_count();
     let conflicts = db::unresolved_conflict_count();
-    let op_error = db::latest_active_error();
+    let failed_err = db::latest_failed_error();
     with_status(|s| {
         s.pending_ops = pending;
         s.conflicts = conflicts;
-        if let Some(err) = pull_error.or(cycle_error).or(op_error) {
+        if let Some(err) = pull_error.or(cycle_error).or(failed_err) {
             s.state = SyncState::Error;
             s.detail = if pending > 0 {
                 format!("Sync issue · {pending} pending · {err}")
@@ -1148,6 +1150,8 @@ fn next_attempt_at(op: &SyncOp, err: &ApiError) -> i64 {
 ///
 /// Returns how many local rows changed (drives the UI refresh).
 async fn pull(client: &ApiClient) -> Result<usize, ApiError> {
+    let _guard = PULL_LOCK.lock().await;
+
     // Collect pages keyed by server id (dedupes across page boundaries).
     let mut server: HashMap<String, ServerTicket> = HashMap::new();
     let mut invalid = 0usize;
@@ -1282,6 +1286,8 @@ async fn pull(client: &ApiClient) -> Result<usize, ApiError> {
 /// source of truth), and the returned count lets the caller decide
 /// whether the UI needs to reload.
 async fn pull_employees(client: &ApiClient) -> Result<usize, ApiError> {
+    let _guard = EMP_PULL_LOCK.lock().await;
+
     let employees = client.employees_list().await?;
     let count = employees.len();
     if count == 0 {
@@ -1307,20 +1313,110 @@ pub fn invalidate_ticket_cache() {
 
 /// Fetches all tickets from Google Sheets immediately in real-time.
 pub async fn pull_tickets_now() -> Result<usize, ApiError> {
-    let client = ensure_client().map_err(ApiError::Network)?;
-    let count = pull(&client).await?;
+    let client = match ensure_client() {
+        Ok(c) => c,
+        Err(e) => {
+            with_status(|s| {
+                s.state = SyncState::Disabled;
+                s.detail = e.clone();
+            });
+            return Err(ApiError::Network(e));
+        }
+    };
+
     let now = now_epoch();
-    let _ = db::sync_meta_set("last_pull_at", &now.to_string());
-    if count > 0 {
-        with_status(|s| s.revision = s.revision.wrapping_add(1));
+    let last_pull: i64 = db::sync_meta_get("last_pull_at")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+
+    // If tickets were pulled literally within the last 3 seconds, avoid hammering Google Apps Script;
+    // ensure status is accurately reflected as synced/idle.
+    if now.saturating_sub(last_pull) < 3 {
+        let pending = db::pending_op_count();
+        let conflicts = db::unresolved_conflict_count();
+        let failed_err = db::latest_failed_error();
+        with_status(|s| {
+            s.pending_ops = pending;
+            s.conflicts = conflicts;
+            if let Some(err) = failed_err {
+                s.state = SyncState::Error;
+                s.detail = format!("Sync issue · {err}");
+            } else if pending > 0 {
+                s.state = SyncState::Idle;
+                s.detail = format!("{pending} change(s) waiting to sync");
+            } else {
+                s.state = SyncState::Idle;
+                s.detail = format!(
+                    "Up to date · {}",
+                    s.last_success_at
+                        .clone()
+                        .unwrap_or_else(|| crate::state::format_utc(now))
+                );
+            }
+        });
+        return Ok(0);
     }
-    with_status(|s| s.last_success_at = Some(crate::state::format_utc(now)));
-    Ok(count)
+
+    with_status(|s| {
+        s.state = SyncState::Syncing;
+        s.detail = "Syncing with Google Sheets…".to_string();
+    });
+
+    match pull(&client).await {
+        Ok(count) => {
+            let now = now_epoch();
+            let _ = db::sync_meta_set("last_pull_at", &now.to_string());
+            let pending = db::pending_op_count();
+            let conflicts = db::unresolved_conflict_count();
+            let failed_err = db::latest_failed_error();
+            with_status(|s| {
+                if count > 0 {
+                    s.revision = s.revision.wrapping_add(1);
+                }
+                s.last_success_at = Some(crate::state::format_utc(now));
+                s.pending_ops = pending;
+                s.conflicts = conflicts;
+                if let Some(err) = failed_err {
+                    s.state = SyncState::Error;
+                    s.detail = if pending > 0 {
+                        format!("Sync issue · {pending} pending · {err}")
+                    } else {
+                        format!("Sync issue · {err}")
+                    };
+                } else if pending > 0 {
+                    s.state = SyncState::Idle;
+                    s.detail = format!("{pending} change(s) waiting to sync");
+                } else {
+                    s.state = SyncState::Idle;
+                    s.detail = format!("Up to date · {}", crate::state::format_utc(now));
+                }
+            });
+            Ok(count)
+        }
+        Err(e) => {
+            let pending = db::pending_op_count();
+            let conflicts = db::unresolved_conflict_count();
+            with_status(|s| {
+                s.state = SyncState::Error;
+                s.pending_ops = pending;
+                s.conflicts = conflicts;
+                s.detail = format!("Sync issue · {}", e.short());
+            });
+            Err(e)
+        }
+    }
 }
 
 /// Fetches all employees from Google Sheets immediately in real-time.
 pub async fn pull_employees_now() -> Result<usize, ApiError> {
     let client = ensure_client().map_err(ApiError::Network)?;
+    let now = now_epoch();
+    let last_emp_pull: i64 = db::sync_meta_get("last_employee_pull_at")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    if now.saturating_sub(last_emp_pull) < 3 {
+        return Ok(0);
+    }
     let count = pull_employees(&client).await?;
     let now = now_epoch();
     let _ = db::sync_meta_set("last_employee_pull_at", &now.to_string());

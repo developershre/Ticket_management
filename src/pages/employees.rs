@@ -33,11 +33,16 @@ pub struct EmployeeItem {
 
 impl EmployeeItem {
     fn from_db(e: crate::db::DbEmployee) -> Self {
+        let email = if e.emp_email.contains('@') {
+            e.emp_email
+        } else {
+            String::new()
+        };
         EmployeeItem {
             emp_id: e.emp_id,
             emp_code: e.emp_code,
             emp_name: e.emp_name,
-            emp_email: e.emp_email,
+            emp_email: email,
             department: e.department,
             division: e.division,
         }
@@ -112,10 +117,9 @@ fn render_name_cell(e: &EmployeeItem) -> Element {
 }
 
 fn render_email_cell(e: &EmployeeItem) -> Element {
-    if e.emp_email.is_empty() {
-        // 293 of 324 sheet rows genuinely have no email.
+    if e.emp_email.is_empty() || !e.emp_email.contains('@') {
         rsx! {
-            span { class: "text-xs italic text-muted-foreground/60", "no email on file" }
+            span { class: "text-xs text-muted-foreground/40 select-none", "—" }
         }
     } else {
         rsx! {

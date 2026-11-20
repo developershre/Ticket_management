@@ -419,7 +419,7 @@ pub fn Tickets() -> Element {
         if employee.is_empty() {
             toast.error(
                 "No employee configured",
-                "Set TMS_EMPLOYEE_CODE (env or .env) to an existing sheet Employee Code before quick-adding tickets.",
+                "Configure your Default Employee Code in Settings before quick-adding tickets.",
             );
             return;
         }
