@@ -55,11 +55,32 @@ pub struct OpenSettingsDialog(pub bool);
 /// Global application appearance and behavior settings.
 #[derive(Clone, PartialEq, Debug)]
 pub struct AppSettings {
+    // Appearance & Theming
     pub sidebar_position: String,
     pub card_density: String,
     pub animations_enabled: bool,
     pub date_format: String,
     pub font_scale: String,
+    pub font_family: String,
+    pub accent_color: String,
+    pub corner_radius: String,
+    pub oled_dark: bool,
+
+    // Workflow & Tickets
+    pub default_landing_page: String,
+    pub default_ticket_view: String,
+    pub default_priority: String,
+    pub default_category: String,
+    pub default_assignee: String,
+    pub kanban_hide_cancelled: bool,
+    pub kanban_hide_solved: bool,
+
+    // Notifications & Audio
+    pub toast_duration_secs: u32,
+    pub sound_enabled: bool,
+    pub sound_volume: String,
+    pub reminder_advance_mins: u32,
+    pub notify_on_remote_pull: bool,
 }
 
 impl Default for AppSettings {
@@ -75,17 +96,52 @@ impl AppSettings {
             .unwrap_or(false);
         set_time_format_24hr(is_24);
 
+        let sound_on = crate::db::sync_meta_get("ui_sound_enabled")
+            .map(|v| v != "false")
+            .unwrap_or(true);
+        set_sound_enabled(sound_on);
+
+        let sound_vol = crate::db::sync_meta_get("ui_sound_volume")
+            .unwrap_or_else(|| "medium".to_string());
+        set_sound_volume(&sound_vol);
+
         Self {
             sidebar_position: crate::db::sync_meta_get("ui_sidebar_position").unwrap_or_else(|| "left".to_string()),
             card_density: crate::db::sync_meta_get("ui_card_density").unwrap_or_else(|| "default".to_string()),
             animations_enabled: crate::db::sync_meta_get("ui_animations_enabled").map(|v| v != "false").unwrap_or(true),
             date_format: if is_24 { "24hr".to_string() } else { "12hr".to_string() },
             font_scale: crate::db::sync_meta_get("ui_font_scale").unwrap_or_else(|| "auto".to_string()),
+            font_family: crate::db::sync_meta_get("ui_font_family").unwrap_or_else(|| "roboto".to_string()),
+            accent_color: crate::db::sync_meta_get("ui_accent_color").unwrap_or_else(|| "default".to_string()),
+            corner_radius: crate::db::sync_meta_get("ui_corner_radius").unwrap_or_else(|| "rounded".to_string()),
+            oled_dark: crate::db::sync_meta_get("ui_oled_dark").map(|v| v == "true").unwrap_or(false),
+
+            default_landing_page: crate::db::sync_meta_get("ui_default_landing_page").unwrap_or_else(|| "tickets".to_string()),
+            default_ticket_view: crate::db::sync_meta_get("ui_default_ticket_view").unwrap_or_else(|| "kanban".to_string()),
+            default_priority: crate::db::sync_meta_get("ui_default_priority").unwrap_or_else(|| "Medium".to_string()),
+            default_category: crate::db::sync_meta_get("ui_default_category").unwrap_or_else(|| "General".to_string()),
+            default_assignee: crate::db::sync_meta_get("ui_default_assignee").unwrap_or_else(|| "IT Support".to_string()),
+            kanban_hide_cancelled: crate::db::sync_meta_get("ui_kanban_hide_cancelled").map(|v| v == "true").unwrap_or(false),
+            kanban_hide_solved: crate::db::sync_meta_get("ui_kanban_hide_solved").map(|v| v == "true").unwrap_or(false),
+
+            toast_duration_secs: crate::db::sync_meta_get("ui_toast_duration_secs")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(5),
+            sound_enabled: sound_on,
+            sound_volume: sound_vol,
+            reminder_advance_mins: crate::db::sync_meta_get("ui_reminder_advance_mins")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(15),
+            notify_on_remote_pull: crate::db::sync_meta_get("sync_notify_on_pull")
+                .map(|v| v == "true")
+                .unwrap_or(false),
         }
     }
 }
 
 static TIME_FORMAT_24HR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SOUND_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static SOUND_VOLUME_PERCENT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(15);
 
 pub fn set_time_format_24hr(is_24hr: bool) {
     TIME_FORMAT_24HR.store(is_24hr, std::sync::atomic::Ordering::Relaxed);
@@ -93,6 +149,151 @@ pub fn set_time_format_24hr(is_24hr: bool) {
 
 pub fn is_time_format_24hr() -> bool {
     TIME_FORMAT_24HR.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn is_sound_enabled() -> bool {
+    SOUND_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_sound_enabled(enabled: bool) {
+    SOUND_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn get_sound_volume_float() -> f32 {
+    let p = SOUND_VOLUME_PERCENT.load(std::sync::atomic::Ordering::Relaxed);
+    (p as f32) / 100.0
+}
+
+pub fn set_sound_volume(vol: &str) {
+    let percent = match vol.to_lowercase().as_str() {
+        "low" => 8,
+        "high" => 30,
+        _ => 15,
+    };
+    SOUND_VOLUME_PERCENT.store(percent, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Plays a pleasant synthesized sound effect via standard Web Audio API.
+pub fn play_sound(sound_type: &str) {
+    if !is_sound_enabled() {
+        return;
+    }
+    let vol = get_sound_volume_float();
+    let js = format!(
+        r#"
+        (function() {{
+            try {{
+                var ctx = new (window.AudioContext || window.webkitAudioContext)();
+                if (ctx.state === 'suspended') {{ ctx.resume(); }}
+                var osc = ctx.createOscillator();
+                var gain = ctx.createGain();
+                gain.gain.value = {vol};
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                var t = '{sound_type}';
+                if (t === 'chime' || t === 'success') {{
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(523.25, ctx.currentTime);
+                    osc.frequency.exponentialRampToValueAtTime(659.25, ctx.currentTime + 0.1);
+                    osc.frequency.exponentialRampToValueAtTime(783.99, ctx.currentTime + 0.2);
+                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+                    osc.start();
+                    osc.stop(ctx.currentTime + 0.41);
+                }} else if (t === 'alert' || t === 'warning') {{
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(880, ctx.currentTime);
+                    osc.frequency.setValueAtTime(440, ctx.currentTime + 0.12);
+                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+                    osc.start();
+                    osc.stop(ctx.currentTime + 0.31);
+                }} else if (t === 'click' || t === 'tap') {{
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(1000, ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
+                    osc.start();
+                    osc.stop(ctx.currentTime + 0.06);
+                }}
+            }} catch(e) {{}}
+        }})();
+        "#
+    );
+    let _ = dioxus::prelude::document::eval(&js);
+}
+
+/// Applies appearance attributes to the DOM and persists to localStorage.
+pub fn apply_appearance_to_dom(
+    accent: &str,
+    scale: &str,
+    density: &str,
+    radius: &str,
+    font_fam: &str,
+    oled: bool,
+    animations: bool,
+) {
+    let js = format!(
+        r#"
+        (function() {{
+            const root = document.documentElement;
+            // Accent
+            if ('{accent}' === 'default') {{
+                root.removeAttribute('data-accent');
+                localStorage.removeItem('bpsl-accent');
+            }} else {{
+                root.setAttribute('data-accent', '{accent}');
+                localStorage.setItem('bpsl-accent', '{accent}');
+            }}
+            // Font Scale
+            if ('{scale}' === 'auto') {{
+                root.removeAttribute('data-font-scale');
+                localStorage.removeItem('bpsl-font-scale');
+            }} else {{
+                root.setAttribute('data-font-scale', '{scale}');
+                localStorage.setItem('bpsl-font-scale', '{scale}');
+            }}
+            // Density
+            if ('{density}' === 'default') {{
+                root.removeAttribute('data-card-density');
+                localStorage.removeItem('bpsl-card-density');
+            }} else {{
+                root.setAttribute('data-card-density', '{density}');
+                localStorage.setItem('bpsl-card-density', '{density}');
+            }}
+            // Radius
+            if ('{radius}' === 'rounded') {{
+                root.removeAttribute('data-radius');
+                localStorage.removeItem('bpsl-radius');
+            }} else {{
+                root.setAttribute('data-radius', '{radius}');
+                localStorage.setItem('bpsl-radius', '{radius}');
+            }}
+            // Font Family
+            if ('{font_fam}' === 'roboto') {{
+                root.removeAttribute('data-font-family');
+                localStorage.removeItem('bpsl-font-family');
+            }} else {{
+                root.setAttribute('data-font-family', '{font_fam}');
+                localStorage.setItem('bpsl-font-family', '{font_fam}');
+            }}
+            // OLED Pure Black
+            if ({oled}) {{
+                root.setAttribute('data-oled', 'true');
+                localStorage.setItem('bpsl-oled', 'true');
+            }} else {{
+                root.removeAttribute('data-oled');
+                localStorage.removeItem('bpsl-oled');
+            }}
+            // Animations
+            if (!{animations}) {{
+                root.setAttribute('data-animations', 'false');
+                localStorage.setItem('bpsl-animations', 'false');
+            }} else {{
+                root.removeAttribute('data-animations');
+                localStorage.removeItem('bpsl-animations');
+            }}
+        }})();
+        "#
+    );
+    let _ = dioxus::prelude::document::eval(&js);
 }
 
 /// Global reactive revision counter to signal when SQLite database tables

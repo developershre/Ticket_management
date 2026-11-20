@@ -25,7 +25,8 @@ pub fn Switch(props: SwitchProps) -> Element {
     let mut is_checked_sig = props.checked.unwrap_or(local_checked);
     let is_checked = *is_checked_sig.read();
 
-    let bg_class = if is_checked { "bg-primary" } else { "bg-input" };
+    let bg_class = if is_checked { "bg-primary" } else { "bg-muted-foreground/30 dark:bg-muted/80 border border-border/60" };
+    let thumb_bg = if is_checked { "bg-primary-foreground" } else { "bg-white dark:bg-zinc-200" };
     let thumb_trans = if is_checked {
         "translate-x-4"
     } else {
@@ -33,10 +34,10 @@ pub fn Switch(props: SwitchProps) -> Element {
     };
 
     let class = format!(
-        "peer inline-flex h-5 w-9 shrink-0 items-center rounded-full border-2 border-transparent \
-         transition-colors focus-visible:outline-none focus-visible:ring-2 \
+        "peer inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-transparent \
+         transition-colors duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 \
          focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background \
-         disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer select-none {} {}",
+         disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer select-none active:scale-95 {} {}",
         bg_class, props.class
     );
 
@@ -61,7 +62,7 @@ pub fn Switch(props: SwitchProps) -> Element {
             span {
                 "data-slot": "switch-thumb",
                 "data-state": if is_checked { "checked" } else { "unchecked" },
-                class: "pointer-events-none block size-4 rounded-full bg-background border border-border/40 ring-0 transition-transform {thumb_trans}",
+                class: "pointer-events-none block size-4 rounded-full {thumb_bg} border border-black/10 dark:border-white/10 ring-0 transition-transform duration-200 ease-out {thumb_trans}",
             }
         }
     }

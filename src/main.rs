@@ -212,6 +212,22 @@ fn main() {
                                     try { e.dataTransfer.dropEffect = 'move'; } catch(err) {}
                                 }
                             }, false);
+
+                            // Global keyboard shortcuts
+                            document.addEventListener('keydown', function(e) {
+                                if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+                                    e.preventDefault();
+                                    var btn = document.querySelector('[data-slot="open-settings-btn"]');
+                                    if (btn) btn.click();
+                                }
+                                if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D') && !e.shiftKey && !e.altKey) {
+                                    var activeEl = document.activeElement;
+                                    if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) return;
+                                    e.preventDefault();
+                                    var themeBtn = document.querySelector('[data-slot="theme-toggle-btn"]');
+                                    if (themeBtn) themeBtn.click();
+                                }
+                            }, false);
                         })();
                         </script>"#.to_string(),
                     )
@@ -270,6 +286,32 @@ fn AppShell() -> Element {
     use_context_provider(|| open_settings);
 
     let is_sidebar_right = app_settings.read().sidebar_position == "right";
+
+    // Restore and enforce appearance options from SQLite on launch
+    use_hook(|| {
+        let s = app_settings.peek().clone();
+        crate::state::apply_appearance_to_dom(
+            &s.accent_color,
+            &s.font_scale,
+            &s.card_density,
+            &s.corner_radius,
+            &s.font_family,
+            s.oled_dark,
+            s.animations_enabled,
+        );
+        let landing = s.default_landing_page.clone();
+        if landing != "tickets" {
+            let nav = use_navigator();
+            match landing.as_str() {
+                "notes" => { let _ = nav.replace(Route::NotesPage {}); }
+                "employees" => { let _ = nav.replace(Route::Employees {}); }
+                "reminders" => { let _ = nav.replace(Route::Reminders {}); }
+                "calendar" => { let _ = nav.replace(Route::CalendarPage {}); }
+                "analytics" => { let _ = nav.replace(Route::Analytics {}); }
+                _ => {}
+            }
+        }
+    });
 
     rsx! {
         ToastProvider {

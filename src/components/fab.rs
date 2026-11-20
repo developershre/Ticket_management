@@ -408,7 +408,7 @@ pub fn Fab() -> Element {
                         button {
                             r#type: "button",
                             title: "{kind_item.label()}",
-                            class: "flex size-11 items-center justify-center rounded-full border border-border/80 bg-card/95 text-foreground shadow-lg shadow-black/10 backdrop-blur-md transition-all duration-150 hover:scale-110 hover:border-primary/50 hover:bg-accent hover:text-primary cursor-pointer",
+                            class: "flex size-11 items-center justify-center rounded-full border border-border/80 bg-card/95 text-foreground shadow-lg shadow-black/10 backdrop-blur-md fab-spring hover:border-primary/50 hover:bg-accent hover:text-primary cursor-pointer",
                             onclick: move |_| open_kind(*kind_item),
                             {kind_item.icon()}
                         }
@@ -424,7 +424,7 @@ pub fn Fab() -> Element {
             r#type: "button",
             title: "Quick actions",
             "aria-label": "Quick actions",
-            class: "fixed bottom-20 right-6 z-40 flex size-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-xl shadow-primary/30 hover:shadow-2xl hover:shadow-primary/45 hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer border border-primary-foreground/15",
+            class: "fixed bottom-20 right-6 z-40 flex size-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-xl shadow-primary/30 hover:shadow-2xl hover:shadow-primary/45 fab-spring cursor-pointer border border-primary-foreground/15",
             onclick: move |_| {
                 let next = !*menu_open.read();
                 menu_open.set(next);

@@ -272,7 +272,7 @@ pub fn get_connection() -> Result<Connection> {
 // Data Models matching DATABASE.SQL
 // ============================================================
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DbEmployee {
     pub emp_id: i64,
     /// Sheet employee code (numeric string, e.g. `"10081"`); may be empty
@@ -285,7 +285,7 @@ pub struct DbEmployee {
     pub division: String,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DbTicket {
     pub ticket_id: i64,
     pub employee_code: String,
@@ -314,7 +314,7 @@ pub struct DbTicket {
     pub server_last_updated: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DbNote {
     pub id: i64,
     pub emp_code: String,
@@ -322,7 +322,7 @@ pub struct DbNote {
     pub created_at: String,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DbReminder {
     pub reminder_id: i64,
     pub employee_code: String,
@@ -3642,6 +3642,25 @@ pub fn delete_employee_db(emp_code: &str) -> Result<()> {
     )?;
     invalidate_employee_lookup_cache();
     Ok(())
+}
+
+/// Compacts and optimizes the SQLite database file on disk.
+pub fn optimize_database() -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute_batch("VACUUM; PRAGMA optimize;")?;
+    Ok(())
+}
+
+/// Purges resolved conflicts from the sync_conflicts table.
+pub fn purge_resolved_conflicts() -> Result<usize> {
+    let conn = get_connection()?;
+    let affected = conn.execute("DELETE FROM sync_conflicts WHERE resolved_at IS NOT NULL", [])?;
+    Ok(affected)
+}
+
+/// Returns the file size of the active database in bytes.
+pub fn get_database_file_size() -> u64 {
+    std::fs::metadata(db_path()).map(|m| m.len()).unwrap_or(0)
 }
 
 #[cfg(test)]

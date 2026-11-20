@@ -11,7 +11,7 @@ pub struct CardProps {
 #[component]
 pub fn Card(props: CardProps) -> Element {
     let class = format!(
-        "rounded-xl border border-border bg-card text-card-foreground shadow-xs {}",
+        "rounded-xl border border-border bg-card text-card-foreground shadow-xs transition-all duration-200 ease-out {}",
         props.class
     );
 
