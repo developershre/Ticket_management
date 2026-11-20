@@ -99,13 +99,15 @@ pub fn Titlebar(props: TitlebarProps) -> Element {
                 ThemeToggle { class: "size-7 border-none bg-transparent hover:bg-sidebar-accent text-sidebar-foreground" }
             }
 
-            // Settings button (API config)
+            // Settings button (API config & preferences)
             div { class: "flex items-center px-0.5",
                 button {
                     r#type: "button",
-                    title: "API & System Settings",
+                    "data-slot": "open-settings-btn",
+                    title: "Preferences & Customization (Ctrl+,)",
                     class: "size-7 inline-flex items-center justify-center rounded-md border-none bg-transparent hover:bg-sidebar-accent text-sidebar-foreground/80 hover:text-sidebar-foreground transition-colors cursor-pointer",
                     onclick: move |_| {
+                        crate::state::play_sound("click");
                         if let Some(mut open_settings) = try_use_context::<Signal<crate::state::OpenSettingsDialog>>() {
                             open_settings.set(crate::state::OpenSettingsDialog(true));
                         }

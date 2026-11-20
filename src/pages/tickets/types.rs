@@ -692,16 +692,30 @@ impl TicketContextState {
     }
 
     pub fn open_create(&mut self, default_column: Option<&str>) {
+        let def_priority = crate::db::sync_meta_get("ui_default_priority").unwrap_or_else(|| "Medium".to_string());
+        let def_category = crate::db::sync_meta_get("ui_default_category").unwrap_or_else(|| "General".to_string());
+        let def_assignee = crate::db::sync_meta_get("ui_default_assignee").unwrap_or_else(|| "IT Support".to_string());
+        let def_emp = crate::db::sync_meta_get("system_employee_code").unwrap_or_default();
+
         self.create_emp_name.set(String::new());
         self.create_employee_code.set(String::new());
         self.create_email_address.set(String::new());
-        self.create_category.set("Select category".to_string());
+        if !def_emp.is_empty() {
+            self.create_employee_code.set(def_emp.clone());
+            if let Some(emp) = crate::db::find_employee_by_code(&def_emp) {
+                self.create_emp_name.set(emp.emp_name);
+                if !emp.emp_email.is_empty() {
+                    self.create_email_address.set(emp.emp_email);
+                }
+            }
+        }
+        self.create_category.set(def_category);
         self.create_subject.set(String::new());
         self.create_problem_description.set(String::new());
         self.create_attachment_name.set(String::new());
         self.create_attachment_url.set(String::new());
-        self.create_priority.set("Low".to_string());
-        self.create_assigned_to.set("IT Support".to_string());
+        self.create_priority.set(def_priority);
+        self.create_assigned_to.set(def_assignee);
         self.create_customer.set("Internal".to_string());
         self.create_time_spent.set(0.0);
         self.create_activities.set("Ticket created".to_string());

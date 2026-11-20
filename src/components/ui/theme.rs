@@ -268,7 +268,7 @@ pub fn ThemeProvider(props: ThemeProviderProps) -> Element {
     let ctx = ThemeContext { mode, system_dark };
     use_context_provider(|| ctx);
 
-    // Initial load: restore user explicit choices from localStorage (theme, font scale, density, animations)
+    // Initial load: restore user explicit choices from localStorage (theme, font scale, density, animations, accent, radius, font-family, oled)
     use_hook(|| {
         spawn(async move {
             let mut eval = document::eval(
@@ -285,6 +285,22 @@ pub fn ThemeProvider(props: ThemeProviderProps) -> Element {
                 const savedAnim = localStorage.getItem('bpsl-animations') || '';
                 if (savedAnim === 'false') {
                     document.documentElement.setAttribute('data-animations', 'false');
+                }
+                const savedAccent = localStorage.getItem('bpsl-accent') || '';
+                if (savedAccent && savedAccent !== 'default') {
+                    document.documentElement.setAttribute('data-accent', savedAccent);
+                }
+                const savedRadius = localStorage.getItem('bpsl-radius') || '';
+                if (savedRadius && savedRadius !== 'rounded') {
+                    document.documentElement.setAttribute('data-radius', savedRadius);
+                }
+                const savedFontFam = localStorage.getItem('bpsl-font-family') || '';
+                if (savedFontFam && savedFontFam !== 'roboto') {
+                    document.documentElement.setAttribute('data-font-family', savedFontFam);
+                }
+                const savedOled = localStorage.getItem('bpsl-oled') || '';
+                if (savedOled === 'true') {
+                    document.documentElement.setAttribute('data-oled', 'true');
                 }
                 dioxus.send(saved);
                 "#,
@@ -388,6 +404,7 @@ pub fn ThemeToggle(props: ThemeToggleProps) -> Element {
     rsx! {
                         button {
                     r#type: "button",
+                    "data-slot": "theme-toggle-btn",
                     title: "{tooltip_text}",
                     class: "group relative inline-flex size-8 items-center justify-center rounded-md \
                             border border-border/60 bg-background/80 text-foreground/80 \

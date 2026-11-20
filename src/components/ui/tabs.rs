@@ -241,6 +241,9 @@ pub fn TabsContent(props: TabsContentProps) -> Element {
                 flex-1
                 text-sm
                 outline-none
+                animate-in
+                fade-in-0
+                duration-150
                 {props.class}
             ",
 

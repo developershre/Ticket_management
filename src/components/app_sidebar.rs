@@ -4,6 +4,9 @@
 
 use dioxus::prelude::*;
 
+use crate::components::ui::select::{
+    Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue,
+};
 use crate::components::ui::sidebar::{
     Sidebar, SidebarCollapsible, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent,
     SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuBadge, SidebarMenuButton,
@@ -49,6 +52,17 @@ pub fn AppSidebar() -> Element {
             None
         }
     };
+
+    let active_sheet_label = sheet_sources
+        .iter()
+        .find(|s| s.id == active_sheet_id)
+        .map(|s| s.name.clone())
+        .unwrap_or_else(|| "Select Sheet...".to_string());
+
+    let mut active_sheet_sig = use_signal(|| active_sheet_id.clone());
+    if *active_sheet_sig.read() != active_sheet_id {
+        active_sheet_sig.set(active_sheet_id.clone());
+    }
 
     rsx! {
         Sidebar {
@@ -214,14 +228,14 @@ pub fn AppSidebar() -> Element {
                 SidebarMenu {
                     SidebarMenuItem {
                         SidebarMenuButton {
-                            tooltip: Some("API & System Settings".to_string()),
+                            tooltip: Some("Preferences & Customization (Ctrl+,)".to_string()),
                             onclick: move |_| {
                                 if let Some(mut open_settings) = try_use_context::<Signal<crate::state::OpenSettingsDialog>>() {
                                     open_settings.set(crate::state::OpenSettingsDialog(true));
                                 }
                             },
                             crate::icons::SettingsIcon { class: "size-4 text-muted-foreground" }
-                            span { class: "sidebar-text", "API Settings" }
+                            span { class: "sidebar-text", "Preferences" }
                         }
                     }
                 }

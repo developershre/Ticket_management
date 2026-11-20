@@ -31,6 +31,7 @@ pub use types::{
 pub fn Tickets() -> Element {
     let mut tickets = use_signal(initial_tickets);
     let db_sync = try_use_context::<Signal<crate::state::AppDbRevision>>();
+    let app_settings = try_use_context::<Signal<crate::state::AppSettings>>();
     use_effect(move || {
         if let Some(sync) = db_sync {
             let _ = sync();
@@ -184,10 +185,22 @@ pub fn Tickets() -> Element {
         let hide_empty = *hide_empty_views.read();
         let hidden = hidden_views.read().clone();
         let groups = grouped_columns.read();
+        let (hide_cancelled, hide_solved) = if let Some(s) = app_settings {
+            let r = s.read();
+            (r.kanban_hide_cancelled, r.kanban_hide_solved)
+        } else {
+            (false, false)
+        };
 
         defs.into_iter()
             .filter(|def| {
                 if hidden.contains(&def.id) {
+                    return false;
+                }
+                if hide_cancelled && def.id == "Cancelled" {
+                    return false;
+                }
+                if hide_solved && (def.id == "Completed" || def.id == "Solved") {
                     return false;
                 }
                 if hide_empty {
@@ -603,7 +616,7 @@ pub fn Tickets() -> Element {
 
             // Tabs for Kanban vs IT Data Table
             Tabs {
-                value: "kanban".to_string(),
+                value: app_settings.map(|s| s.read().default_ticket_view.clone()).unwrap_or_else(|| "kanban".to_string()),
                 class: "flex flex-col flex-1 min-h-0 w-full overflow-hidden",
                 div { class: "flex items-center justify-between pb-2 shrink-0 border-b border-border/30",
                     TabsList {

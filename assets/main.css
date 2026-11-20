@@ -109,6 +109,148 @@ p, span, h1, h2, h3, h4, h5, h6, label, button, input, select, textarea {
 }
 
 /* ============================================================
+ * Accent Color Themes (Light & Dark)
+ * ============================================================ */
+html[data-accent="blue"] {
+    --primary: #2563eb !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(37, 99, 235, 0.4) !important;
+    --sidebar-primary: #2563eb !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="blue"].dark,
+html[data-accent="blue"] .dark {
+    --primary: #3b82f6 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(59, 130, 246, 0.4) !important;
+    --sidebar-primary: #3b82f6 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+
+html[data-accent="emerald"] {
+    --primary: #059669 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(5, 150, 105, 0.4) !important;
+    --sidebar-primary: #059669 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="emerald"].dark,
+html[data-accent="emerald"] .dark {
+    --primary: #10b981 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(16, 185, 129, 0.4) !important;
+    --sidebar-primary: #10b981 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+
+html[data-accent="violet"] {
+    --primary: #7c3aed !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(124, 58, 237, 0.4) !important;
+    --sidebar-primary: #7c3aed !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="violet"].dark,
+html[data-accent="violet"] .dark {
+    --primary: #8b5cf6 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(139, 92, 246, 0.4) !important;
+    --sidebar-primary: #8b5cf6 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+
+html[data-accent="amber"] {
+    --primary: #d97706 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(217, 119, 6, 0.4) !important;
+    --sidebar-primary: #d97706 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="amber"].dark,
+html[data-accent="amber"] .dark {
+    --primary: #f59e0b !important;
+    --primary-foreground: #111318 !important;
+    --ring: rgba(245, 158, 11, 0.4) !important;
+    --sidebar-primary: #f59e0b !important;
+    --sidebar-primary-foreground: #111318 !important;
+}
+
+html[data-accent="rose"] {
+    --primary: #e11d48 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(225, 29, 72, 0.4) !important;
+    --sidebar-primary: #e11d48 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="rose"].dark,
+html[data-accent="rose"] .dark {
+    --primary: #f43f5e !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(244, 63, 94, 0.4) !important;
+    --sidebar-primary: #f43f5e !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+
+html[data-accent="cyan"] {
+    --primary: #0891b2 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(8, 145, 178, 0.4) !important;
+    --sidebar-primary: #0891b2 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="cyan"].dark,
+html[data-accent="cyan"] .dark {
+    --primary: #06b6d4 !important;
+    --primary-foreground: #111318 !important;
+    --ring: rgba(6, 182, 212, 0.4) !important;
+    --sidebar-primary: #06b6d4 !important;
+    --sidebar-primary-foreground: #111318 !important;
+}
+
+/* ============================================================
+ * OLED Pure Black Dark Mode
+ * ============================================================ */
+html[data-oled="true"].dark,
+html[data-oled="true"] .dark {
+    --background: #000000 !important;
+    --card: #080808 !important;
+    --popover: #0a0a0a !important;
+    --sidebar: #050505 !important;
+    --secondary: #121212 !important;
+    --muted: #141414 !important;
+    --border: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* ============================================================
+ * Corner Radius Presets
+ * ============================================================ */
+html[data-radius="sharp"] {
+    --radius: 0rem !important;
+}
+html[data-radius="rounded"] {
+    --radius: 0.375rem !important;
+}
+html[data-radius="smooth"] {
+    --radius: 0.65rem !important;
+}
+html[data-radius="pill"] {
+    --radius: 1rem !important;
+}
+
+/* ============================================================
+ * Font Family Presets
+ * ============================================================ */
+html[data-font-family="system"] {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+}
+html[data-font-family="roboto"] {
+    font-family: 'Roboto', sans-serif !important;
+}
+html[data-font-family="mono"] {
+    font-family: 'Roboto Mono', monospace !important;
+}
+
+/* ============================================================
  * Card Density Presets
  * ============================================================ */
 html[data-card-density="compact"] .p-3,
@@ -156,12 +298,38 @@ body {
     scroll-behavior: smooth;
 }
 
-/* Global shadow removal — clean flat modern styling */
+/* Clean flat styling with selective elevation for floating overlays, popups, and hover lifts */
 *,
 *::before,
 *::after {
-    box-shadow: none !important;
     text-shadow: none !important;
+}
+
+:not([role="dialog"], [role="tooltip"], [data-slot*="dialog"], [data-slot*="dropdown"], [data-slot*="popover"], [data-slot*="tooltip"], [data-slot*="switch-thumb"], [data-popup], .toast-item, .hover-lift, [class*="shadow-"]) {
+    box-shadow: none;
+}
+
+/* Preserve elevation and tactile depth on toggle switch knobs */
+button[role="switch"] span,
+[data-slot="switch-thumb"] {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.2) !important;
+}
+
+/* Elevated overlay surfaces */
+[role="dialog"],
+[data-slot="dialog-content"],
+[data-slot="dropdown-menu-content"],
+[data-slot="popover-content"],
+.toast-item {
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.22), 0 8px 10px -6px rgba(0, 0, 0, 0.12) !important;
+}
+
+.dark [role="dialog"],
+.dark [data-slot="dialog-content"],
+.dark [data-slot="dropdown-menu-content"],
+.dark [data-slot="popover-content"],
+.dark .toast-item {
+    box-shadow: 0 16px 36px -6px rgba(0, 0, 0, 0.75), 0 8px 16px -6px rgba(0, 0, 0, 0.5) !important;
 }
 
 /* Smooth fluid transitions */
@@ -208,4 +376,339 @@ textarea,
 /* Keep focus rings clean and consistent */
 :focus-visible {
     outline: none;
+}
+
+/* ============================================================
+ * Transitions & Micro-Animations Suite
+ * ============================================================ */
+
+/* Base animation variables */
+:root {
+    --tw-enter-opacity: 1;
+    --tw-enter-scale: 1;
+    --tw-enter-rotate: 0deg;
+    --tw-enter-translate-x: 0;
+    --tw-enter-translate-y: 0;
+
+    --tw-exit-opacity: 1;
+    --tw-exit-scale: 1;
+    --tw-exit-rotate: 0deg;
+    --tw-exit-translate-x: 0;
+    --tw-exit-translate-y: 0;
+}
+
+/* Core keyframes for radix/shadcn-style animate-in and animate-out */
+@keyframes enter {
+    from {
+        opacity: var(--tw-enter-opacity, 1);
+        transform: translate3d(var(--tw-enter-translate-x, 0), var(--tw-enter-translate-y, 0), 0)
+                   scale3d(var(--tw-enter-scale, 1), var(--tw-enter-scale, 1), var(--tw-enter-scale, 1))
+                   rotate(var(--tw-enter-rotate, 0));
+    }
+}
+
+@keyframes exit {
+    to {
+        opacity: var(--tw-exit-opacity, 1);
+        transform: translate3d(var(--tw-exit-translate-x, 0), var(--tw-exit-translate-y, 0), 0)
+                   scale3d(var(--tw-exit-scale, 1), var(--tw-exit-scale, 1), var(--tw-exit-scale, 1))
+                   rotate(var(--tw-exit-rotate, 0));
+    }
+}
+
+.animate-in {
+    animation-name: enter;
+    animation-duration: 150ms;
+    animation-fill-mode: both;
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+    --tw-enter-opacity: initial;
+    --tw-enter-scale: initial;
+    --tw-enter-rotate: initial;
+    --tw-enter-translate-x: initial;
+    --tw-enter-translate-y: initial;
+}
+
+.animate-out {
+    animation-name: exit;
+    animation-duration: 150ms;
+    animation-fill-mode: both;
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+    --tw-exit-opacity: initial;
+    --tw-exit-scale: initial;
+    --tw-exit-rotate: initial;
+    --tw-exit-translate-x: initial;
+    --tw-exit-translate-y: initial;
+}
+
+/* Opacity utilities */
+.fade-in, .fade-in-0 { --tw-enter-opacity: 0; }
+.fade-in-25 { --tw-enter-opacity: 0.25; }
+.fade-in-50 { --tw-enter-opacity: 0.5; }
+.fade-in-75 { --tw-enter-opacity: 0.75; }
+.fade-in-100 { --tw-enter-opacity: 1; }
+
+.fade-out, .fade-out-0 { --tw-exit-opacity: 0; }
+.fade-out-25 { --tw-exit-opacity: 0.25; }
+.fade-out-50 { --tw-exit-opacity: 0.5; }
+.fade-out-75 { --tw-exit-opacity: 0.75; }
+.fade-out-100 { --tw-exit-opacity: 1; }
+
+/* Scale / Zoom utilities */
+.zoom-in, .zoom-in-0 { --tw-enter-scale: 0; }
+.zoom-in-50 { --tw-enter-scale: 0.5; }
+.zoom-in-75 { --tw-enter-scale: 0.75; }
+.zoom-in-90 { --tw-enter-scale: 0.90; }
+.zoom-in-95 { --tw-enter-scale: 0.95; }
+.zoom-in-100 { --tw-enter-scale: 1; }
+.zoom-in-105 { --tw-enter-scale: 1.05; }
+
+.zoom-out, .zoom-out-0 { --tw-exit-scale: 0; }
+.zoom-out-50 { --tw-exit-scale: 0.5; }
+.zoom-out-75 { --tw-exit-scale: 0.75; }
+.zoom-out-90 { --tw-exit-scale: 0.90; }
+.zoom-out-95 { --tw-exit-scale: 0.95; }
+.zoom-out-100 { --tw-exit-scale: 1; }
+
+/* Slide utilities */
+.slide-in-from-top-1 { --tw-enter-translate-y: -0.25rem; }
+.slide-in-from-top-2 { --tw-enter-translate-y: -0.5rem; }
+.slide-in-from-top-3 { --tw-enter-translate-y: -0.75rem; }
+.slide-in-from-top-4 { --tw-enter-translate-y: -1rem; }
+.slide-in-from-top-6 { --tw-enter-translate-y: -1.5rem; }
+.slide-in-from-top-8 { --tw-enter-translate-y: -2rem; }
+.slide-in-from-top-full { --tw-enter-translate-y: -100%; }
+
+.slide-in-from-bottom-1 { --tw-enter-translate-y: 0.25rem; }
+.slide-in-from-bottom-2 { --tw-enter-translate-y: 0.5rem; }
+.slide-in-from-bottom-3 { --tw-enter-translate-y: 0.75rem; }
+.slide-in-from-bottom-4 { --tw-enter-translate-y: 1rem; }
+.slide-in-from-bottom-5 { --tw-enter-translate-y: 1.25rem; }
+.slide-in-from-bottom-6 { --tw-enter-translate-y: 1.5rem; }
+.slide-in-from-bottom-8 { --tw-enter-translate-y: 2rem; }
+.slide-in-from-bottom-full { --tw-enter-translate-y: 100%; }
+
+.slide-in-from-left-1 { --tw-enter-translate-x: -0.25rem; }
+.slide-in-from-left-2 { --tw-enter-translate-x: -0.5rem; }
+.slide-in-from-left-3 { --tw-enter-translate-x: -0.75rem; }
+.slide-in-from-left-4 { --tw-enter-translate-x: -1rem; }
+.slide-in-from-left-6 { --tw-enter-translate-x: -1.5rem; }
+.slide-in-from-left-full { --tw-enter-translate-x: -100%; }
+
+.slide-in-from-right-1 { --tw-enter-translate-x: 0.25rem; }
+.slide-in-from-right-2 { --tw-enter-translate-x: 0.5rem; }
+.slide-in-from-right-3 { --tw-enter-translate-x: 0.75rem; }
+.slide-in-from-right-4 { --tw-enter-translate-x: 1rem; }
+.slide-in-from-right-6 { --tw-enter-translate-x: 1.5rem; }
+.slide-in-from-right-full { --tw-enter-translate-x: 100%; }
+
+.slide-out-to-top-2 { --tw-exit-translate-y: -0.5rem; }
+.slide-out-to-bottom-2 { --tw-exit-translate-y: 0.5rem; }
+.slide-out-to-left-2 { --tw-exit-translate-x: -0.5rem; }
+.slide-out-to-right-2 { --tw-exit-translate-x: 0.5rem; }
+
+/* Dialog & Modal keyframes & classes */
+@keyframes dialog-overlay-in {
+    0% {
+        opacity: 0;
+        backdrop-filter: blur(0px);
+    }
+    100% {
+        opacity: 1;
+        backdrop-filter: blur(4px);
+    }
+}
+
+@keyframes dialog-content-in {
+    0% {
+        opacity: 0;
+        transform: translate(-50%, -48%) scale(0.95);
+    }
+    100% {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+}
+
+@keyframes modal-pop-in {
+    0% {
+        opacity: 0;
+        transform: scale(0.95) translateY(4px);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+.animate-dialog-overlay {
+    animation: dialog-overlay-in 180ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-dialog-content {
+    animation: dialog-content-in 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-modal-pop {
+    animation: modal-pop-in 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Micro-interaction: Tactile Card Hover Lift & Surface Feedback */
+.hover-lift,
+.card-interactive,
+[data-slot="card"].card-interactive {
+    transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+                border-color 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+                box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+                background-color 0.22s ease;
+}
+
+.hover-lift:hover,
+.card-interactive:hover,
+[data-slot="card"].card-interactive:hover {
+    transform: translateY(-2px);
+}
+
+.hover-lift:active,
+.card-interactive:active,
+[data-slot="card"].card-interactive:active {
+    transform: translateY(0px) scale(0.99);
+}
+
+/* Micro-interaction: Button & Clickable Press Physics */
+.btn-press,
+button:not(:disabled):active,
+[role="button"]:not([aria-disabled="true"]):active {
+    transform: scale(0.98);
+    transition: transform 0.08s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Micro-interaction: Subtle status breathing pulse */
+@keyframes pulse-subtle {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.72;
+        transform: scale(1.025);
+    }
+}
+
+.animate-pulse-subtle {
+    animation: pulse-subtle 2.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Micro-interaction: Soft radar ping for live syncing and connected states */
+@keyframes ping-soft {
+    0% {
+        transform: scale(0.95);
+        opacity: 0.8;
+    }
+    75%, 100% {
+        transform: scale(1.85);
+        opacity: 0;
+    }
+}
+
+.animate-ping-soft {
+    animation: ping-soft 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+/* Micro-interaction: Shimmer sweep effect for skeleton loading states */
+@keyframes shimmer {
+    0% {
+        background-position: -200% 0;
+    }
+    100% {
+        background-position: 200% 0;
+    }
+}
+
+.animate-shimmer {
+    background: linear-gradient(
+        90deg,
+        color-mix(in oklab, var(--muted) 80%, transparent) 0%,
+        color-mix(in oklab, var(--primary) 14%, var(--muted)) 50%,
+        color-mix(in oklab, var(--muted) 80%, transparent) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.8s ease-in-out infinite;
+}
+
+/* Micro-interaction: Accordion expand & collapse */
+@keyframes accordion-down {
+    from {
+        height: 0;
+        opacity: 0;
+    }
+    to {
+        height: var(--radix-accordion-content-height, auto);
+        opacity: 1;
+    }
+}
+
+@keyframes accordion-up {
+    from {
+        height: var(--radix-accordion-content-height, auto);
+        opacity: 1;
+    }
+    to {
+        height: 0;
+        opacity: 0;
+    }
+}
+
+.animate-accordion-down {
+    animation: accordion-down 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-accordion-up {
+    animation: accordion-up 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Micro-interaction: Floating Action Button spring physics */
+.fab-spring {
+    transition: transform 0.24s cubic-bezier(0.34, 1.56, 0.64, 1),
+                box-shadow 0.24s ease,
+                background-color 0.2s ease;
+}
+.fab-spring:hover {
+    transform: scale(1.06);
+}
+.fab-spring:active {
+    transform: scale(0.95);
+}
+
+/* Smooth Tab Content Fade Entry */
+[data-slot="tabs-content"] {
+    animation: enter 150ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    --tw-enter-opacity: 0;
+}
+
+/* Enhanced Toast Notification with horizontal slide-in */
+@keyframes toast-slide-in {
+    0% {
+        opacity: 0;
+        transform: translateX(16px) scale(0.96);
+    }
+    8% {
+        opacity: 1;
+        transform: translateX(0) scale(1);
+    }
+    92% {
+        opacity: 1;
+        transform: translateX(0) scale(1);
+    }
+    100% {
+        opacity: 0;
+        transform: translateY(-8px) scale(0.96);
+    }
+}
+
+.toast-item {
+    animation: toast-slide-in 5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.toast-item:hover {
+    animation-play-state: paused;
 }

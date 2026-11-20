@@ -1,10 +1,12 @@
 //! Advanced Settings Panel for BPSL IT Support.
 //!
 //! Multi-tab settings dialog with:
-//! - **API & Connection**: Base URL, API Key, connection testing
-//! - **Appearance**: Theme mode (Light/Dark/System), UI density, sidebar behavior
-//! - **Sync & Data**: Sync interval tuning, data management, export/import, cache purge
-//! - **About**: App version, database location, system diagnostics
+//! - **Appearance & Theme**: Theme mode, OLED pure black, accent colors, typography, corner radius, density
+//! - **Tickets & Workflow**: Default landing page, default view, priority, category, assignee, kanban filters
+//! - **Alerts & Audio**: Sound chimes, sound volume, toast duration, reminder pre-alerts, sync alerts
+//! - **API & Connection**: Base URL, protocol, API Key, connection testing, multi-sheet sources
+//! - **Sync & Data**: Sync cadence, queue diagnostics, JSON export backup, SQLite optimize/vacuum
+//! - **About & System**: App identity, database file stats, system diagnostics, keyboard shortcuts
 //!
 //! All preferences are persisted in SQLite `sync_meta` and survive app restarts.
 
@@ -13,7 +15,7 @@ use dioxus::prelude::*;
 use crate::components::ui::button::Button;
 use crate::components::ui::input::Input;
 use crate::components::ui::toast::ToastState;
-use crate::icons::{AlertCircleIcon, CheckIcon, EyeIcon, KeyIcon, SettingsIcon, XIcon};
+use crate::icons::{AlertCircleIcon, BellIcon, CheckIcon, EyeIcon, KeyIcon, RefreshIcon, SettingsIcon, XIcon};
 
 // ============================================================
 // Settings Tab Enum
@@ -21,8 +23,10 @@ use crate::icons::{AlertCircleIcon, CheckIcon, EyeIcon, KeyIcon, SettingsIcon, X
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum SettingsTab {
-    Api,
     Appearance,
+    Workflow,
+    Notifications,
+    Api,
     SyncData,
     About,
 }
@@ -30,28 +34,54 @@ enum SettingsTab {
 impl SettingsTab {
     fn label(&self) -> &'static str {
         match self {
+            Self::Appearance => "Appearance & Theme",
+            Self::Workflow => "Tickets & Workflow",
+            Self::Notifications => "Alerts & Audio",
             Self::Api => "API & Connection",
-            Self::Appearance => "Appearance",
             Self::SyncData => "Sync & Data",
-            Self::About => "About",
+            Self::About => "About & System",
         }
     }
 
     fn icon_path(&self) -> &'static str {
         match self {
-            Self::Api => "M15 7h3a5 5 0 0 1 0 10h-3m-6 0H6a5 5 0 0 1 0-10h3 M8 12h8",
             Self::Appearance => "M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707 M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z",
+            Self::Workflow => "M4 6h16M4 12h16M4 18h7",
+            Self::Notifications => "M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9 M13.73 21a2 2 0 0 1-3.46 0",
+            Self::Api => "M15 7h3a5 5 0 0 1 0 10h-3m-6 0H6a5 5 0 0 1 0-10h3 M8 12h8",
             Self::SyncData => "M21 2v6h-6 M3 12a9 9 0 0 1 15-6.7L21 8 M3 22v-6h6 M21 12a9 9 0 0 1-15 6.7L3 16",
             Self::About => "M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z M12 16v-4 M12 8h.01",
         }
     }
 }
 
-const TABS: [SettingsTab; 4] = [
-    SettingsTab::Api,
+const TABS: [SettingsTab; 6] = [
     SettingsTab::Appearance,
+    SettingsTab::Workflow,
+    SettingsTab::Notifications,
+    SettingsTab::Api,
     SettingsTab::SyncData,
     SettingsTab::About,
+];
+
+// ============================================================
+// Accent Colors Definition
+// ============================================================
+
+struct AccentOption {
+    id: &'static str,
+    name: &'static str,
+    color_hex: &'static str,
+}
+
+const ACCENT_OPTIONS: [AccentOption; 7] = [
+    AccentOption { id: "default", name: "Monochrome", color_hex: "#71717a" },
+    AccentOption { id: "blue", name: "Ocean Blue", color_hex: "#3b82f6" },
+    AccentOption { id: "emerald", name: "Emerald Green", color_hex: "#10b981" },
+    AccentOption { id: "violet", name: "Royal Purple", color_hex: "#8b5cf6" },
+    AccentOption { id: "amber", name: "Amber Gold", color_hex: "#f59e0b" },
+    AccentOption { id: "rose", name: "Crimson Rose", color_hex: "#f43f5e" },
+    AccentOption { id: "cyan", name: "Cyber Cyan", color_hex: "#06b6d4" },
 ];
 
 // ============================================================
@@ -87,9 +117,83 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
     let db_sync = try_use_context::<Signal<crate::state::AppDbRevision>>();
 
     // Active tab
-    let mut active_tab = use_signal(|| SettingsTab::Api);
+    let mut active_tab = use_signal(|| SettingsTab::Appearance);
 
-    // ---- API Tab State ----
+    // ========================================================
+    // TAB 1: Appearance State
+    // ========================================================
+    let initial_sidebar_pos = crate::db::sync_meta_get("ui_sidebar_position").unwrap_or_else(|| "left".to_string());
+    let mut sidebar_position = use_signal(|| initial_sidebar_pos);
+
+    let initial_density = crate::db::sync_meta_get("ui_card_density").unwrap_or_else(|| "default".to_string());
+    let mut card_density = use_signal(|| initial_density);
+
+    let initial_animations = crate::db::sync_meta_get("ui_animations_enabled").unwrap_or_else(|| "true".to_string());
+    let mut animations_enabled = use_signal(|| initial_animations == "true");
+
+    let initial_date_fmt = crate::db::sync_meta_get("ui_date_format").unwrap_or_else(|| "12hr".to_string());
+    let mut date_format = use_signal(|| initial_date_fmt);
+
+    let initial_font_scale = crate::db::sync_meta_get("ui_font_scale").unwrap_or_else(|| "auto".to_string());
+    let mut font_scale = use_signal(|| initial_font_scale);
+
+    let initial_font_fam = crate::db::sync_meta_get("ui_font_family").unwrap_or_else(|| "roboto".to_string());
+    let mut font_family = use_signal(|| initial_font_fam);
+
+    let initial_accent = crate::db::sync_meta_get("ui_accent_color").unwrap_or_else(|| "default".to_string());
+    let mut accent_color = use_signal(|| initial_accent);
+
+    let initial_radius = crate::db::sync_meta_get("ui_corner_radius").unwrap_or_else(|| "rounded".to_string());
+    let mut corner_radius = use_signal(|| initial_radius);
+
+    let initial_oled = crate::db::sync_meta_get("ui_oled_dark").map(|v| v == "true").unwrap_or(false);
+    let mut oled_dark = use_signal(|| initial_oled);
+
+    // ========================================================
+    // TAB 2: Workflow & Tickets State
+    // ========================================================
+    let initial_landing = crate::db::sync_meta_get("ui_default_landing_page").unwrap_or_else(|| "tickets".to_string());
+    let mut default_landing = use_signal(|| initial_landing);
+
+    let initial_ticket_view = crate::db::sync_meta_get("ui_default_ticket_view").unwrap_or_else(|| "kanban".to_string());
+    let mut default_ticket_view = use_signal(|| initial_ticket_view);
+
+    let initial_priority = crate::db::sync_meta_get("ui_default_priority").unwrap_or_else(|| "Medium".to_string());
+    let mut default_priority = use_signal(|| initial_priority);
+
+    let initial_category = crate::db::sync_meta_get("ui_default_category").unwrap_or_else(|| "General".to_string());
+    let mut default_category = use_signal(|| initial_category);
+
+    let initial_assignee = crate::db::sync_meta_get("ui_default_assignee").unwrap_or_else(|| "IT Support".to_string());
+    let mut default_assignee = use_signal(|| initial_assignee);
+
+    let initial_hide_cancelled = crate::db::sync_meta_get("ui_kanban_hide_cancelled").map(|v| v == "true").unwrap_or(false);
+    let mut kanban_hide_cancelled = use_signal(|| initial_hide_cancelled);
+
+    let initial_hide_solved = crate::db::sync_meta_get("ui_kanban_hide_solved").map(|v| v == "true").unwrap_or(false);
+    let mut kanban_hide_solved = use_signal(|| initial_hide_solved);
+
+    // ========================================================
+    // TAB 3: Alerts & Audio State
+    // ========================================================
+    let initial_sound_on = crate::db::sync_meta_get("ui_sound_enabled").map(|v| v != "false").unwrap_or(true);
+    let mut sound_enabled = use_signal(|| initial_sound_on);
+
+    let initial_sound_vol = crate::db::sync_meta_get("ui_sound_volume").unwrap_or_else(|| "medium".to_string());
+    let mut sound_volume = use_signal(|| initial_sound_vol);
+
+    let initial_toast_dur = crate::db::sync_meta_get("ui_toast_duration_secs").unwrap_or_else(|| "5".to_string());
+    let mut toast_duration = use_signal(|| initial_toast_dur);
+
+    let initial_rem_adv = crate::db::sync_meta_get("ui_reminder_advance_mins").unwrap_or_else(|| "15".to_string());
+    let mut reminder_advance = use_signal(|| initial_rem_adv);
+
+    let initial_notify_sync = crate::db::sync_meta_get("sync_notify_on_pull").unwrap_or_else(|| "false".to_string());
+    let mut notify_on_pull = use_signal(|| initial_notify_sync == "true");
+
+    // ========================================================
+    // TAB 4: API & Connection State
+    // ========================================================
     let all_init_sources = crate::db::get_all_sheet_sources();
     let initial_active_id = crate::db::get_active_sheet_source_id();
     let initial_active_src = all_init_sources
@@ -111,43 +215,220 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
     let mut test_status = use_signal(|| TestStatus::Idle);
     let mut is_saving = use_signal(|| false);
 
-    // ---- Appearance Tab State ----
-    // Sidebar position preference (stored in sync_meta)
-    let initial_sidebar_pos = crate::db::sync_meta_get("ui_sidebar_position").unwrap_or_else(|| "left".to_string());
-    let mut sidebar_position = use_signal(|| initial_sidebar_pos);
-
-    // Card density preference
-    let initial_density = crate::db::sync_meta_get("ui_card_density").unwrap_or_else(|| "default".to_string());
-    let mut card_density = use_signal(|| initial_density);
-
-    // Animations enabled
-    let initial_animations = crate::db::sync_meta_get("ui_animations_enabled").unwrap_or_else(|| "true".to_string());
-    let mut animations_enabled = use_signal(|| initial_animations == "true");
-
-    // Date format preference
-    let initial_date_fmt = crate::db::sync_meta_get("ui_date_format").unwrap_or_else(|| "12hr".to_string());
-    let mut date_format = use_signal(|| initial_date_fmt);
-
-    // Font scale preference (auto, compact, default, comfortable, large)
-    let initial_font_scale = crate::db::sync_meta_get("ui_font_scale").unwrap_or_else(|| "auto".to_string());
-    let mut font_scale = use_signal(|| initial_font_scale);
-
-    // ---- Sync Tab State ----
+    // ========================================================
+    // TAB 5: Sync & Data State
+    // ========================================================
     let initial_sync_interval = crate::db::sync_meta_get("sync_cycle_secs").unwrap_or_else(|| "25".to_string());
     let mut sync_interval_str = use_signal(|| initial_sync_interval);
 
     let initial_auto_sync = crate::db::sync_meta_get("sync_auto_enabled").unwrap_or_else(|| "true".to_string());
     let mut auto_sync_enabled = use_signal(|| initial_auto_sync == "true");
 
-    let initial_notify_sync = crate::db::sync_meta_get("sync_notify_on_pull").unwrap_or_else(|| "false".to_string());
-    let mut notify_on_pull = use_signal(|| initial_notify_sync == "true");
-
-    // ---- Handlers ----
+    // ========================================================
+    // Handlers
+    // ========================================================
 
     let handle_close = move |_| {
         on_close.call(());
     };
 
+    // Save Appearance
+    let save_appearance = move |_| {
+        let pos = sidebar_position.read().clone();
+        let density = card_density.read().clone();
+        let anim_val = *animations_enabled.read();
+        let fmt = date_format.read().clone();
+        let scale = font_scale.read().clone();
+        let fam = font_family.read().clone();
+        let acc = accent_color.read().clone();
+        let rad = corner_radius.read().clone();
+        let oled = *oled_dark.read();
+
+        let _ = crate::db::sync_meta_set("ui_sidebar_position", &pos);
+        let _ = crate::db::sync_meta_set("ui_card_density", &density);
+        let _ = crate::db::sync_meta_set("ui_animations_enabled", if anim_val { "true" } else { "false" });
+        let _ = crate::db::sync_meta_set("ui_date_format", &fmt);
+        let _ = crate::db::sync_meta_set("ui_font_scale", &scale);
+        let _ = crate::db::sync_meta_set("ui_font_family", &fam);
+        let _ = crate::db::sync_meta_set("ui_accent_color", &acc);
+        let _ = crate::db::sync_meta_set("ui_corner_radius", &rad);
+        let _ = crate::db::sync_meta_set("ui_oled_dark", if oled { "true" } else { "false" });
+
+        if let Some(mut s) = app_settings {
+            s.with_mut(|settings| {
+                settings.sidebar_position = pos.clone();
+                settings.card_density = density.clone();
+                settings.animations_enabled = anim_val;
+                settings.date_format = fmt.clone();
+                settings.font_scale = scale.clone();
+                settings.font_family = fam.clone();
+                settings.accent_color = acc.clone();
+                settings.corner_radius = rad.clone();
+                settings.oled_dark = oled;
+            });
+        }
+        crate::state::set_time_format_24hr(fmt == "24hr");
+        crate::state::apply_appearance_to_dom(&acc, &scale, &density, &rad, &fam, oled, anim_val);
+        crate::state::play_sound("success");
+
+        if let Some(mut r) = db_sync {
+            r.with_mut(|rev| rev.0 += 1);
+        }
+        toast.success("Appearance Saved", "Theme, accent color, typography, and styling updated.");
+    };
+
+    // Save Workflow
+    let save_workflow = move |_| {
+        let landing = default_landing.read().clone();
+        let view = default_ticket_view.read().clone();
+        let prio = default_priority.read().clone();
+        let cat = default_category.read().clone();
+        let ass = default_assignee.read().clone();
+        let hide_canc = *kanban_hide_cancelled.read();
+        let hide_solv = *kanban_hide_solved.read();
+
+        let _ = crate::db::sync_meta_set("ui_default_landing_page", &landing);
+        let _ = crate::db::sync_meta_set("ui_default_ticket_view", &view);
+        let _ = crate::db::sync_meta_set("ui_default_priority", &prio);
+        let _ = crate::db::sync_meta_set("ui_default_category", &cat);
+        let _ = crate::db::sync_meta_set("ui_default_assignee", &ass);
+        let _ = crate::db::sync_meta_set("ui_kanban_hide_cancelled", if hide_canc { "true" } else { "false" });
+        let _ = crate::db::sync_meta_set("ui_kanban_hide_solved", if hide_solv { "true" } else { "false" });
+
+        if let Some(mut s) = app_settings {
+            s.with_mut(|settings| {
+                settings.default_landing_page = landing;
+                settings.default_ticket_view = view;
+                settings.default_priority = prio;
+                settings.default_category = cat;
+                settings.default_assignee = ass;
+                settings.kanban_hide_cancelled = hide_canc;
+                settings.kanban_hide_solved = hide_solv;
+            });
+        }
+        crate::state::play_sound("success");
+        if let Some(mut r) = db_sync {
+            r.with_mut(|rev| rev.0 += 1);
+        }
+        toast.success("Workflow Saved", "Ticket defaults and Kanban column preferences saved.");
+    };
+
+    // Save Notifications & Audio
+    let save_notifications = move |_| {
+        let snd_on = *sound_enabled.read();
+        let snd_vol = sound_volume.read().clone();
+        let dur_str = toast_duration.read().clone();
+        let dur_val: u32 = dur_str.parse().unwrap_or(5);
+        let adv_str = reminder_advance.read().clone();
+        let adv_val: u32 = adv_str.parse().unwrap_or(15);
+        let notif_pull = *notify_on_pull.read();
+
+        let _ = crate::db::sync_meta_set("ui_sound_enabled", if snd_on { "true" } else { "false" });
+        let _ = crate::db::sync_meta_set("ui_sound_volume", &snd_vol);
+        let _ = crate::db::sync_meta_set("ui_toast_duration_secs", &dur_val.to_string());
+        let _ = crate::db::sync_meta_set("ui_reminder_advance_mins", &adv_val.to_string());
+        let _ = crate::db::sync_meta_set("sync_notify_on_pull", if notif_pull { "true" } else { "false" });
+
+        crate::state::set_sound_enabled(snd_on);
+        crate::state::set_sound_volume(&snd_vol);
+
+        if let Some(mut s) = app_settings {
+            s.with_mut(|settings| {
+                settings.sound_enabled = snd_on;
+                settings.sound_volume = snd_vol;
+                settings.toast_duration_secs = dur_val;
+                settings.reminder_advance_mins = adv_val;
+                settings.notify_on_remote_pull = notif_pull;
+            });
+        }
+        crate::state::play_sound("chime");
+        toast.success("Alerts Saved", "Audio chime, notification duration, and reminder preferences updated.");
+    };
+
+    // Play test chime
+    let handle_test_sound = move |_| {
+        let snd_vol = sound_volume.read().clone();
+        crate::state::set_sound_volume(&snd_vol);
+        crate::state::set_sound_enabled(true);
+        crate::state::play_sound("chime");
+        toast.info("Audio Test", "Played synthesized chime.");
+    };
+
+    // Export Data JSON
+    let handle_export_json = move |_| {
+        let tickets = crate::db::get_all_tickets();
+        let reminders = crate::db::get_all_reminders();
+        let notes = crate::db::get_all_notes();
+        let export_payload = serde_json::json!({
+            "application": "BPSL IT Support",
+            "version": "1.1.0",
+            "exported_at": crate::state::format_utc(crate::sync::now_epoch()),
+            "ticket_count": tickets.len(),
+            "reminder_count": reminders.len(),
+            "note_count": notes.len(),
+            "tickets": tickets,
+            "reminders": reminders,
+            "notes": notes,
+        });
+
+        if let Ok(json_string) = serde_json::to_string_pretty(&export_payload) {
+            let escaped = json_string
+                .replace('\\', "\\\\")
+                .replace('`', "\\`")
+                .replace('$', "\\$");
+            let js = format!(
+                r#"
+                (function() {{
+                    try {{
+                        const data = `{escaped}`;
+                        const blob = new Blob([data], {{ type: 'application/json' }});
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'bpsl_backup_' + new Date().toISOString().slice(0,10) + '.json';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                    }} catch(e) {{
+                        console.error('Export error', e);
+                    }}
+                }})();
+                "#
+            );
+            let _ = document::eval(&js);
+            crate::state::play_sound("success");
+            toast.success("Backup Exported", format!("Exported {} tickets, {} reminders, {} notes to JSON.", tickets.len(), reminders.len(), notes.len()));
+        } else {
+            toast.error("Export Error", "Failed to generate JSON string.");
+        }
+    };
+
+    // Optimize / Compact DB
+    let handle_optimize_db = move |_| {
+        let before_bytes = crate::db::get_database_file_size();
+        let _ = crate::db::purge_resolved_conflicts();
+        match crate::db::optimize_database() {
+            Ok(_) => {
+                let after_bytes = crate::db::get_database_file_size();
+                crate::state::play_sound("success");
+                let kb = (after_bytes as f64) / 1024.0;
+                let saved = before_bytes.saturating_sub(after_bytes);
+                toast.success(
+                    "Database Optimized",
+                    format!("Cleaned and defragmented SQLite tables. Database size: {kb:.1} KB (freed {saved} bytes)."),
+                );
+                if let Some(mut r) = db_sync {
+                    r.with_mut(|rev| rev.0 += 1);
+                }
+            }
+            Err(e) => {
+                toast.error("Optimization Error", format!("{e}"));
+            }
+        }
+    };
+
+    // API Handlers
     let handle_add_sheet = {
         let mut sheet_sources = sheet_sources;
         let mut active_profile = active_profile;
@@ -248,8 +529,14 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
 
         spawn(async move {
             match crate::sync::test_connection(&url, &key).await {
-                Ok(msg) => test_status.set(TestStatus::Success(msg)),
-                Err(err) => test_status.set(TestStatus::Error(err)),
+                Ok(msg) => {
+                    crate::state::play_sound("success");
+                    test_status.set(TestStatus::Success(msg));
+                }
+                Err(err) => {
+                    crate::state::play_sound("alert");
+                    test_status.set(TestStatus::Error(err));
+                }
             }
         });
     };
@@ -269,7 +556,6 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
 
         is_saving.set(true);
 
-        // Update active profile in sources list
         let mut list = sheet_sources.write();
         if let Some(item) = list.iter_mut().find(|s| s.id == prof) {
             item.name = if name.is_empty() { format!("Sheet Source {}", prof) } else { name.clone() };
@@ -294,6 +580,7 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
             Ok(_) => {
                 is_saving.set(false);
                 crate::sync::kick();
+                crate::state::play_sound("success");
                 spawn(async move {
                     let _ = crate::sync::pull_tickets_now().await;
                     let _ = crate::sync::pull_employees_now().await;
@@ -322,64 +609,6 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         toast.info("Cleared", "System API credentials have been reset.");
     };
 
-    let save_appearance = move |_| {
-        let pos = sidebar_position.read().clone();
-        let density = card_density.read().clone();
-        let anim_val = *animations_enabled.read();
-        let fmt = date_format.read().clone();
-        let scale = font_scale.read().clone();
-
-        let _ = crate::db::sync_meta_set("ui_sidebar_position", &pos);
-        let _ = crate::db::sync_meta_set("ui_card_density", &density);
-        let _ = crate::db::sync_meta_set("ui_animations_enabled", if anim_val { "true" } else { "false" });
-        let _ = crate::db::sync_meta_set("ui_date_format", &fmt);
-        let _ = crate::db::sync_meta_set("ui_font_scale", &scale);
-
-        if let Some(mut s) = app_settings {
-            s.set(crate::state::AppSettings {
-                sidebar_position: pos,
-                card_density: density.clone(),
-                animations_enabled: anim_val,
-                date_format: fmt.clone(),
-                font_scale: scale.clone(),
-            });
-        }
-        crate::state::set_time_format_24hr(fmt == "24hr");
-        if let Some(mut r) = db_sync {
-            r.with_mut(|rev| rev.0 += 1);
-        }
-
-        spawn(async move {
-            let js = format!(
-                r#"
-                if ('{scale}' === 'auto') {{
-                    document.documentElement.removeAttribute('data-font-scale');
-                    localStorage.removeItem('bpsl-font-scale');
-                }} else {{
-                    document.documentElement.setAttribute('data-font-scale', '{scale}');
-                    localStorage.setItem('bpsl-font-scale', '{scale}');
-                }}
-                if ('{density}' === 'default') {{
-                    document.documentElement.removeAttribute('data-card-density');
-                    localStorage.removeItem('bpsl-card-density');
-                }} else {{
-                    document.documentElement.setAttribute('data-card-density', '{density}');
-                    localStorage.setItem('bpsl-card-density', '{density}');
-                }}
-                if (!{anim_val}) {{
-                    document.documentElement.setAttribute('data-animations', 'false');
-                    localStorage.setItem('bpsl-animations', 'false');
-                }} else {{
-                    document.documentElement.removeAttribute('data-animations');
-                    localStorage.removeItem('bpsl-animations');
-                }}
-                "#
-            );
-            let _ = document::eval(&js);
-        });
-        toast.success("Appearance Saved", "UI preferences, sidebar, density, and typography updated.");
-    };
-
     let save_sync_settings = move |_| {
         let interval = sync_interval_str.read().trim().to_string();
         let interval_val: u64 = interval.parse().unwrap_or(25);
@@ -387,23 +616,27 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         sync_interval_str.set(clamped.to_string());
         let _ = crate::db::sync_meta_set("sync_cycle_secs", &clamped.to_string());
         let _ = crate::db::sync_meta_set("sync_auto_enabled", if *auto_sync_enabled.read() { "true" } else { "false" });
-        let _ = crate::db::sync_meta_set("sync_notify_on_pull", if *notify_on_pull.read() { "true" } else { "false" });
         crate::sync::kick();
+        crate::state::play_sound("success");
         toast.success("Sync Settings Saved", format!("Sync interval set to {clamped}s and background worker refreshed."));
     };
 
     let handle_reset_sync_queue = move |_| {
         let _ = crate::db::reset_failed_sync_ops();
-        toast.info("Sync Queue Reset", "All failed operations have been retried.");
+        crate::state::play_sound("click");
+        toast.info("Sync Queue Reset", "All failed operations have been reset for retry.");
     };
 
     let handle_force_sync = move |_| {
         crate::sync::kick();
+        crate::state::play_sound("click");
         toast.info("Sync Triggered", "A background sync cycle has been initiated.");
     };
 
-    // ---- Diagnostic Data ----
+    // Diagnostics Data
     let db_path_display = crate::db::db_path().display().to_string();
+    let db_size_bytes = crate::db::get_database_file_size();
+    let db_size_display = format!("{:.1} KB", (db_size_bytes as f64) / 1024.0);
     let pending_ops = crate::db::pending_op_count();
     let ticket_count = crate::db::get_all_tickets().len();
     let reminder_count = crate::db::get_all_reminders().len();
@@ -418,7 +651,7 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
             onclick: handle_close,
 
             div {
-                class: "relative w-full max-w-4xl rounded-2xl border border-border/80 bg-card text-card-foreground shadow-2xl animate-dialog-content flex flex-col max-h-[92vh] overflow-hidden",
+                class: "relative top-125 left-130 w-full max-w-5xl transform transition-transform ease-out duration-100 rounded-2xl border border-border/80 bg-card text-card-foreground shadow-2xl animate-dialog-content flex flex-col max-h-[92vh] overflow-hidden",
                 onclick: move |e: MouseEvent| e.stop_propagation(),
 
                 // HEADER
@@ -428,8 +661,8 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                             SettingsIcon { class: "size-5" }
                         }
                         div { class: "flex flex-col",
-                            h2 { class: "text-lg font-bold text-foreground leading-none", "Settings" }
-                            span { class: "text-xs text-muted-foreground mt-0.5", "Configure your app, API, appearance, and sync preferences" }
+                            h2 { class: "text-lg font-bold text-foreground leading-none", "Preferences & Customization" }
+                            span { class: "text-xs text-muted-foreground mt-0.5", "Customize themes, workflows, alerts, API connection, and data storage" }
                         }
                     }
                     button {
@@ -444,7 +677,7 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                 div { class: "flex flex-1 overflow-hidden min-h-0",
 
                     // Left Tab Navigation Rail
-                    nav { class: "w-48 shrink-0 border-r border-border/50 bg-muted/20 p-2 flex flex-col gap-0.5 overflow-y-auto",
+                    nav { class: "w-52 shrink-0 border-r border-border/50 bg-muted/20 p-2.5 flex flex-col gap-1 overflow-y-auto",
                         for tab in TABS.iter() {
                             {
                                 let t = *tab;
@@ -458,8 +691,11 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                     button {
                                         key: "{t.label()}",
                                         r#type: "button",
-                                        class: "flex items-center gap-2.5 w-full text-left rounded-lg px-3 py-2.5 text-xs border transition-all duration-150 cursor-pointer active:scale-[0.98] {cls}",
-                                        onclick: move |_| active_tab.set(t),
+                                        class: "flex items-center gap-2.5 w-full text-left rounded-lg px-3 py-2 text-xs border transition-all duration-150 cursor-pointer active:scale-[0.98] {cls}",
+                                        onclick: move |_| {
+                                            crate::state::play_sound("click");
+                                            active_tab.set(t);
+                                        },
                                         svg {
                                             class: "size-4 shrink-0",
                                             view_box: "0 0 24 24",
@@ -470,24 +706,722 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                             stroke_linejoin: "round",
                                             path { d: "{t.icon_path()}" }
                                         }
-                                        span { "{t.label()}" }
+                                        span { class: "truncate", "{t.label()}" }
                                     }
                                 }
                             }
                         }
 
-                        // Version badge at bottom of nav
-                        div { class: "mt-auto pt-4 px-2",
-                            span { class: "text-[10px] text-muted-foreground/60 font-mono", "v0.1.0" }
+                        // Version badge at bottom of rail
+                        div { class: "mt-auto pt-4 px-2 flex items-center justify-between",
+                            span { class: "text-[10px] text-muted-foreground/60 font-mono", "v1.1.0" }
+                            span { class: "text-[10px] text-primary/70 font-medium", "Dioxus 0.7" }
                         }
                     }
 
                     // Right Content Area
                     div { class: "flex-1 overflow-y-auto p-6",
 
-                        // ========================================
-                        // TAB 1: API & Connection
-                        // ========================================
+                        // ========================================================
+                        // TAB 1: Appearance & Theme
+                        // ========================================================
+                        if *active_tab.read() == SettingsTab::Appearance {
+                            div { class: "flex flex-col gap-5 animate-in fade-in-0 duration-150",
+
+                                // Theme Mode Section
+                                div { class: "flex flex-col gap-2.5",
+                                    span { class: "text-xs font-semibold text-foreground uppercase tracking-wider", "Theme & Palette" }
+                                    div { class: "flex items-center justify-between",
+                                        div { class: "flex flex-col gap-0.5",
+                                            span { class: "text-sm font-semibold text-foreground", "Theme Mode" }
+                                            span { class: "text-[11px] text-muted-foreground", "Switch between Light, Dark, or automatic OS detection." }
+                                        }
+                                        crate::components::ui::theme::ThemeSegmented {}
+                                    }
+                                }
+
+                                // OLED Pure Black Toggle
+                                SettingToggle {
+                                    title: "OLED Pitch Black (Dark Mode)",
+                                    description: "Use pure #000000 black background for OLED screens and maximum contrast.",
+                                    checked: *oled_dark.read(),
+                                    on_toggle: move |_| {
+                                        let next = !*oled_dark.read();
+                                        oled_dark.set(next);
+                                        let cur_acc = accent_color.read().clone();
+                                        let cur_scale = font_scale.read().clone();
+                                        let cur_density = card_density.read().clone();
+                                        let cur_rad = corner_radius.read().clone();
+                                        let cur_fam = font_family.read().clone();
+                                        let cur_anim = *animations_enabled.read();
+                                        crate::state::apply_appearance_to_dom(&cur_acc, &cur_scale, &cur_density, &cur_rad, &cur_fam, next, cur_anim);
+                                    },
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Accent Color Swatches
+                                div { class: "flex flex-col gap-2.5",
+                                    div { class: "flex flex-col gap-0.5",
+                                        span { class: "text-sm font-semibold text-foreground", "Primary Accent Color" }
+                                        span { class: "text-[11px] text-muted-foreground", "Applies to active buttons, badges, selection rings, and highlight borders." }
+                                    }
+                                    div { class: "grid grid-cols-2 sm:grid-cols-4 gap-2",
+                                        for opt in ACCENT_OPTIONS.iter() {
+                                            {
+                                                let is_active = *accent_color.read() == opt.id;
+                                                let id_val = opt.id.to_string();
+                                                let border_cls = if is_active { "border-primary ring-2 ring-primary/30 bg-primary/10 font-bold" } else { "border-border/70 hover:bg-muted/50" };
+                                                rsx! {
+                                                    button {
+                                                        key: "{opt.id}",
+                                                        r#type: "button",
+                                                        class: "flex items-center gap-2 rounded-lg border px-3 py-2 text-xs transition-all duration-150 cursor-pointer text-left {border_cls}",
+                                                        onclick: {
+                                                            let v = id_val.clone();
+                                                            move |_| {
+                                                                accent_color.set(v.clone());
+                                                                let cur_scale = font_scale.read().clone();
+                                                                let cur_density = card_density.read().clone();
+                                                                let cur_rad = corner_radius.read().clone();
+                                                                let cur_fam = font_family.read().clone();
+                                                                let cur_oled = *oled_dark.read();
+                                                                let cur_anim = *animations_enabled.read();
+                                                                crate::state::apply_appearance_to_dom(&v, &cur_scale, &cur_density, &cur_rad, &cur_fam, cur_oled, cur_anim);
+                                                            }
+                                                        },
+                                                        span {
+                                                            class: "size-3.5 rounded-full shrink-0 shadow-2xs border border-white/20",
+                                                            style: "background-color: {opt.color_hex};",
+                                                        }
+                                                        span { class: "truncate text-foreground text-[11px]", "{opt.name}" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Corner Radius Presets
+                                SettingRow {
+                                    title: "Window & Element Corner Radius",
+                                    description: "Adjust how rounded buttons, cards, and modal windows feel.",
+                                    div { class: "flex gap-1.5 flex-wrap",
+                                        for (val, label) in [("sharp", "Sharp (0px)"), ("rounded", "Modern (6px)"), ("smooth", "Smooth (10px)"), ("pill", "Pill (16px)")] {
+                                            {
+                                                let is_active = *corner_radius.read() == val;
+                                                let val_str = val.to_string();
+                                                rsx! {
+                                                    button {
+                                                        key: "{val}",
+                                                        r#type: "button",
+                                                        class: format!(
+                                                            "rounded-md px-2.5 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
+                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs font-semibold" } else { "bg-card text-foreground border-border hover:border-primary/50" }
+                                                        ),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| {
+                                                                corner_radius.set(v.clone());
+                                                                let cur_acc = accent_color.read().clone();
+                                                                let cur_scale = font_scale.read().clone();
+                                                                let cur_density = card_density.read().clone();
+                                                                let cur_fam = font_family.read().clone();
+                                                                let cur_oled = *oled_dark.read();
+                                                                let cur_anim = *animations_enabled.read();
+                                                                crate::state::apply_appearance_to_dom(&cur_acc, &cur_scale, &cur_density, &v, &cur_fam, cur_oled, cur_anim);
+                                                            }
+                                                        },
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Font Family Selection
+                                SettingRow {
+                                    title: "Font Family",
+                                    description: "Typeface styling used across tables, tickets, notes, and metrics.",
+                                    div { class: "flex gap-1.5",
+                                        for (val, label) in [("roboto", "Roboto (Default)"), ("system", "System UI / Sans"), ("mono", "Roboto Mono")] {
+                                            {
+                                                let is_active = *font_family.read() == val;
+                                                let val_str = val.to_string();
+                                                rsx! {
+                                                    button {
+                                                        key: "{val}",
+                                                        r#type: "button",
+                                                        class: format!(
+                                                            "rounded-md px-3 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
+                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs font-semibold" } else { "bg-card text-foreground border-border hover:border-primary/50" }
+                                                        ),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| {
+                                                                font_family.set(v.clone());
+                                                                let cur_acc = accent_color.read().clone();
+                                                                let cur_scale = font_scale.read().clone();
+                                                                let cur_density = card_density.read().clone();
+                                                                let cur_rad = corner_radius.read().clone();
+                                                                let cur_oled = *oled_dark.read();
+                                                                let cur_anim = *animations_enabled.read();
+                                                                crate::state::apply_appearance_to_dom(&cur_acc, &cur_scale, &cur_density, &cur_rad, &v, cur_oled, cur_anim);
+                                                            }
+                                                        },
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Typography Scale
+                                SettingRow {
+                                    title: "Typography & Font Scaling",
+                                    description: "Calibrated font scaling for 19-inch displays, laptops, and 4K screens.",
+                                    div { class: "flex flex-wrap gap-1.5",
+                                        for (val, label) in [
+                                            ("auto", "Auto (Fluid)"),
+                                            ("compact", "Compact (90%)"),
+                                            ("default", "Default (100%)"),
+                                            ("comfortable", "Comfortable (110%)"),
+                                            ("large", "Large (120%)"),
+                                        ] {
+                                            {
+                                                let is_active = *font_scale.read() == val;
+                                                let val_str = val.to_string();
+                                                rsx! {
+                                                    button {
+                                                        key: "{val}",
+                                                        r#type: "button",
+                                                        class: format!(
+                                                            "rounded-md px-2.5 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
+                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs font-semibold" } else { "bg-card text-foreground border-border hover:border-primary/50" }
+                                                        ),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| {
+                                                                font_scale.set(v.clone());
+                                                                let cur_acc = accent_color.read().clone();
+                                                                let cur_density = card_density.read().clone();
+                                                                let cur_rad = corner_radius.read().clone();
+                                                                let cur_fam = font_family.read().clone();
+                                                                let cur_oled = *oled_dark.read();
+                                                                let cur_anim = *animations_enabled.read();
+                                                                crate::state::apply_appearance_to_dom(&cur_acc, &v, &cur_density, &cur_rad, &cur_fam, cur_oled, cur_anim);
+                                                            }
+                                                        },
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Card Density
+                                SettingRow {
+                                    title: "Card Density",
+                                    description: "Control compact or spacious padding across tickets and reminder cards.",
+                                    div { class: "flex gap-1.5",
+                                        for (val, label) in [("compact", "Compact"), ("default", "Default"), ("comfortable", "Comfortable")] {
+                                            {
+                                                let is_active = *card_density.read() == val;
+                                                let val_str = val.to_string();
+                                                rsx! {
+                                                    button {
+                                                        key: "{val}",
+                                                        r#type: "button",
+                                                        class: format!(
+                                                            "rounded-md px-3 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
+                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs font-semibold" } else { "bg-card text-foreground border-border hover:border-primary/50" }
+                                                        ),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| {
+                                                                card_density.set(v.clone());
+                                                                let cur_acc = accent_color.read().clone();
+                                                                let cur_scale = font_scale.read().clone();
+                                                                let cur_rad = corner_radius.read().clone();
+                                                                let cur_fam = font_family.read().clone();
+                                                                let cur_oled = *oled_dark.read();
+                                                                let cur_anim = *animations_enabled.read();
+                                                                crate::state::apply_appearance_to_dom(&cur_acc, &cur_scale, &v, &cur_rad, &cur_fam, cur_oled, cur_anim);
+                                                            }
+                                                        },
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Time Display Format
+                                SettingRow {
+                                    title: "Time Display Format",
+                                    description: "How timestamps and due dates appear in tickets, reminders, and calendar.",
+                                    div { class: "flex gap-1.5",
+                                        for (val, label) in [("12hr", "12-Hour (AM/PM)"), ("24hr", "24-Hour")] {
+                                            {
+                                                let is_active = *date_format.read() == val;
+                                                let val_str = val.to_string();
+                                                rsx! {
+                                                    button {
+                                                        key: "{val}",
+                                                        r#type: "button",
+                                                        class: format!(
+                                                            "rounded-md px-3 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
+                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs font-semibold" } else { "bg-card text-foreground border-border hover:border-primary/50" }
+                                                        ),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| {
+                                                                date_format.set(v.clone());
+                                                                crate::state::set_time_format_24hr(v == "24hr");
+                                                            }
+                                                        },
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Sidebar Position
+                                SettingRow {
+                                    title: "Sidebar Position",
+                                    description: "Where the primary navigation rail is anchored in the app shell.",
+                                    div { class: "flex gap-1.5",
+                                        for (val, label) in [("left", "Left Hand Side"), ("right", "Right Hand Side")] {
+                                            {
+                                                let is_active = *sidebar_position.read() == val;
+                                                let val_str = val.to_string();
+                                                rsx! {
+                                                    button {
+                                                        key: "{val}",
+                                                        r#type: "button",
+                                                        class: format!(
+                                                            "rounded-md px-3 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
+                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs font-semibold" } else { "bg-card text-foreground border-border hover:border-primary/50" }
+                                                        ),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| sidebar_position.set(v.clone())
+                                                        },
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Animations Toggle
+                                SettingToggle {
+                                    title: "Smooth Animations & Transitions",
+                                    description: "Enable micro-interactions, modal transitions, and card drag visuals.",
+                                    checked: *animations_enabled.read(),
+                                    on_toggle: move |_| {
+                                        let next = !*animations_enabled.read();
+                                        animations_enabled.set(next);
+                                        let cur_acc = accent_color.read().clone();
+                                        let cur_scale = font_scale.read().clone();
+                                        let cur_density = card_density.read().clone();
+                                        let cur_rad = corner_radius.read().clone();
+                                        let cur_fam = font_family.read().clone();
+                                        let cur_oled = *oled_dark.read();
+                                        crate::state::apply_appearance_to_dom(&cur_acc, &cur_scale, &cur_density, &cur_rad, &cur_fam, cur_oled, next);
+                                    },
+                                }
+
+                                // Live Preview Sample Card
+                                div { class: "rounded-xl border border-primary/20 bg-primary/5 p-4 flex flex-col gap-2 mt-1",
+                                    span { class: "text-[10px] font-bold text-primary uppercase tracking-wider", "Live Theme Preview" }
+                                    div { class: "flex items-center justify-between",
+                                        div { class: "flex items-center gap-2",
+                                            span { class: "size-2.5 rounded-full bg-primary" }
+                                            span { class: "text-xs font-semibold text-foreground", "Sample Support Ticket" }
+                                            span { class: "rounded-full bg-primary text-primary-foreground text-[10px] px-2 py-0.5 font-bold", "High Priority" }
+                                        }
+                                        Button {
+                                            variant: "default",
+                                            class: "h-7 text-xs px-3 shadow-xs",
+                                            "Sample Action"
+                                        }
+                                    }
+                                }
+
+                                // Save Appearance
+                                div { class: "flex justify-end pt-3 border-t border-border/50",
+                                    Button {
+                                        variant: "default",
+                                        class: "h-9 text-xs px-4 font-semibold cursor-pointer shadow-xs gap-1.5",
+                                        onclick: save_appearance,
+                                        CheckIcon { class: "size-3.5" }
+                                        "Save Appearance"
+                                    }
+                                }
+                            }
+                        }
+
+                        // ========================================================
+                        // TAB 2: Tickets & Workflow
+                        // ========================================================
+                        if *active_tab.read() == SettingsTab::Workflow {
+                            div { class: "flex flex-col gap-5 animate-in fade-in-0 duration-150",
+
+                                // Default Landing Page
+                                SettingRow {
+                                    title: "Default Landing Page",
+                                    description: "The page that opens automatically when launching the application.",
+                                    div { class: "flex flex-wrap gap-1.5",
+                                        for (val, label) in [
+                                            ("tickets", "Tickets"),
+                                            ("notes", "Notes"),
+                                            ("reminders", "Reminders"),
+                                            ("calendar", "Calendar"),
+                                            ("analytics", "Analytics"),
+                                        ] {
+                                            {
+                                                let is_active = *default_landing.read() == val;
+                                                let val_str = val.to_string();
+                                                rsx! {
+                                                    button {
+                                                        key: "{val}",
+                                                        r#type: "button",
+                                                        class: format!(
+                                                            "rounded-md px-3 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
+                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs font-semibold" } else { "bg-card text-foreground border-border hover:border-primary/50" }
+                                                        ),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| default_landing.set(v.clone())
+                                                        },
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Default Ticket View
+                                SettingRow {
+                                    title: "Default Tickets View",
+                                    description: "Preferred presentation layout when browsing Support Tickets.",
+                                    div { class: "flex gap-1.5",
+                                        for (val, label) in [("kanban", "Kanban Board"), ("table", "IT Data Table")] {
+                                            {
+                                                let is_active = *default_ticket_view.read() == val;
+                                                let val_str = val.to_string();
+                                                rsx! {
+                                                    button {
+                                                        key: "{val}",
+                                                        r#type: "button",
+                                                        class: format!(
+                                                            "rounded-md px-3 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
+                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs font-semibold" } else { "bg-card text-foreground border-border hover:border-primary/50" }
+                                                        ),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| default_ticket_view.set(v.clone())
+                                                        },
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Default Priority
+                                SettingRow {
+                                    title: "Default Priority for New Tickets",
+                                    description: "Initial priority selected when creating a new support request.",
+                                    div { class: "flex gap-1.5",
+                                        for val in ["Low", "Medium", "High", "Urgent"] {
+                                            {
+                                                let is_active = *default_priority.read() == val;
+                                                let val_str = val.to_string();
+                                                rsx! {
+                                                    button {
+                                                        key: "{val}",
+                                                        r#type: "button",
+                                                        class: format!(
+                                                            "rounded-md px-3 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
+                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs font-semibold" } else { "bg-card text-foreground border-border hover:border-primary/50" }
+                                                        ),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| default_priority.set(v.clone())
+                                                        },
+                                                        "{val}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Default Category
+                                div { class: "flex flex-col gap-1.5",
+                                    label { class: "text-xs font-semibold text-foreground flex items-center justify-between",
+                                        span { "Default Ticket Category" }
+                                        span { class: "text-[10px] text-muted-foreground font-mono", "CATEGORY" }
+                                    }
+                                    select {
+                                        value: "{default_category}",
+                                        onchange: move |e: FormEvent| default_category.set(e.value()),
+                                        class: "w-full font-medium text-xs h-9 rounded-md border border-input bg-background px-3 focus:border-primary focus:outline-none transition-colors",
+                                        option { value: "General", "General" }
+                                        option { value: "Hardware", "Hardware Support" }
+                                        option { value: "Software", "Software / OS Application" }
+                                        option { value: "Network", "Network / Wi-Fi / LAN" }
+                                        option { value: "Access & Accounts", "Access & User Accounts" }
+                                        option { value: "Email / Outlook", "Email / Outlook / Office 365" }
+                                        option { value: "Printer / Peripherals", "Printer / Peripherals" }
+                                    }
+                                    span { class: "text-[11px] text-muted-foreground",
+                                        "Pre-filled category when launching the New Ticket modal dialog."
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Default Assigned Technician
+                                div { class: "flex flex-col gap-1.5",
+                                    label { class: "text-xs font-semibold text-foreground flex items-center justify-between",
+                                        span { "Default Support Technician" }
+                                        span { class: "text-[10px] text-muted-foreground font-mono", "ASSIGNED_TO" }
+                                    }
+                                    Input {
+                                        r#type: "text",
+                                        placeholder: "e.g. IT Support, Shreyansh, GR...",
+                                        value: "{default_assignee}",
+                                        oninput: move |e: FormEvent| default_assignee.set(e.value()),
+                                        class: "font-medium text-xs h-9 rounded-md border border-input bg-background px-3 focus:border-primary",
+                                    }
+                                    span { class: "text-[11px] text-muted-foreground",
+                                        "Technician or support group assigned by default on new tickets."
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Kanban Column Visibility Toggles
+                                SettingToggle {
+                                    title: "Hide 'Cancelled' Column on Kanban",
+                                    description: "Keeps the Kanban board clean by omitting cancelled tickets from display.",
+                                    checked: *kanban_hide_cancelled.read(),
+                                    on_toggle: move |_| {
+                                        let next = !*kanban_hide_cancelled.read();
+                                        kanban_hide_cancelled.set(next);
+                                    },
+                                }
+
+                                SettingToggle {
+                                    title: "Hide 'Solved (Closed)' Column on Kanban",
+                                    description: "Omits resolved and closed tickets to focus exclusively on active support work.",
+                                    checked: *kanban_hide_solved.read(),
+                                    on_toggle: move |_| {
+                                        let next = !*kanban_hide_solved.read();
+                                        kanban_hide_solved.set(next);
+                                    },
+                                }
+
+                                // Save Workflow
+                                div { class: "flex justify-end pt-3 border-t border-border/50",
+                                    Button {
+                                        variant: "default",
+                                        class: "h-9 text-xs px-4 font-semibold cursor-pointer shadow-xs gap-1.5",
+                                        onclick: save_workflow,
+                                        CheckIcon { class: "size-3.5" }
+                                        "Save Workflow Settings"
+                                    }
+                                }
+                            }
+                        }
+
+                        // ========================================================
+                        // TAB 3: Alerts & Audio
+                        // ========================================================
+                        if *active_tab.read() == SettingsTab::Notifications {
+                            div { class: "flex flex-col gap-5 animate-in fade-in-0 duration-150",
+
+                                // Audio Sound Effects Toggle
+                                SettingToggle {
+                                    title: "Synthesized Audio Chimes",
+                                    description: "Play subtle harmonic sound effects on ticket creation, sync completion, and alarms.",
+                                    checked: *sound_enabled.read(),
+                                    on_toggle: move |_| {
+                                        let next = !*sound_enabled.read();
+                                        sound_enabled.set(next);
+                                        crate::state::set_sound_enabled(next);
+                                    },
+                                }
+
+                                // Audio Volume Selector
+                                SettingRow {
+                                    title: "Chime Volume Level",
+                                    description: "Adjust audio output volume for application sound effects.",
+                                    div { class: "flex items-center gap-2",
+                                        for (val, label) in [("low", "Gentle (8%)"), ("medium", "Standard (15%)"), ("high", "Clear (30%)")] {
+                                            {
+                                                let is_active = *sound_volume.read() == val;
+                                                let val_str = val.to_string();
+                                                rsx! {
+                                                    button {
+                                                        key: "{val}",
+                                                        r#type: "button",
+                                                        class: format!(
+                                                            "rounded-md px-3 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
+                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs font-semibold" } else { "bg-card text-foreground border-border hover:border-primary/50" }
+                                                        ),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| {
+                                                                sound_volume.set(v.clone());
+                                                                crate::state::set_sound_volume(&v);
+                                                            }
+                                                        },
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Button {
+                                            variant: "outline",
+                                            class: "h-8 text-xs px-3 shadow-2xs gap-1 cursor-pointer ml-1",
+                                            onclick: handle_test_sound,
+                                            BellIcon { class: "size-3.5" }
+                                            "Test Sound"
+                                        }
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Toast Duration
+                                SettingRow {
+                                    title: "Toast Notification Duration",
+                                    description: "How long in-app status toast messages remain visible before fading.",
+                                    div { class: "flex gap-1.5",
+                                        for (val, label) in [("3", "Fast (3s)"), ("5", "Standard (5s)"), ("8", "Extended (8s)")] {
+                                            {
+                                                let is_active = *toast_duration.read() == val;
+                                                let val_str = val.to_string();
+                                                rsx! {
+                                                    button {
+                                                        key: "{val}",
+                                                        r#type: "button",
+                                                        class: format!(
+                                                            "rounded-md px-3 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
+                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs font-semibold" } else { "bg-card text-foreground border-border hover:border-primary/50" }
+                                                        ),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| toast_duration.set(v.clone())
+                                                        },
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Reminder Advance Alert
+                                SettingRow {
+                                    title: "Default Reminder Advance Alert",
+                                    description: "Time before due date when upcoming reminders show high-priority badges.",
+                                    div { class: "flex gap-1.5 flex-wrap",
+                                        for (val, label) in [
+                                            ("0", "At Due Time"),
+                                            ("5", "5m Before"),
+                                            ("15", "15m Before"),
+                                            ("30", "30m Before"),
+                                            ("60", "1h Before"),
+                                            ("1440", "1d Before"),
+                                        ] {
+                                            {
+                                                let is_active = *reminder_advance.read() == val;
+                                                let val_str = val.to_string();
+                                                rsx! {
+                                                    button {
+                                                        key: "{val}",
+                                                        r#type: "button",
+                                                        class: format!(
+                                                            "rounded-md px-2.5 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
+                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs font-semibold" } else { "bg-card text-foreground border-border hover:border-primary/50" }
+                                                        ),
+                                                        onclick: {
+                                                            let v = val_str.clone();
+                                                            move |_| reminder_advance.set(v.clone())
+                                                        },
+                                                        "{label}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50" }
+
+                                // Notify on Pull
+                                SettingToggle {
+                                    title: "Notify on Remote Sheet Sync",
+                                    description: "Display an in-app banner whenever background sync pulls new updates.",
+                                    checked: *notify_on_pull.read(),
+                                    on_toggle: move |_| {
+                                        let next = !*notify_on_pull.read();
+                                        notify_on_pull.set(next);
+                                    },
+                                }
+
+                                // Save Notifications
+                                div { class: "flex justify-end pt-3 border-t border-border/50",
+                                    Button {
+                                        variant: "default",
+                                        class: "h-9 text-xs px-4 font-semibold cursor-pointer shadow-xs gap-1.5",
+                                        onclick: save_notifications,
+                                        CheckIcon { class: "size-3.5" }
+                                        "Save Alert Settings"
+                                    }
+                                }
+                            }
+                        }
+
+                        // ========================================================
+                        // TAB 4: API & Connection
+                        // ========================================================
                         if *active_tab.read() == SettingsTab::Api {
                             div { class: "flex flex-col gap-5 animate-in fade-in-0 duration-150",
 
@@ -695,22 +1629,22 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                 // Employee Code
                                 div { class: "flex flex-col gap-1.5",
                                     label { class: "text-xs font-semibold text-foreground flex items-center justify-between",
-                                        span { "Default Employee Code (Optional)" }
+                                        span { "Default Employee Code" }
                                         span { class: "text-[10px] text-muted-foreground font-mono", "TMS_EMPLOYEE_CODE" }
                                     }
                                     Input {
                                         r#type: "text",
-                                        placeholder: "e.g. EMP-1001",
+                                        placeholder: "e.g. 10081",
                                         value: "{employee_code}",
                                         oninput: move |e: FormEvent| employee_code.set(e.value()),
                                         class: "font-mono text-xs h-9 rounded-md border border-input bg-background px-3 focus:border-primary",
                                     }
                                     span { class: "text-[11px] text-muted-foreground",
-                                        "Optional employee code used when creating tickets or reminders if not selected."
+                                        "Your company employee code used for ticket authorship and reminder notifications."
                                     }
                                 }
 
-                                // Test Connection
+                                // Test Connection Box
                                 div { class: "flex flex-col gap-2 rounded-xl border border-border/70 bg-muted/30 p-3.5",
                                     div { class: "flex items-center justify-between",
                                         div { class: "flex items-center gap-2",
@@ -785,243 +1719,16 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                             }
                         }
 
-                        // ========================================
-                        // TAB 2: Appearance
-                        // ========================================
-                        if *active_tab.read() == SettingsTab::Appearance {
-                            div { class: "flex flex-col gap-5 animate-in fade-in-0 duration-150",
-
-                                // Theme Mode Section
-                                div { class: "flex flex-col gap-3",
-                                    div { class: "flex items-center justify-between",
-                                        div { class: "flex flex-col gap-0.5",
-                                            span { class: "text-sm font-semibold text-foreground", "Theme Mode" }
-                                            span { class: "text-[11px] text-muted-foreground", "Choose between light, dark, or auto-detect from your system settings." }
-                                        }
-                                    }
-                                    crate::components::ui::theme::ThemeSegmented {}
-                                }
-
-                                // Divider
-                                div { class: "border-t border-border/50" }
-
-                                // Date & Time Format
-                                SettingRow {
-                                    title: "Time Display Format",
-                                    description: "How timestamps appear across tickets, reminders, and cards.",
-                                    div { class: "flex gap-1.5",
-                                        for (val, label) in [("12hr", "12-Hour (AM/PM)"), ("24hr", "24-Hour")] {
-                                            {
-                                                let is_active = *date_format.read() == val;
-                                                let val_str = val.to_string();
-                                                rsx! {
-                                                    button {
-                                                        r#type: "button",
-                                                        class: format!(
-                                                            "rounded-md px-3 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
-                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs" } else { "bg-card text-foreground border-border hover:border-primary/50" }
-                                                        ),
-                                                        onclick: {
-                                                            let v = val_str.clone();
-                                                            move |_| {
-                                                                date_format.set(v.clone());
-                                                                crate::state::set_time_format_24hr(v == "24hr");
-                                                                if let Some(mut s) = app_settings {
-                                                                    s.write().date_format = v.clone();
-                                                                }
-                                                                if let Some(mut r) = db_sync {
-                                                                    r.with_mut(|rev| rev.0 += 1);
-                                                                }
-                                                            }
-                                                        },
-                                                        "{label}"
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Divider
-                                div { class: "border-t border-border/50" }
-
-                                // Typography & Font Scale
-                                SettingRow {
-                                    title: "Typography & Font Scaling",
-                                    description: "Responsive fluid font scale across different window sizes and DPI displays.",
-                                    div { class: "flex flex-wrap gap-1.5",
-                                        for (val, label) in [
-                                            ("auto", "Auto (Fluid)"),
-                                            ("compact", "Compact (90%)"),
-                                            ("default", "Default (100%)"),
-                                            ("comfortable", "Comfortable (110%)"),
-                                            ("large", "Large (120%)"),
-                                        ] {
-                                            {
-                                                let is_active = *font_scale.read() == val;
-                                                let val_str = val.to_string();
-                                                rsx! {
-                                                    button {
-                                                        r#type: "button",
-                                                        class: format!(
-                                                            "rounded-md px-3 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
-                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs" } else { "bg-card text-foreground border-border hover:border-primary/50" }
-                                                        ),
-                                                        onclick: {
-                                                            let v = val_str.clone();
-                                                            move |_| {
-                                                                font_scale.set(v.clone());
-                                                                if let Some(mut s) = app_settings {
-                                                                    s.write().font_scale = v.clone();
-                                                                }
-                                                                let target = v.clone();
-                                                                spawn(async move {
-                                                                    let js = if target == "auto" {
-                                                                        "document.documentElement.removeAttribute('data-font-scale'); localStorage.removeItem('bpsl-font-scale');".to_string()
-                                                                    } else {
-                                                                        format!("document.documentElement.setAttribute('data-font-scale', '{target}'); localStorage.setItem('bpsl-font-scale', '{target}');")
-                                                                    };
-                                                                    let _ = document::eval(&js);
-                                                                });
-                                                            }
-                                                        },
-                                                        "{label}"
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Divider
-                                div { class: "border-t border-border/50" }
-
-                                // Card Density
-                                SettingRow {
-                                    title: "Card Density",
-                                    description: "Control how compact or spacious the ticket and reminder cards appear.",
-                                    div { class: "flex gap-1.5",
-                                        for (val, label) in [("compact", "Compact"), ("default", "Default"), ("comfortable", "Comfortable")] {
-                                            {
-                                                let is_active = *card_density.read() == val;
-                                                let val_str = val.to_string();
-                                                rsx! {
-                                                    button {
-                                                        r#type: "button",
-                                                        class: format!(
-                                                            "rounded-md px-3 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
-                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs" } else { "bg-card text-foreground border-border hover:border-primary/50" }
-                                                        ),
-                                                        onclick: {
-                                                            let v = val_str.clone();
-                                                            move |_| {
-                                                                card_density.set(v.clone());
-                                                                if let Some(mut s) = app_settings {
-                                                                    s.write().card_density = v.clone();
-                                                                }
-                                                                let target = v.clone();
-                                                                spawn(async move {
-                                                                    let js = if target == "default" {
-                                                                        "document.documentElement.removeAttribute('data-card-density'); localStorage.removeItem('bpsl-card-density');".to_string()
-                                                                    } else {
-                                                                        format!("document.documentElement.setAttribute('data-card-density', '{target}'); localStorage.setItem('bpsl-card-density', '{target}');")
-                                                                    };
-                                                                    let _ = document::eval(&js);
-                                                                });
-                                                            }
-                                                        },
-                                                        "{label}"
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Divider
-                                div { class: "border-t border-border/50" }
-
-                                // Animations Toggle
-                                SettingToggle {
-                                    title: "Animations & Transitions",
-                                    description: "Enable smooth micro-interactions, card hover effects, and dialog transitions.",
-                                    checked: *animations_enabled.read(),
-                                    on_toggle: move |_| {
-                                        let next = !*animations_enabled.read();
-                                        animations_enabled.set(next);
-                                        if let Some(mut s) = app_settings {
-                                            s.write().animations_enabled = next;
-                                        }
-                                        spawn(async move {
-                                            let js = if next {
-                                                "document.documentElement.removeAttribute('data-animations'); localStorage.removeItem('bpsl-animations');".to_string()
-                                            } else {
-                                                "document.documentElement.setAttribute('data-animations', 'false'); localStorage.setItem('bpsl-animations', 'false');".to_string()
-                                            };
-                                            let _ = document::eval(&js);
-                                        });
-                                    },
-                                }
-
-                                // Divider
-                                div { class: "border-t border-border/50" }
-
-                                // Sidebar Position
-                                SettingRow {
-                                    title: "Sidebar Position",
-                                    description: "Where the navigation sidebar appears in the app window.",
-                                    div { class: "flex gap-1.5",
-                                        for (val, label) in [("left", "Left"), ("right", "Right")] {
-                                            {
-                                                let is_active = *sidebar_position.read() == val;
-                                                let val_str = val.to_string();
-                                                rsx! {
-                                                    button {
-                                                        r#type: "button",
-                                                        class: format!(
-                                                            "rounded-md px-3 py-1.5 text-xs font-medium border transition-all duration-150 cursor-pointer active:scale-95 {}",
-                                                            if is_active { "bg-primary text-primary-foreground border-primary shadow-xs" } else { "bg-card text-foreground border-border hover:border-primary/50" }
-                                                        ),
-                                                        onclick: {
-                                                            let v = val_str.clone();
-                                                            move |_| {
-                                                                sidebar_position.set(v.clone());
-                                                                if let Some(mut s) = app_settings {
-                                                                    s.write().sidebar_position = v.clone();
-                                                                }
-                                                            }
-                                                        },
-                                                        "{label}"
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Save
-                                div { class: "flex justify-end pt-3 border-t border-border/50",
-                                    Button {
-                                        variant: "default",
-                                        class: "h-9 text-xs px-4 font-semibold cursor-pointer shadow-xs gap-1.5",
-                                        onclick: save_appearance,
-                                        CheckIcon { class: "size-3.5" }
-                                        "Save Appearance"
-                                    }
-                                }
-                            }
-                        }
-
-                        // ========================================
-                        // TAB 3: Sync & Data
-                        // ========================================
+                        // ========================================================
+                        // TAB 5: Sync & Data Management
+                        // ========================================================
                         if *active_tab.read() == SettingsTab::SyncData {
                             div { class: "flex flex-col gap-5 animate-in fade-in-0 duration-150",
 
                                 // Auto Sync Toggle
                                 SettingToggle {
                                     title: "Automatic Background Sync",
-                                    description: "Continuously sync tickets and reminders with Google Sheets in the background.",
+                                    description: "Continuously synchronize tickets, reminders, and employee records in the background.",
                                     checked: *auto_sync_enabled.read(),
                                     on_toggle: move |_| {
                                         let next = !*auto_sync_enabled.read();
@@ -1029,13 +1736,12 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                     },
                                 }
 
-                                // Divider
                                 div { class: "border-t border-border/50" }
 
                                 // Sync Interval
                                 SettingRow {
-                                    title: "Sync Interval (seconds)",
-                                    description: "How often the app polls Google Sheets for changes. Range: 5–300 seconds.",
+                                    title: "Sync Cycle Cadence (seconds)",
+                                    description: "Frequency of periodic polling to Google Sheets. Range: 5–300 seconds.",
                                     div { class: "flex items-center gap-2",
                                         input {
                                             r#type: "number",
@@ -1049,26 +1755,11 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                     }
                                 }
 
-                                // Divider
-                                div { class: "border-t border-border/50" }
-
-                                // Notify on Pull
-                                SettingToggle {
-                                    title: "Notify on Remote Changes",
-                                    description: "Show a toast notification when new data arrives from Google Sheets.",
-                                    checked: *notify_on_pull.read(),
-                                    on_toggle: move |_| {
-                                        let next = !*notify_on_pull.read();
-                                        notify_on_pull.set(next);
-                                    },
-                                }
-
-                                // Divider
                                 div { class: "border-t border-border/50" }
 
                                 // Sync Queue Status
                                 div { class: "rounded-xl border border-border/70 bg-muted/20 p-4 flex flex-col gap-3",
-                                    span { class: "text-xs font-bold text-foreground uppercase tracking-wider", "Sync Queue Status" }
+                                    span { class: "text-xs font-bold text-foreground uppercase tracking-wider", "Sync Queue & Conflict Status" }
                                     div { class: "grid grid-cols-2 gap-3",
                                         StatCard { label: "Pending Operations", value: "{pending_ops}", accent: if pending_ops > 0 { "text-amber-600" } else { "text-emerald-600" } }
                                         StatCard { label: "Unresolved Conflicts", value: "{conflict_count}", accent: if conflict_count > 0 { "text-destructive" } else { "text-emerald-600" } }
@@ -1081,23 +1772,13 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                     }
                                 }
 
-                                // Actions row
+                                // Sync Actions row
                                 div { class: "flex items-center gap-2 flex-wrap",
                                     Button {
                                         variant: "outline",
                                         class: "h-8 text-xs px-3 cursor-pointer shadow-2xs gap-1.5",
                                         onclick: handle_force_sync,
-                                        svg {
-                                            class: "size-3.5",
-                                            view_box: "0 0 24 24",
-                                            fill: "none",
-                                            stroke: "currentColor",
-                                            stroke_width: "2",
-                                            stroke_linecap: "round",
-                                            stroke_linejoin: "round",
-                                            path { d: "M21 2v6h-6" }
-                                            path { d: "M3 12a9 9 0 0 1 15-6.7L21 8" }
-                                        }
+                                        RefreshIcon { class: "size-3.5" }
                                         "Force Sync Now"
                                     }
                                     Button {
@@ -1107,24 +1788,53 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                         AlertCircleIcon { class: "size-3.5" }
                                         "Retry Failed Ops"
                                     }
-                                }
-
-                                // Save
-                                div { class: "flex justify-end pt-3 border-t border-border/50",
                                     Button {
                                         variant: "default",
-                                        class: "h-9 text-xs px-4 font-semibold cursor-pointer shadow-xs gap-1.5",
+                                        class: "h-8 text-xs px-3 font-semibold cursor-pointer shadow-xs gap-1.5 ml-auto",
                                         onclick: save_sync_settings,
                                         CheckIcon { class: "size-3.5" }
-                                        "Save Sync Settings"
+                                        "Save Sync Interval"
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50 my-1" }
+
+                                // Database Maintenance & Backups
+                                div { class: "rounded-xl border border-border/70 bg-muted/20 p-4 flex flex-col gap-3",
+                                    div { class: "flex items-center justify-between",
+                                        div { class: "flex flex-col gap-0.5",
+                                            span { class: "text-xs font-bold text-foreground uppercase tracking-wider", "Database Maintenance & Backup" }
+                                            span { class: "text-[11px] text-muted-foreground", "Export your full SQLite dataset or compact the database file on disk." }
+                                        }
+                                        span { class: "text-xs font-mono font-semibold text-primary px-2 py-0.5 rounded bg-primary/10", "{db_size_display}" }
+                                    }
+                                    div { class: "flex items-center gap-3 pt-1 flex-wrap",
+                                        Button {
+                                            variant: "outline",
+                                            class: "h-8 text-xs px-3.5 cursor-pointer shadow-2xs gap-1.5 bg-card hover:bg-muted",
+                                            onclick: handle_export_json,
+                                            svg { class: "size-3.5", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
+                                                path { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" }
+                                            }
+                                            "Export Full Backup (JSON)"
+                                        }
+                                        Button {
+                                            variant: "outline",
+                                            class: "h-8 text-xs px-3.5 cursor-pointer shadow-2xs gap-1.5 bg-card hover:bg-muted",
+                                            onclick: handle_optimize_db,
+                                            svg { class: "size-3.5", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
+                                                path { d: "M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" }
+                                            }
+                                            "Vacuum & Optimize Database"
+                                        }
                                     }
                                 }
                             }
                         }
 
-                        // ========================================
-                        // TAB 4: About
-                        // ========================================
+                        // ========================================================
+                        // TAB 6: About & Diagnostics
+                        // ========================================================
                         if *active_tab.read() == SettingsTab::About {
                             div { class: "flex flex-col gap-5 animate-in fade-in-0 duration-150",
 
@@ -1135,9 +1845,9 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                     }
                                     div { class: "flex flex-col gap-1",
                                         h3 { class: "text-lg font-bold text-foreground", "BPSL IT Support" }
-                                        span { class: "text-xs text-muted-foreground", "Ticket & Reminder Management System" }
+                                        span { class: "text-xs text-muted-foreground", "Enterprise Ticket & Reminder Management System" }
                                         div { class: "flex items-center gap-2 mt-1",
-                                            span { class: "text-[10px] font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded-md border border-border/60", "v0.1.0" }
+                                            span { class: "text-[10px] font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded-md border border-border/60", "v1.1.0" }
                                             span { class: "text-[10px] font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded-md border border-border/60", "Dioxus 0.7.1" }
                                             span { class: "text-[10px] font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded-md border border-border/60", "Rust" }
                                         }
@@ -1146,12 +1856,26 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
 
                                 // Database Statistics
                                 div { class: "rounded-xl border border-border/70 bg-muted/20 p-4 flex flex-col gap-3",
-                                    span { class: "text-xs font-bold text-foreground uppercase tracking-wider", "Database Statistics" }
+                                    div { class: "flex items-center justify-between",
+                                        span { class: "text-xs font-bold text-foreground uppercase tracking-wider", "Database Entity Statistics" }
+                                        span { class: "text-xs font-mono text-muted-foreground", "File size: {db_size_display}" }
+                                    }
                                     div { class: "grid grid-cols-2 sm:grid-cols-4 gap-3",
                                         StatCard { label: "Tickets", value: "{ticket_count}", accent: "text-blue-600" }
                                         StatCard { label: "Reminders", value: "{reminder_count}", accent: "text-amber-600" }
                                         StatCard { label: "Employees", value: "{employee_count}", accent: "text-emerald-600" }
                                         StatCard { label: "Notes", value: "{note_count}", accent: "text-purple-600" }
+                                    }
+                                }
+
+                                // Keyboard Shortcuts Reference
+                                div { class: "rounded-xl border border-border/70 bg-muted/20 p-4 flex flex-col gap-2.5",
+                                    span { class: "text-xs font-bold text-foreground uppercase tracking-wider", "Keyboard Shortcuts" }
+                                    div { class: "grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs",
+                                        ShortcutRow { key_label: "Ctrl + ,", description: "Open Settings Dialog" }
+                                        ShortcutRow { key_label: "Ctrl + D", description: "Toggle Light / Dark Theme" }
+                                        ShortcutRow { key_label: "Ctrl + Shift + S", description: "Trigger Force Sync" }
+                                        ShortcutRow { key_label: "Esc", description: "Dismiss Active Dialog" }
                                     }
                                 }
 
@@ -1165,36 +1889,21 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                         mono: true,
                                     }
                                     DiagRow {
-                                        label: "Sync Cycle Interval",
-                                        value: format!("{} seconds", crate::sync::CYCLE_SECS),
-                                        mono: false,
-                                    }
-                                    DiagRow {
-                                        label: "Pending Sync Operations",
-                                        value: pending_ops.to_string(),
-                                        mono: false,
-                                    }
-                                    DiagRow {
-                                        label: "Unresolved Conflicts",
-                                        value: conflict_count.to_string(),
-                                        mono: false,
-                                    }
-                                    DiagRow {
                                         label: "Operating System",
                                         value: std::env::consts::OS.to_string(),
                                         mono: false,
                                     }
                                     DiagRow {
-                                        label: "Architecture",
+                                        label: "CPU Architecture",
                                         value: std::env::consts::ARCH.to_string(),
                                         mono: false,
                                     }
                                 }
 
                                 // Credits
-                                div { class: "text-center py-3",
+                                div { class: "text-center py-2",
                                     span { class: "text-[11px] text-muted-foreground",
-                                        "Built with ❤ by BPSL IT Team • Powered by Dioxus & Rust"
+                                        "BPSL IT Support Team • Fast, Offline-First, Powered by Rust & Dioxus"
                                     }
                                 }
                             }
@@ -1205,7 +1914,6 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         }
     }
 }
-
 
 // ============================================================
 // Reusable Setting Row Components
@@ -1222,7 +1930,7 @@ struct SettingRowProps {
 fn SettingRow(props: SettingRowProps) -> Element {
     rsx! {
         div { class: "flex items-center justify-between gap-4",
-            div { class: "flex flex-col gap-0.5 min-w-0",
+            div { class: "flex flex-col gap-0.5 min-w-0 flex-1",
                 span { class: "text-sm font-semibold text-foreground", "{props.title}" }
                 span { class: "text-[11px] text-muted-foreground leading-relaxed", "{props.description}" }
             }
@@ -1247,27 +1955,53 @@ struct SettingToggleProps {
 
 #[component]
 fn SettingToggle(props: SettingToggleProps) -> Element {
-    let bg = if props.checked { "bg-primary" } else { "bg-muted-foreground/30" };
-    let knob_pos = if props.checked { "translate-x-4" } else { "translate-x-0.5" };
+    let (track_bg, knob_bg, knob_pos) = if props.checked {
+        ("bg-primary", "bg-primary-foreground", "translate-x-4")
+    } else {
+        ("bg-muted-foreground/30 dark:bg-muted/80 border border-border/60", "bg-white dark:bg-zinc-200", "translate-x-0.5")
+    };
 
     rsx! {
         div { class: "flex items-center justify-between gap-4",
-            div { class: "flex flex-col gap-0.5 min-w-0",
+            div { class: "flex flex-col gap-0.5 min-w-0 flex-1",
                 span { class: "text-sm font-semibold text-foreground", "{props.title}" }
                 span { class: "text-[11px] text-muted-foreground leading-relaxed", "{props.description}" }
             }
             button {
                 r#type: "button",
-                class: "relative inline-flex h-6 w-10 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-200 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary {bg}",
+                role: "switch",
+                "aria-checked": if props.checked { "true" } else { "false" },
+                class: "relative inline-flex h-6 w-10 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary {track_bg}",
                 onclick: move |e| props.on_toggle.call(e),
                 span {
-                    class: "pointer-events-none inline-block size-5 rounded-full bg-white shadow-lg ring-0 transition-transform duration-200 ease-in-out {knob_pos}",
+                    class: "pointer-events-none inline-block size-5 rounded-full {knob_bg} shadow-md border border-black/10 dark:border-white/10 ring-0 transition-all duration-200 ease-in-out {knob_pos}",
                 }
             }
         }
     }
 }
 
+// ============================================================
+// Shortcut Row
+// ============================================================
+
+#[derive(Props, Clone, PartialEq)]
+struct ShortcutRowProps {
+    key_label: &'static str,
+    description: &'static str,
+}
+
+#[component]
+fn ShortcutRow(props: ShortcutRowProps) -> Element {
+    rsx! {
+        div { class: "flex items-center justify-between p-2 rounded-lg bg-background border border-border/60",
+            span { class: "text-muted-foreground text-[11px]", "{props.description}" }
+            span { class: "px-2 py-0.5 rounded font-mono text-[10px] font-bold bg-muted border border-border/80 text-foreground",
+                "{props.key_label}"
+            }
+        }
+    }
+}
 
 // ============================================================
 // Stat Card
@@ -1290,7 +2024,6 @@ fn StatCard(props: StatCardProps) -> Element {
         }
     }
 }
-
 
 // ============================================================
 // Diagnostic Row
