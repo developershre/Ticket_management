@@ -10,7 +10,7 @@ use crate::icons::{ExternalLinkIcon, FileTextIcon, PaperclipIcon, PencilIcon};
 use super::super::components::get_image_preview_url;
 use super::super::types::{
     assignee_color_classes, column_display_label, get_assignee_initials, priority_badge,
-    resolve_ticket_activity, sla_badge_class, status_badge_class, status_badge_variant,
+    resolve_ticket_activity_all, sla_badge_class, status_badge_class, status_badge_variant,
     TicketContextState, TicketItem,
 };
 
@@ -270,7 +270,7 @@ pub fn ViewTicketDialog(mut props: ViewTicketDialogProps) -> Element {
                                 }
 
                                 {
-                                    let resolved_act = resolve_ticket_activity(&ticket.my_activity, &ticket.stage, &ticket.activities);
+                                    let resolved_act = resolve_ticket_activity_all(&ticket.my_activity, &ticket.stage, &ticket.activities, &ticket.tag);
                                     let badges: Vec<String> = resolved_act
                                         .split(',')
                                         .map(|s| s.trim().to_uppercase())

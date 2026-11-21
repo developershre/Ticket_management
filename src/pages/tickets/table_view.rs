@@ -313,10 +313,11 @@ pub fn render_status_cell(t: &TicketItem) -> Element {
 }
 
 pub fn render_stage_cell(t: &TicketItem) -> Element {
-    let resolved_act = crate::pages::tickets::types::resolve_ticket_activity(
+    let resolved_act = crate::pages::tickets::types::resolve_ticket_activity_all(
         &t.my_activity,
         &t.stage,
         &t.activities,
+        &t.tag,
     );
     let badges: Vec<String> = resolved_act
         .split(',')
@@ -326,20 +327,13 @@ pub fn render_stage_cell(t: &TicketItem) -> Element {
 
     rsx! {
         if !badges.is_empty() {
-            div { class: "flex flex-wrap items-center gap-1 max-w-[220px]",
-                for b in badges.iter().take(3) {
+            div { class: "flex flex-wrap items-center gap-1 max-w-[280px]",
+                for b in badges.iter() {
                     span {
                         key: "{b}",
                         class: "inline-flex items-center rounded bg-[#00c5eb] dark:bg-[#00c5eb] text-slate-950 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide truncate max-w-[120px] shadow-2xs",
                         title: "Activity: {b}",
                         "{b}"
-                    }
-                }
-                if badges.len() > 3 {
-                    span {
-                        class: "text-[9px] font-bold text-muted-foreground bg-muted border border-border/50 px-1 py-0.5 rounded",
-                        title: "{resolved_act}",
-                        "+{badges.len() - 3}"
                     }
                 }
             }
@@ -481,10 +475,11 @@ pub fn ticket_columns() -> Vec<DataTableColumn<TicketItem>> {
             "Stage / Action",
             render_stage_cell,
             |t: &TicketItem| {
-                let act = crate::pages::tickets::types::resolve_ticket_activity(
+                let act = crate::pages::tickets::types::resolve_ticket_activity_all(
                     &t.my_activity,
                     &t.stage,
                     &t.activities,
+                    &t.tag,
                 );
                 if !act.is_empty() {
                     SortValue::Text(act)

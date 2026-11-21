@@ -117,6 +117,7 @@ pub fn EditTicketDialog(mut props: EditTicketDialogProps) -> Element {
                 put_str("activities_text", &current.activities, &act_val);
                 put_str("my_activity", &current.my_activity, &my_act_val);
                 put_str("stage", &current.stage, &stage_val);
+                put_str("tag", &current.tag, &my_act_val);
                 put_str("deadline", &current.deadline, &deadline_val);
                 put_str("sla_status", &current.sla_status, &sla_stat_val);
                 put_str("sla_deadline", &current.sla_deadline, &sla_dead_val);
@@ -175,6 +176,7 @@ pub fn EditTicketDialog(mut props: EditTicketDialogProps) -> Element {
             current.kanban_state = kanban_val.clone();
             current.status = status_val.clone();
             current.stage = stage_val.clone();
+            current.tag = my_act_val.clone();
             current.last_updated_on = "Just now".to_string();
 
             let mut list = state.tickets.write();
@@ -215,6 +217,7 @@ pub fn EditTicketDialog(mut props: EditTicketDialogProps) -> Element {
                 &kanban_val,
                 &stage_val,
                 &status_val,
+                &my_act_val,
             );
 
             if !api_fields.is_empty() {

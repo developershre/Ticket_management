@@ -61,6 +61,7 @@ pub struct TicketItem {
     pub status: String,
     pub created_on: String,
     pub last_updated_on: String,
+    pub tag: String,
 
     // Aliases
     pub id: String,
@@ -122,6 +123,7 @@ impl TicketItem {
             status: status.to_string(),
             created_on: created_on.to_string(),
             last_updated_on: last_updated_on.to_string(),
+            tag: String::new(),
 
             id,
             title: subject.to_string(),
@@ -153,7 +155,7 @@ impl TicketItem {
             "Open".to_string()
         };
 
-        let resolved_my_activity = resolve_ticket_activity(&t.my_activity, &t.stage, &t.activities);
+        let resolved_my_activity = resolve_ticket_activity_all(&t.my_activity, &t.stage, &t.activities, &t.tag);
         let my_activity = if !resolved_my_activity.is_empty() {
             resolved_my_activity
         } else {
@@ -185,6 +187,11 @@ impl TicketItem {
             &t.created_on,
             &t.last_updated_on,
         );
+        item.tag = if !t.tag.trim().is_empty() {
+            t.tag.clone()
+        } else {
+            my_activity.clone()
+        };
         if let Some(ref sid) = t.server_ticket_id {
             if !sid.trim().is_empty() {
                 item.id = sid.clone();
@@ -504,20 +511,26 @@ pub fn is_generic_placeholder(val: &str) -> bool {
     let lower = val.trim().to_lowercase();
     matches!(
         lower.as_str(),
-        "" | "triage" | "pending review" | "unassigned" | "none" | "n/a"
+        "" | "triage"
+            | "pending review"
+            | "unassigned"
+            | "none"
+            | "n/a"
+            | "ticket created"
+            | "initial review"
     )
 }
 
-/// Normalizes a comma-separated activity string into clean uppercase badges
+/// Normalizes a comma, newline, or semicolon-separated activity string into clean uppercase badges
 pub fn normalize_activity_badges(val: &str) -> String {
     let clean = strip_actioned_prefix(val);
-    if is_generic_status(&clean) {
+    if is_generic_status(&clean) || is_generic_placeholder(&clean) {
         return String::new();
     }
     let parts: Vec<String> = clean
-        .split(',')
+        .split(|c| c == ',' || c == '\n' || c == '\r' || c == ';')
         .map(|s| strip_actioned_prefix(s).trim().to_uppercase())
-        .filter(|s| !s.is_empty() && !is_generic_placeholder(s))
+        .filter(|s| !s.is_empty() && !is_generic_placeholder(s) && !is_generic_status(s))
         .collect();
 
     let mut deduped: Vec<String> = Vec::new();
@@ -529,43 +542,41 @@ pub fn normalize_activity_badges(val: &str) -> String {
     deduped.join(", ")
 }
 
-/// Resolves the actual activities for a ticket (especially solved/completed tickets)
-/// by checking stage (Google Sheet column T primary store), my_activity, and activities with fallbacks.
-pub fn resolve_ticket_activity(my_activity: &str, stage: &str, activities: &str) -> String {
+fn append_activity_tokens(all_badges: &mut Vec<String>, raw: &str) {
+    let norm = normalize_activity_badges(raw);
+    if !norm.is_empty() {
+        for item in norm.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            if !all_badges.iter().any(|x: &String| x.eq_ignore_ascii_case(item)) {
+                all_badges.push(item.to_string());
+            }
+        }
+    }
+}
+
+/// Resolves all actual activities for a ticket across stage, tag, my_activity, and activities.
+/// Collects and deduplicates all unique activity badges cleanly.
+pub fn resolve_ticket_activity_all(
+    my_activity: &str,
+    stage: &str,
+    activities: &str,
+    tag: &str,
+) -> String {
     let mut all_badges: Vec<String> = Vec::new();
 
-    // 1. Gather from stage (primary store in Google Sheet)
-    let cleaned_stage = stage.trim();
-    if !cleaned_stage.is_empty() && !is_generic_status(cleaned_stage) {
-        let norm = normalize_activity_badges(cleaned_stage);
-        for item in norm.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
-            if !all_badges.iter().any(|x: &String| x.eq_ignore_ascii_case(item)) {
-                all_badges.push(item.to_string());
-            }
-        }
-    }
+    // 1. Gather from stage (primary store in Google Sheet per user configuration)
+    append_activity_tokens(&mut all_badges, stage);
 
-    // 2. Gather from my_activity (with Actioned: prefix stripped)
-    let cleaned_my_act = strip_actioned_prefix(my_activity);
-    if !cleaned_my_act.is_empty() && !is_generic_status(&cleaned_my_act) {
-        let norm = normalize_activity_badges(&cleaned_my_act);
-        for item in norm.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
-            if !all_badges.iter().any(|x: &String| x.eq_ignore_ascii_case(item)) {
-                all_badges.push(item.to_string());
-            }
-        }
-    }
+    // 2. Gather from tag
+    append_activity_tokens(&mut all_badges, tag);
 
-    // 3. Gather from activities field (e.g. "Processed WB,SALE ORDER,AMD in 1h 34m")
+    // 3. Gather from my_activity (with Actioned: prefix stripped)
+    append_activity_tokens(&mut all_badges, my_activity);
+
+    // 4. Gather from activities field (extract if "Processed ... in ...")
     let cleaned_act = activities.trim();
     if !cleaned_act.is_empty() {
         if let Some(extracted) = extract_processed_activities(cleaned_act) {
-            let norm = normalize_activity_badges(&extracted);
-            for item in norm.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
-                if !all_badges.iter().any(|x: &String| x.eq_ignore_ascii_case(item)) {
-                    all_badges.push(item.to_string());
-                }
-            }
+            append_activity_tokens(&mut all_badges, &extracted);
         }
     }
 
@@ -573,17 +584,24 @@ pub fn resolve_ticket_activity(my_activity: &str, stage: &str, activities: &str)
         return all_badges.join(", ");
     }
 
-    // 4. Fallback if stage has non-empty text that is not a generic placeholder
-    if !cleaned_stage.is_empty() && !cleaned_stage.eq_ignore_ascii_case("pending review") && !is_generic_status(cleaned_stage) {
-        return normalize_activity_badges(cleaned_stage);
+    // 5. Fallback: only if no badges were found anywhere else, check if activities
+    // directly contains comma-separated action tokens or an uppercase code
+    if !cleaned_act.is_empty()
+        && !cleaned_act.eq_ignore_ascii_case("ticket created")
+        && !is_generic_placeholder(cleaned_act)
+        && !cleaned_act.to_lowercase().contains("open for")
+        && (cleaned_act.contains(',') || cleaned_act.chars().any(|c| c.is_alphabetic()) && cleaned_act.chars().all(|c| !c.is_alphabetic() || c.is_uppercase()))
+    {
+        append_activity_tokens(&mut all_badges, cleaned_act);
     }
 
-    // 5. Fallback if my_activity has non-empty text that is not "pending review"
-    if !cleaned_my_act.is_empty() && !cleaned_my_act.eq_ignore_ascii_case("pending review") && !is_generic_status(&cleaned_my_act) {
-        return normalize_activity_badges(&cleaned_my_act);
-    }
+    all_badges.join(", ")
+}
 
-    String::new()
+/// Backward-compatible wrapper resolving activities with an empty tag.
+#[allow(dead_code)]
+pub fn resolve_ticket_activity(my_activity: &str, stage: &str, activities: &str) -> String {
+    resolve_ticket_activity_all(my_activity, stage, activities, "")
 }
 
 #[allow(dead_code)]
@@ -844,9 +862,10 @@ impl TicketContextState {
                 }
             }
         }
-        let resolved = resolve_ticket_activity(&t.my_activity, &t.stage, &t.activities);
+        let resolved = resolve_ticket_activity_all(&t.my_activity, &t.stage, &t.activities, &t.tag);
         if !resolved.is_empty() {
-            t.my_activity = resolved;
+            t.my_activity = resolved.clone();
+            t.tag = resolved;
         }
         self.viewing_ticket.set(Some(t));
         self.is_view_open.set(true);
@@ -928,9 +947,11 @@ impl TicketContextState {
         self.edit_customer.set(t.customer.clone());
         self.edit_time_spent.set(t.time_spent);
         self.edit_activities.set(t.activities.clone());
-        let resolved_act = resolve_ticket_activity(&t.my_activity, &t.stage, &t.activities);
+        let resolved_act = resolve_ticket_activity_all(&t.my_activity, &t.stage, &t.activities, &t.tag);
         let act_to_show = if !resolved_act.is_empty() {
             resolved_act
+        } else if !t.tag.trim().is_empty() && !is_generic_status(&t.tag) {
+            normalize_activity_badges(&t.tag)
         } else if !t.stage.trim().is_empty() && !is_generic_status(&t.stage) {
             normalize_activity_badges(&t.stage)
         } else if !t.my_activity.trim().is_empty() && !is_generic_status(&t.my_activity) {
@@ -1127,5 +1148,45 @@ impl TicketContextState {
         }
         let mut list = self.tickets.write();
         list.retain(|t| t.id != ticket_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_ticket_activity_from_all_fields() {
+        // Stage has activities
+        let r1 = resolve_ticket_activity_all("", "WB,OFFLINE,ENTRY", "", "");
+        assert_eq!(r1, "WB, OFFLINE, ENTRY");
+
+        // Actioned prefix in my_activity with stage generic
+        let r2 = resolve_ticket_activity_all("Actioned: Party Bill Date,Change", "Solved(closed)", "", "");
+        assert_eq!(r2, "PARTY BILL DATE, CHANGE");
+
+        // Tag field
+        let r3 = resolve_ticket_activity_all("", "Pending", "", "PO, AMD, APPROVAL");
+        assert_eq!(r3, "PO, AMD, APPROVAL");
+
+        // Activities field with Processed ... in ...
+        let r4 = resolve_ticket_activity_all("", "In Progress", "Processed WB,SALE ORDER,AMD in 1h 34m", "");
+        assert_eq!(r4, "WB, SALE ORDER, AMD");
+
+        // Direct activities field
+        let r5 = resolve_ticket_activity_all("", "Closed", "Laser Unit,Clean,Pick-up Roller,Change", "");
+        assert_eq!(r5, "LASER UNIT, CLEAN, PICK-UP ROLLER, CHANGE");
+
+        // Multiline / newline-separated activities
+        let r6 = resolve_ticket_activity_all("", "SMPS Change\nCPU FAN Change\nSSD Change", "", "");
+        assert_eq!(r6, "SMPS CHANGE, CPU FAN CHANGE, SSD CHANGE");
+
+        // Semicolon-separated activities
+        let r7 = resolve_ticket_activity_all("", "ERP; Restart", "", "");
+        assert_eq!(r7, "ERP, RESTART");
+
+        // Deduplication across stage and my_activity
+        let r8 = resolve_ticket_activity_all("PO, AMD", "PO, AMD, APPROVAL", "", "");
+        assert_eq!(r8, "PO, AMD, APPROVAL");
     }
 }

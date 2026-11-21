@@ -756,10 +756,11 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                                                         }
 
                                                                         {
-                                                                            let resolved_act = crate::pages::tickets::types::resolve_ticket_activity(
+                                                                            let resolved_act = crate::pages::tickets::types::resolve_ticket_activity_all(
                                                                                 &ticket.my_activity,
                                                                                 &ticket.stage,
                                                                                 &ticket.activities,
+                                                                                &ticket.tag,
                                                                             );
                                                                             let badges: Vec<String> = resolved_act
                                                                                 .split(',')
@@ -772,24 +773,17 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                                                                     div { class: "flex flex-col gap-1 pt-1 border-t border-border/30",
                                                                                         div { class: "flex items-center justify-between text-[10px]",
                                                                                             span { class: "font-semibold text-muted-foreground uppercase tracking-wider text-[9px]", "Activity" }
-                                                                                            if badges.len() > 3 {
+                                                                                            if badges.len() > 1 {
                                                                                                 span { class: "text-[9px] text-muted-foreground font-medium", "{badges.len()} badges" }
                                                                                             }
                                                                                         }
                                                                                         div { class: "flex flex-wrap items-center gap-1",
-                                                                                            for b in badges.iter().take(3) {
+                                                                                            for b in badges.iter() {
                                                                                                 span {
                                                                                                     key: "{b}",
                                                                                                     class: "inline-flex items-center rounded bg-[#00c5eb] dark:bg-[#00c5eb] text-slate-950 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide truncate max-w-[130px] shadow-2xs",
                                                                                                     title: "Activity: {b}",
                                                                                                     "{b}"
-                                                                                                }
-                                                                                            }
-                                                                                            if badges.len() > 3 {
-                                                                                                span {
-                                                                                                    class: "inline-flex items-center rounded bg-muted border border-border/60 px-1 py-0.5 text-[9px] font-bold text-muted-foreground",
-                                                                                                    title: "{resolved_act}",
-                                                                                                    "+{badges.len() - 3}"
                                                                                                 }
                                                                                             }
                                                                                         }

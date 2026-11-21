@@ -317,6 +317,7 @@ pub struct DbTicket {
     pub last_updated_on: String,
     pub server_ticket_id: Option<String>,
     pub server_last_updated: Option<String>,
+    pub tag: String,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -458,7 +459,8 @@ pub fn init_database() -> Result<()> {
             last_updated_on DATETIME DEFAULT CURRENT_TIMESTAMP,
 
             server_ticket_id TEXT,
-            server_last_updated TEXT
+            server_last_updated TEXT,
+            tag TEXT DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS NOTES(
@@ -624,39 +626,35 @@ pub fn init_database() -> Result<()> {
 /// clean, resolved activity badges, making querying and fetching instant and reliable.
 pub fn backfill_resolved_ticket_activities(conn: &rusqlite::Connection) -> Result<()> {
     let mut stmt = conn.prepare(
-        "SELECT ticket_id, COALESCE(my_activity, ''), COALESCE(stage, ''), COALESCE(activities, '') FROM tickets",
+        "SELECT ticket_id, COALESCE(my_activity, ''), COALESCE(stage, ''), COALESCE(activities, ''), COALESCE(tag, '') FROM tickets",
     )?;
-    let rows: Vec<(i64, String, String, String)> = stmt
+    let rows: Vec<(i64, String, String, String, String)> = stmt
         .query_map([], |row| {
             Ok((
                 row.get(0)?,
                 row.get(1)?,
                 row.get(2)?,
                 row.get(3)?,
+                row.get(4)?,
             ))
         })?
         .filter_map(|r| r.ok())
         .collect();
 
-    for (id, my_act, stage, act) in rows {
-        let resolved = crate::pages::tickets::types::resolve_ticket_activity(&my_act, &stage, &act);
+    for (id, my_act, stage, act, tag) in rows {
+        let resolved = crate::pages::tickets::types::resolve_ticket_activity_all(&my_act, &stage, &act, &tag);
         if !resolved.is_empty() {
             let update_stage = stage.trim().is_empty() || crate::pages::tickets::types::is_generic_status(&stage) || stage != resolved;
             let update_my_act = my_act.trim().is_empty() || my_act != resolved;
-            if update_stage && update_my_act {
+            let update_tag = tag.trim().is_empty() || tag != resolved;
+
+            if update_stage || update_my_act || update_tag {
+                let target_stage = if update_stage { &resolved } else { &stage };
+                let target_my_act = if update_my_act { &resolved } else { &my_act };
+                let target_tag = if update_tag { &resolved } else { &tag };
                 let _ = conn.execute(
-                    "UPDATE tickets SET my_activity = ?1, stage = ?2 WHERE ticket_id = ?3",
-                    params![resolved, resolved, id],
-                );
-            } else if update_my_act {
-                let _ = conn.execute(
-                    "UPDATE tickets SET my_activity = ?1 WHERE ticket_id = ?2",
-                    params![resolved, id],
-                );
-            } else if update_stage {
-                let _ = conn.execute(
-                    "UPDATE tickets SET stage = ?1 WHERE ticket_id = ?2",
-                    params![resolved, id],
+                    "UPDATE tickets SET my_activity = ?1, stage = ?2, tag = ?3 WHERE ticket_id = ?4",
+                    params![target_my_act, target_stage, target_tag, id],
                 );
             }
         }
@@ -702,7 +700,8 @@ pub fn get_all_tickets() -> Vec<DbTicket> {
             COALESCE(created_on, CURRENT_TIMESTAMP),
             COALESCE(last_updated_on, CURRENT_TIMESTAMP),
             server_ticket_id,
-            server_last_updated
+            server_last_updated,
+            COALESCE(tag, '')
         FROM tickets
         ORDER BY ticket_id DESC
         "#,
@@ -738,6 +737,7 @@ pub fn get_all_tickets() -> Vec<DbTicket> {
             last_updated_on: row.get(22)?,
             server_ticket_id: row.get(23)?,
             server_last_updated: row.get(24)?,
+            tag: row.get(25)?,
         })
     });
 
@@ -1015,6 +1015,7 @@ pub fn update_ticket_full(
     kanban_state: &str,
     stage: &str,
     status: &str,
+    tag: &str,
 ) -> Result<()> {
     let conn = get_connection()?;
     conn.execute(
@@ -1040,8 +1041,9 @@ pub fn update_ticket_full(
             kanban_state = ?18,
             stage = ?19,
             status = ?20,
+            tag = ?21,
             last_updated_on = datetime('now', '+330 minutes')
-        WHERE ticket_id = ?21
+        WHERE ticket_id = ?22
         "#,
         params![
             employee_code,
@@ -1064,6 +1066,7 @@ pub fn update_ticket_full(
             kanban_state,
             stage,
             status,
+            tag,
             ticket_id
         ],
     )?;
@@ -1815,6 +1818,9 @@ fn ensure_ticket_sync_columns(conn: &Connection) -> Result<()> {
             "ALTER TABLE tickets ADD COLUMN server_last_updated TEXT",
             [],
         )?;
+    }
+    if !has_column("tag") {
+        conn.execute("ALTER TABLE tickets ADD COLUMN tag TEXT DEFAULT ''", [])?;
     }
     Ok(())
 }
@@ -2975,7 +2981,7 @@ pub fn ticket_create_payload(local_ticket_id: i64) -> Option<Value> {
             "SELECT employee_code, email_address, category, subject, problem_description, \
                     attachment_name, attachment_url, priority, assigned_to, customer, \
                     time_spent, activities, my_activity, deadline, sla_status, sla_deadline, \
-                    rating_avg_text, kanban_state, stage, status \
+                    rating_avg_text, kanban_state, stage, status, COALESCE(tag, '') \
              FROM tickets WHERE ticket_id = ?1",
         )
         .ok()?;
@@ -3003,9 +3009,13 @@ pub fn ticket_create_payload(local_ticket_id: i64) -> Option<Value> {
             let kanban: String = r.get(17)?;
             let stage: String = r.get(18)?;
             let status: String = r.get(19)?;
+            let tag: String = r.get(20)?;
 
             map.insert("employee_code".to_string(), json!(emp_code));
             map.insert("subject".to_string(), json!(subj));
+            if !tag.is_empty() {
+                map.insert("tag".to_string(), json!(tag));
+            }
             if !email.is_empty() {
                 map.insert("email_address".to_string(), json!(email));
             }
@@ -3082,10 +3092,10 @@ pub fn insert_server_ticket(t: &crate::api::ServerTicket) -> Result<i64> {
             attachment_name, attachment_url, priority, assigned_to, customer,
             time_spent, activities, my_activity, deadline, sla_status, sla_deadline,
             rating_avg_text, kanban_state, stage, status, created_on, last_updated_on,
-            server_ticket_id, server_last_updated
+            server_ticket_id, server_last_updated, tag
         ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-            ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
+            ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25
         )
         "#,
         params![
@@ -3113,6 +3123,7 @@ pub fn insert_server_ticket(t: &crate::api::ServerTicket) -> Result<i64> {
             t.last_updated_on,
             t.ticket_id,
             t.last_updated_on,
+            t.tag,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -3131,8 +3142,8 @@ pub fn apply_server_ticket(local_ticket_id: i64, t: &crate::api::ServerTicket) -
             activities = ?12, my_activity = ?13, deadline = ?14, sla_status = ?15,
             sla_deadline = ?16, rating_avg_text = ?17, kanban_state = ?18,
             stage = ?19, status = ?20, created_on = ?21, last_updated_on = ?22,
-            server_ticket_id = ?23, server_last_updated = ?24
-        WHERE ticket_id = ?25
+            server_ticket_id = ?23, server_last_updated = ?24, tag = ?25
+        WHERE ticket_id = ?26
         "#,
         params![
             t.employee_code,
@@ -3159,6 +3170,7 @@ pub fn apply_server_ticket(local_ticket_id: i64, t: &crate::api::ServerTicket) -
             t.last_updated_on,
             t.ticket_id,
             t.last_updated_on,
+            t.tag,
             local_ticket_id,
         ],
     )?;
@@ -3847,7 +3859,8 @@ pub fn get_ticket_by_id(ticket_id: i64) -> Result<Option<DbTicket>> {
             COALESCE(created_on, CURRENT_TIMESTAMP),
             COALESCE(last_updated_on, CURRENT_TIMESTAMP),
             server_ticket_id,
-            server_last_updated
+            server_last_updated,
+            COALESCE(tag, '')
         FROM tickets
         WHERE ticket_id = ?1
         "#,
@@ -3879,6 +3892,7 @@ pub fn get_ticket_by_id(ticket_id: i64) -> Result<Option<DbTicket>> {
             last_updated_on: row.get(22)?,
             server_ticket_id: row.get(23)?,
             server_last_updated: row.get(24)?,
+            tag: row.get(25)?,
         })
     })?;
     if let Some(res) = rows.next() {

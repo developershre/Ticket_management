@@ -1203,18 +1203,26 @@ async fn pull(client: &ApiClient) -> Result<usize, ApiError> {
         t_norm.kanban_state = normalized_col.clone();
 
         // Resolve clean activity badges and store directly into database
-        let resolved_act = crate::pages::tickets::types::resolve_ticket_activity(
+        let resolved_act = crate::pages::tickets::types::resolve_ticket_activity_all(
             &t.my_activity,
             &t.stage,
             &t.activities,
+            &t.tag,
         );
         if !resolved_act.is_empty() {
             t_norm.my_activity = resolved_act.clone();
-            t_norm.stage = resolved_act;
+            t_norm.stage = resolved_act.clone();
+            t_norm.tag = resolved_act;
         } else if !t.stage.trim().is_empty() && !crate::pages::tickets::types::is_generic_status(&t.stage) {
             let act = crate::pages::tickets::types::normalize_activity_badges(&t.stage);
             t_norm.stage = act.clone();
-            t_norm.my_activity = act;
+            t_norm.my_activity = act.clone();
+            t_norm.tag = act;
+        } else if !t.tag.trim().is_empty() && !crate::pages::tickets::types::is_generic_status(&t.tag) {
+            let act = crate::pages::tickets::types::normalize_activity_badges(&t.tag);
+            t_norm.stage = act.clone();
+            t_norm.my_activity = act.clone();
+            t_norm.tag = act;
         } else if !t.stage.trim().is_empty() {
             t_norm.stage = t.stage.trim().to_string();
         } else {
@@ -1249,12 +1257,18 @@ async fn pull(client: &ApiClient) -> Result<usize, ApiError> {
                 if t_norm.stage.trim().is_empty() || crate::pages::tickets::types::is_generic_status(&t_norm.stage) {
                     t_norm.stage = local.my_activity.clone();
                 }
+                if t_norm.tag.trim().is_empty() {
+                    t_norm.tag = local.my_activity.clone();
+                }
             }
             if (t_norm.stage.trim().is_empty() || crate::pages::tickets::types::is_generic_status(&t_norm.stage))
                 && !local.stage.trim().is_empty()
                 && !crate::pages::tickets::types::is_generic_status(&local.stage)
             {
                 t_norm.stage = local.stage.clone();
+            }
+            if t_norm.tag.trim().is_empty() && !local.tag.trim().is_empty() {
+                t_norm.tag = local.tag.clone();
             }
         }
 
@@ -1331,6 +1345,7 @@ async fn pull(client: &ApiClient) -> Result<usize, ApiError> {
                 let needs_activity_backfill = if let Some(ref local) = local_ticket {
                     (!t.my_activity.trim().is_empty() && local.my_activity.trim().is_empty())
                         || (!t.stage.trim().is_empty() && !crate::pages::tickets::types::is_generic_status(&t.stage) && crate::pages::tickets::types::is_generic_status(&local.stage))
+                        || (!t.tag.trim().is_empty() && local.tag.trim().is_empty())
                 } else {
                     false
                 };
