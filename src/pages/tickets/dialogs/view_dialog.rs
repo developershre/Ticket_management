@@ -296,7 +296,7 @@ pub fn ViewTicketDialog(mut props: ViewTicketDialogProps) -> Element {
                                                         for badge in badges.iter() {
                                                             span {
                                                                 key: "{badge}",
-                                                                class: "inline-flex items-center rounded bg-[#00c5eb] dark:bg-[#00c5eb] px-2.5 py-1 text-xs font-bold tracking-wide text-slate-950 uppercase select-none shadow-2xs",
+                                                                class: "inline-flex items-center rounded bg-neutral-200 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 border border-neutral-300 dark:border-neutral-700 px-2.5 py-1 text-xs font-bold tracking-wide uppercase select-none shadow-2xs",
                                                                 "{badge}"
                                                             }
                                                         }

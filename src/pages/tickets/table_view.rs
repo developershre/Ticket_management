@@ -331,7 +331,7 @@ pub fn render_stage_cell(t: &TicketItem) -> Element {
                 for b in badges.iter() {
                     span {
                         key: "{b}",
-                        class: "inline-flex items-center rounded bg-[#00c5eb] dark:bg-[#00c5eb] text-slate-950 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide truncate max-w-[120px] shadow-2xs",
+                        class: "inline-flex items-center rounded bg-neutral-200 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 border border-neutral-300 dark:border-neutral-700 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide truncate max-w-[120px] shadow-2xs select-none",
                         title: "Activity: {b}",
                         "{b}"
                     }

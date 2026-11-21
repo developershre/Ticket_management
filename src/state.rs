@@ -662,6 +662,7 @@ pub fn arrange_date_time(raw: &str) -> String {
 }
 
 /// Returns true if the given date string corresponds to today's local date (Asia/Kolkata).
+#[allow(dead_code)]
 pub fn is_date_today(raw: &str) -> bool {
     let s = raw.trim();
     if s.is_empty() {

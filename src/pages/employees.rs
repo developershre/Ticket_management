@@ -346,7 +346,7 @@ pub fn Employees() -> Element {
         .collect();
 
     rsx! {
-        div { class: "flex flex-1 flex-col h-full overflow-hidden bg-background",
+        div { class: "flex flex-1 flex-col h-full overflow-hidden bg-background p-2",
 
             // ============================================================
             // Page Header
@@ -406,9 +406,9 @@ pub fn Employees() -> Element {
             // ============================================================
             // Directory table (search + department/division facets)
             // ============================================================
-            div { class: "flex flex-1 min-h-0 flex-col gap-3  overflow-hidden",
+            div { class: "flex flex-1 min-h-0 flex-col gap-3 p-2 overflow-hidden",
                 if total_count == 0 {
-                    div { class: "flex flex-1 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border/70 bg-card/40 text-center",
+                    div { class: "flex flex-1 flex-col items-center justify-center gap-3 rounded-lg bg-card/40 text-center",
                         UsersIcon { class: "size-8 text-muted-foreground/50" }
                         div { class: "flex flex-col gap-1",
                             p { class: "text-sm font-semibold text-foreground", "No employees cached yet" }

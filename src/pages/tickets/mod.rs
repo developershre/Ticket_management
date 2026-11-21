@@ -13,6 +13,7 @@ pub mod table_view;
 pub mod types;
 
 // Re-export items for backwards compatibility across the project
+#[allow(unused_imports)]
 pub use components::{AdvancedFilterBar, AdvancedFilterState, AttachmentPicker, InsightsPanel};
 pub use dialogs::{AddCustomViewDialog, CreateTicketDialog, EditTicketDialog, ViewTicketDialog};
 pub use kanban::KanbanBoard;
@@ -634,9 +635,6 @@ pub fn Tickets() -> Element {
                     }
                 }
             }
-
-            // Insights Dashboard Cards (Today Pending, Today In Progress, Today Closed)
-            InsightsPanel { tickets }
 
             // Tabs for Kanban vs IT Data Table
             Tabs {
