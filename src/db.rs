@@ -290,7 +290,7 @@ pub struct DbEmployee {
     pub division: String,
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DbTicket {
     pub ticket_id: i64,
     pub employee_code: String,
@@ -349,6 +349,18 @@ pub struct DbReminder {
     pub server_last_updated: String,
     pub cc_emails: String,
     pub repeat_frequency: String,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SheetChangeRecord {
+    pub change_id: i64,
+    pub entity_type: String,
+    pub entity_id: String,
+    pub entity_title: String,
+    pub field_name: String,
+    pub old_value: String,
+    pub new_value: String,
+    pub pulled_at: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -524,6 +536,19 @@ pub fn init_database() -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_sync_conflicts
             ON sync_conflicts(status, local_ticket_id);
+
+        CREATE TABLE IF NOT EXISTS sheet_changes (
+            change_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            entity_title TEXT NOT NULL,
+            field_name TEXT NOT NULL,
+            old_value TEXT NOT NULL,
+            new_value TEXT NOT NULL,
+            pulled_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sheet_changes_pulled
+            ON sheet_changes(change_id DESC);
         "#,
     )?;
 
@@ -589,8 +614,53 @@ pub fn init_database() -> Result<()> {
         );
     }
 
+    let _ = backfill_resolved_ticket_activities(&conn);
     drop(conn);
     let _ = deduplicate_reminders_db();
+    Ok(())
+}
+
+/// Backfills existing tickets in SQLite so that my_activity and stage always store
+/// clean, resolved activity badges, making querying and fetching instant and reliable.
+pub fn backfill_resolved_ticket_activities(conn: &rusqlite::Connection) -> Result<()> {
+    let mut stmt = conn.prepare(
+        "SELECT ticket_id, COALESCE(my_activity, ''), COALESCE(stage, ''), COALESCE(activities, '') FROM tickets",
+    )?;
+    let rows: Vec<(i64, String, String, String)> = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+            ))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    for (id, my_act, stage, act) in rows {
+        let resolved = crate::pages::tickets::types::resolve_ticket_activity(&my_act, &stage, &act);
+        if !resolved.is_empty() {
+            let update_stage = stage.trim().is_empty() || crate::pages::tickets::types::is_generic_status(&stage) || stage != resolved;
+            let update_my_act = my_act.trim().is_empty() || my_act != resolved;
+            if update_stage && update_my_act {
+                let _ = conn.execute(
+                    "UPDATE tickets SET my_activity = ?1, stage = ?2 WHERE ticket_id = ?3",
+                    params![resolved, resolved, id],
+                );
+            } else if update_my_act {
+                let _ = conn.execute(
+                    "UPDATE tickets SET my_activity = ?1 WHERE ticket_id = ?2",
+                    params![resolved, id],
+                );
+            } else if update_stage {
+                let _ = conn.execute(
+                    "UPDATE tickets SET stage = ?1 WHERE ticket_id = ?2",
+                    params![resolved, id],
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -3676,6 +3746,199 @@ pub fn delete_employee_db(emp_code: &str) -> Result<()> {
     )?;
     invalidate_employee_lookup_cache();
     Ok(())
+}
+
+// ============================================================
+// Google Sheet Changes & Values Tracking
+// ============================================================
+
+/// Records an observed field change fetched from Google Sheets.
+pub fn record_sheet_change(
+    entity_type: &str,
+    entity_id: &str,
+    entity_title: &str,
+    field_name: &str,
+    old_value: &str,
+    new_value: &str,
+    pulled_at: &str,
+) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "INSERT INTO sheet_changes (entity_type, entity_id, entity_title, field_name, old_value, new_value, pulled_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            entity_type,
+            entity_id,
+            entity_title,
+            field_name,
+            old_value,
+            new_value,
+            pulled_at,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Retrieves the most recent changes fetched from Google Sheets.
+pub fn get_recent_sheet_changes(limit: usize) -> Vec<SheetChangeRecord> {
+    let conn = match get_connection() {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let mut stmt = match conn.prepare(
+        "SELECT change_id, entity_type, entity_id, entity_title, field_name, old_value, new_value, pulled_at \
+         FROM sheet_changes ORDER BY change_id DESC LIMIT ?1",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let rows = match stmt.query_map(params![limit as i64], |row| {
+        Ok(SheetChangeRecord {
+            change_id: row.get(0)?,
+            entity_type: row.get(1)?,
+            entity_id: row.get(2)?,
+            entity_title: row.get(3)?,
+            field_name: row.get(4)?,
+            old_value: row.get(5)?,
+            new_value: row.get(6)?,
+            pulled_at: row.get(7)?,
+        })
+    }) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    rows.filter_map(Result::ok).collect()
+}
+
+/// Clears all stored Google Sheet change history.
+pub fn clear_sheet_changes() -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute("DELETE FROM sheet_changes", [])?;
+    Ok(())
+}
+
+/// Fetches a single ticket by its local `ticket_id`.
+pub fn get_ticket_by_id(ticket_id: i64) -> Result<Option<DbTicket>> {
+    let conn = get_connection()?;
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT
+            ticket_id,
+            COALESCE(employee_code, ''),
+            COALESCE(email_address, ''),
+            COALESCE(category, 'General'),
+            subject,
+            COALESCE(problem_description, ''),
+            COALESCE(attachment_name, ''),
+            COALESCE(attachment_url, ''),
+            COALESCE(priority, 'Medium'),
+            COALESCE(assigned_to, 'IT'),
+            COALESCE(customer, ''),
+            COALESCE(time_spent, 0.0),
+            COALESCE(activities, ''),
+            COALESCE(my_activity, ''),
+            COALESCE(deadline, ''),
+            COALESCE(sla_status, 'Within SLA'),
+            COALESCE(sla_deadline, ''),
+            COALESCE(rating_avg_text, ''),
+            COALESCE(kanban_state, 'Pending'),
+            COALESCE(stage, 'Triage'),
+            COALESCE(status, 'Open'),
+            COALESCE(created_on, CURRENT_TIMESTAMP),
+            COALESCE(last_updated_on, CURRENT_TIMESTAMP),
+            server_ticket_id,
+            server_last_updated
+        FROM tickets
+        WHERE ticket_id = ?1
+        "#,
+    )?;
+    let mut rows = stmt.query_map(params![ticket_id], |row| {
+        Ok(DbTicket {
+            ticket_id: row.get(0)?,
+            employee_code: row.get(1)?,
+            email_address: row.get(2)?,
+            category: row.get(3)?,
+            subject: row.get(4)?,
+            problem_description: row.get(5)?,
+            attachment_name: row.get(6)?,
+            attachment_url: row.get(7)?,
+            priority: row.get(8)?,
+            assigned_to: row.get(9)?,
+            customer: row.get(10)?,
+            time_spent: row.get(11)?,
+            activities: row.get(12)?,
+            my_activity: row.get(13)?,
+            deadline: row.get(14)?,
+            sla_status: row.get(15)?,
+            sla_deadline: row.get(16)?,
+            rating_avg_text: row.get(17)?,
+            kanban_state: row.get(18)?,
+            stage: row.get(19)?,
+            status: row.get(20)?,
+            created_on: row.get(21)?,
+            last_updated_on: row.get(22)?,
+            server_ticket_id: row.get(23)?,
+            server_last_updated: row.get(24)?,
+        })
+    })?;
+    if let Some(res) = rows.next() {
+        Ok(Some(res?))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Fetches a single reminder by its local `reminder_id`.
+pub fn get_reminder_by_id(reminder_id: i64) -> Result<Option<DbReminder>> {
+    let conn = get_connection()?;
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT
+            reminder_id,
+            COALESCE(employee_code, ''),
+            COALESCE(employee_name, ''),
+            COALESCE(email_address, ''),
+            COALESCE(service_category, 'General'),
+            reminder_message,
+            COALESCE(send_at, 'Today · 2:00 PM'),
+            COALESCE(status, 'Pending'),
+            COALESCE(email_sent_at, 'Not sent yet'),
+            COALESCE(ticket_id, ''),
+            COALESCE(created_at, CURRENT_TIMESTAMP),
+            COALESCE(last_updated_at, CURRENT_TIMESTAMP),
+            COALESCE(server_reminder_id, ''),
+            COALESCE(server_last_updated, ''),
+            COALESCE(cc_emails, ''),
+            COALESCE(repeat_frequency, 'daily')
+        FROM reminders
+        WHERE reminder_id = ?1
+        "#,
+    )?;
+    let mut rows = stmt.query_map(params![reminder_id], |row| {
+        Ok(DbReminder {
+            reminder_id: row.get(0)?,
+            employee_code: row.get(1)?,
+            employee_name: row.get(2)?,
+            email_address: row.get(3)?,
+            service_category: row.get(4)?,
+            reminder_message: row.get(5)?,
+            send_at: row.get(6)?,
+            status: row.get(7)?,
+            email_sent_at: row.get(8)?,
+            ticket_id: row.get(9)?,
+            created_at: row.get(10)?,
+            last_updated_at: row.get(11)?,
+            server_reminder_id: row.get(12)?,
+            server_last_updated: row.get(13)?,
+            cc_emails: row.get(14)?,
+            repeat_frequency: row.get(15)?,
+        })
+    })?;
+    if let Some(res) = rows.next() {
+        Ok(Some(res?))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Compacts and optimizes the SQLite database file on disk.

@@ -512,6 +512,41 @@ pub struct ServerTicket {
     #[serde(
         default,
         deserialize_with = "flex_str",
+        alias = "Employee Name",
+        alias = "employee_name",
+        alias = "employeeName",
+        alias = "Customer Name",
+        alias = "customer_name"
+    )]
+    pub employee_name: String,
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Department",
+        alias = "department",
+        alias = "dept",
+        alias = "Dept"
+    )]
+    pub dept: String,
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Division",
+        alias = "division"
+    )]
+    pub division: String,
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
+        alias = "Tags",
+        alias = "tags",
+        alias = "Tag",
+        alias = "tag"
+    )]
+    pub tag: String,
+    #[serde(
+        default,
+        deserialize_with = "flex_str",
         alias = "Email Address",
         alias = "email_address",
         alias = "email",

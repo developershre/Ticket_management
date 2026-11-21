@@ -5,4 +5,5 @@ pub mod app_sidebar;
 pub mod employee_search;
 pub mod fab;
 pub mod settings_modal;
+pub mod sheet_changes_modal;
 pub mod titlebar;

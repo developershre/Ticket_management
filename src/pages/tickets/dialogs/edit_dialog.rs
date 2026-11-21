@@ -30,7 +30,6 @@ pub fn EditTicketDialog(mut props: EditTicketDialogProps) -> Element {
     let mut edit_priority = state.edit_priority;
     let mut edit_assigned_to = state.edit_assigned_to;
     let mut edit_kanban_state = state.edit_kanban_state;
-    let mut edit_stage = state.edit_stage;
     let mut edit_status = state.edit_status;
     let mut edit_problem_description = state.edit_problem_description;
     let edit_attachment_name = state.edit_attachment_name;
@@ -83,15 +82,15 @@ pub fn EditTicketDialog(mut props: EditTicketDialogProps) -> Element {
             let cust_val = edit_customer.read().clone();
             let time_val = *edit_time_spent.read();
             let act_val = edit_activities.read().clone();
-            let my_act_val = edit_my_activity.read().clone();
+            let my_act_val = edit_my_activity.read().trim().to_string();
             let deadline_val = edit_deadline.read().clone();
             let sla_stat_val = edit_sla_status.read().clone();
             let sla_dead_val = edit_sla_deadline.read().clone();
             let rating_val = edit_rating_avg_text.read().clone();
 
             let kanban_val = edit_kanban_state.read().clone();
-            let stage_val = kanban_val.clone();
-            let status_val = kanban_val.clone();
+            let status_val = edit_status.read().trim().to_string();
+            let stage_val = my_act_val.clone();
 
             let mut api_fields = serde_json::Map::new();
             {
@@ -117,6 +116,7 @@ pub fn EditTicketDialog(mut props: EditTicketDialogProps) -> Element {
                 put_str("customer", &current.customer, &cust_val);
                 put_str("activities_text", &current.activities, &act_val);
                 put_str("my_activity", &current.my_activity, &my_act_val);
+                put_str("stage", &current.stage, &stage_val);
                 put_str("deadline", &current.deadline, &deadline_val);
                 put_str("sla_status", &current.sla_status, &sla_stat_val);
                 put_str("sla_deadline", &current.sla_deadline, &sla_dead_val);
@@ -126,7 +126,7 @@ pub fn EditTicketDialog(mut props: EditTicketDialogProps) -> Element {
                         api_fields.insert("time_spent".to_string(), serde_json::Value::Number(n));
                     }
                 }
-                if current.kanban_state != kanban_val || current.stage != stage_val || current.status != status_val {
+                if current.kanban_state != kanban_val || current.status != status_val {
                     let sheet_kanban = match kanban_val.as_str() {
                         "InProgress" => "In Progress",
                         "Hold" => "Hold",
@@ -139,15 +139,15 @@ pub fn EditTicketDialog(mut props: EditTicketDialogProps) -> Element {
                         "kanban_state".to_string(),
                         serde_json::Value::String(sheet_kanban.to_string()),
                     );
-                    if !stage_val.is_empty() {
-                        api_fields.insert(
-                            "stage".to_string(),
-                            serde_json::Value::String(stage_val.clone()),
-                        );
-                    }
                     api_fields.insert(
                         "status".to_string(),
                         serde_json::Value::String(status_val.clone()),
+                    );
+                }
+                if current.stage != stage_val || !api_fields.contains_key("stage") {
+                    api_fields.insert(
+                        "stage".to_string(),
+                        serde_json::Value::String(stage_val.clone()),
                     );
                 }
             }
@@ -178,8 +178,12 @@ pub fn EditTicketDialog(mut props: EditTicketDialogProps) -> Element {
             current.last_updated_on = "Just now".to_string();
 
             let mut list = state.tickets.write();
-            if let Some(pos) = list.iter().position(|t| t.id == current.id) {
+            if let Some(pos) = list.iter().position(|t| t.id == current.id || (current.ticket_id > 0 && t.ticket_id == current.ticket_id)) {
                 list[pos] = current.clone();
+            }
+            let is_viewing = state.viewing_ticket.read().as_ref().map(|v| v.id == current.id || (current.ticket_id > 0 && v.ticket_id == current.ticket_id)).unwrap_or(false);
+            if is_viewing {
+                state.viewing_ticket.set(Some(current.clone()));
             }
 
             let num = if current.ticket_id > 0 {
@@ -383,17 +387,15 @@ pub fn EditTicketDialog(mut props: EditTicketDialogProps) -> Element {
                                     }
                                 }
 
-                                div { class: "grid grid-cols-1 sm:grid-cols-2 gap-3",
-                                    div { class: "flex flex-col gap-1",
-                                        label { class: "text-[11px] font-semibold text-foreground", "Action / Stage Tag" }
-                                        input {
-                                            class: "h-9 rounded-md border border-border/80 bg-card px-2.5 text-xs text-foreground focus:border-primary focus:outline-none font-mono",
-                                            placeholder: "e.g. WB,SALE ORDER,AMD, Backend...",
-                                            value: "{edit_stage}",
-                                            oninput: move |e: FormEvent| edit_stage.set(e.value()),
+                                div { class: "grid grid-cols-1 sm:grid-cols-3 gap-3",
+                                    div { class: "sm:col-span-2 flex flex-col gap-1.5",
+                                        label { class: "text-[11px] font-bold text-primary flex items-center justify-between",
+                                            span { "My Activity / Stage Tags (Auto Tag Manager)" }
+                                            span { class: "text-[10px] text-muted-foreground font-normal", "Synced with Google Sheet Stage column" }
                                         }
+                                        MultiActivitySelector { value: edit_my_activity }
                                     }
-                                    div { class: "flex flex-col gap-1",
+                                    div { class: "flex flex-col gap-1.5",
                                         label { class: "text-[11px] font-semibold text-foreground", "Status (Lifecycle)" }
                                         select {
                                             class: "h-9 rounded-md border border-border/80 bg-card px-2 text-xs text-foreground focus:border-primary focus:outline-none cursor-pointer",
@@ -418,14 +420,6 @@ pub fn EditTicketDialog(mut props: EditTicketDialogProps) -> Element {
                                 AttachmentPicker {
                                     attachment_name: edit_attachment_name,
                                     attachment_url: edit_attachment_url,
-                                }
-
-                                div { class: "flex flex-col gap-1.5 pt-1",
-                                    label { class: "text-[11px] font-semibold text-foreground flex items-center justify-between",
-                                        span { "My Activity" }
-                                        span { class: "text-[10px] text-muted-foreground font-normal", "Type & press Enter to create badge (ALL CAPS)" }
-                                    }
-                                    MultiActivitySelector { value: edit_my_activity }
                                 }
                             }
 

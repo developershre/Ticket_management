@@ -13,7 +13,7 @@ pub mod table_view;
 pub mod types;
 
 // Re-export items for backwards compatibility across the project
-pub use components::{AdvancedFilterBar, AdvancedFilterState, AttachmentPicker};
+pub use components::{AdvancedFilterBar, AdvancedFilterState, AttachmentPicker, InsightsPanel};
 pub use dialogs::{AddCustomViewDialog, CreateTicketDialog, EditTicketDialog, ViewTicketDialog};
 pub use kanban::KanbanBoard;
 #[allow(unused_imports)]
@@ -43,6 +43,7 @@ pub fn Tickets() -> Element {
     });
 
     let search_query = use_signal(String::new);
+    let open_sheet_changes = try_use_context::<Signal<crate::state::OpenSheetChangesDialog>>();
     let selected_priority = use_signal(|| "All".to_string());
     let selected_status = use_signal(|| "All".to_string());
     let col_limits = use_signal(std::collections::HashMap::<String, usize>::new);
@@ -135,6 +136,9 @@ pub fn Tickets() -> Element {
                 && !t.title.to_lowercase().contains(&q)
                 && !t.category.to_lowercase().contains(&q)
                 && !t.assignee.to_lowercase().contains(&q)
+                && !t.my_activity.to_lowercase().contains(&q)
+                && !t.activities.to_lowercase().contains(&q)
+                && !t.stage.to_lowercase().contains(&q)
                 && !crate::db::matches_emp_query(&t.employee_code, &t.emp_name(), &t.email_address, &q)
             {
                 continue;
@@ -593,7 +597,11 @@ pub fn Tickets() -> Element {
                                 toast.info("Syncing", "Pulling latest tickets from Google Sheets…");
                                 match crate::sync::pull_tickets_now().await {
                                     Ok(n) => {
-                                        toast.success("Sync Complete", format!("Fetched latest tickets ({n} updated)"));
+                                        if n > 0 {
+                                            toast.success("Sync Complete", format!("Fetched latest changes from Google Sheet ({n} updated)"));
+                                        } else {
+                                            toast.info("Up to Date", "All tickets and values are up to date with Google Sheet.");
+                                        }
                                     }
                                     Err(e) => {
                                         toast.warning("Sync Status", format!("{e}"));
@@ -605,6 +613,19 @@ pub fn Tickets() -> Element {
                         "Refresh"
                     }
                     Button {
+                        variant: "outline",
+                        size: "sm",
+                        class: "h-8 px-3 text-xs gap-1.5 font-medium cursor-pointer shadow-2xs shrink-0 text-foreground",
+                        title: "View recent changes and live values captured during Google Sheet sync",
+                        onclick: move |_| {
+                            if let Some(mut sig) = open_sheet_changes {
+                                sig.set(crate::state::OpenSheetChangesDialog(true));
+                            }
+                        },
+                        RefreshIcon { class: "size-3.5 mr-0.5 text-primary" }
+                        "Sheet Changes"
+                    }
+                    Button {
                         size: "sm",
                         class: "h-8 px-3 text-xs gap-1.5 font-medium cursor-pointer shadow-sm shrink-0",
                         onclick: move |_| state.open_create(None),
@@ -613,6 +634,9 @@ pub fn Tickets() -> Element {
                     }
                 }
             }
+
+            // Insights Dashboard Cards (Today Pending, Today In Progress, Today Closed)
+            InsightsPanel { tickets }
 
             // Tabs for Kanban vs IT Data Table
             Tabs {

@@ -87,6 +87,8 @@ pub struct SyncStatus {
     /// Bumped whenever a pull changed local ticket data — the UI uses this
     /// to bump `AppDbRevision` and reload from SQLite.
     pub revision: u64,
+    /// Number of updated fields/rows fetched in the most recent pull.
+    pub last_pulled_changes: usize,
 }
 
 impl Default for SyncStatus {
@@ -98,6 +100,7 @@ impl Default for SyncStatus {
             conflicts: 0,
             last_success_at: None,
             revision: 0,
+            last_pulled_changes: 0,
         }
     }
 }
@@ -467,7 +470,10 @@ pub async fn run_cycle() {
             Ok(changed) => {
                 let _ = db::sync_meta_set("last_pull_at", &now.to_string());
                 if changed > 0 {
-                    with_status(|s| s.revision = s.revision.wrapping_add(1));
+                    with_status(|s| {
+                        s.last_pulled_changes = changed;
+                        s.revision = s.revision.wrapping_add(1);
+                    });
                 }
                 with_status(|s| s.last_success_at = Some(crate::state::format_utc(now)));
             }
@@ -835,7 +841,9 @@ pub fn to_sheet_kanban_state(val: &str) -> &'static str {
         "Pending" | "Open" | "To Do" | "Todo" | "New" => "Open",
         "InProgress" | "In Progress" | "In-Progress" => "In Progress",
         "Onhold" | "On Hold" | "On-Hold" | "Hold" => "On Hold",
-        "Completed" | "Done" | "Resolved" | "Closed" => "Done",
+        "Solved" => "Solved",
+        "Completed" | "Done" | "Resolved" | "Closed" | "Solved(closed)" | "Solved (closed)" => "Solved(closed)",
+        "Cancelled" | "Canceled" => "Cancelled",
         other => match other {
             s if s.eq_ignore_ascii_case("pending")
                 || s.eq_ignore_ascii_case("open")
@@ -847,13 +855,17 @@ pub fn to_sheet_kanban_state(val: &str) -> &'static str {
                 "In Progress"
             }
             s if s.eq_ignore_ascii_case("onhold") || s.eq_ignore_ascii_case("on hold") => "On Hold",
+            s if s.eq_ignore_ascii_case("solved") => "Solved",
             s if s.eq_ignore_ascii_case("completed")
                 || s.eq_ignore_ascii_case("done")
                 || s.eq_ignore_ascii_case("resolved")
-                || s.eq_ignore_ascii_case("closed") =>
+                || s.eq_ignore_ascii_case("closed")
+                || s.eq_ignore_ascii_case("solved(closed)")
+                || s.eq_ignore_ascii_case("solved (closed)") =>
             {
-                "Done"
+                "Solved(closed)"
             }
+            s if s.eq_ignore_ascii_case("cancelled") || s.eq_ignore_ascii_case("canceled") => "Cancelled",
             _ => "Open",
         },
     }
@@ -1048,15 +1060,11 @@ pub fn sanitize_ticket_payload(client: &ApiClient, payload: &Value, for_create: 
             obj.insert("kanban_state".to_string(), json!(mapped));
         }
         if let Some(stage) = obj.get("stage").and_then(|v| v.as_str()) {
-            let mapped = if client.protocol() == crate::api::ApiProtocol::BpslRest {
-                let trimmed = stage.trim();
-                if trimmed.is_empty() {
-                    "Triage".to_string()
-                } else {
-                    trimmed.to_string()
-                }
+            let trimmed = stage.trim();
+            let mapped = if trimmed.is_empty() {
+                "Triage".to_string()
             } else {
-                to_sheet_stage(stage).to_string()
+                trimmed.to_string()
             };
             obj.insert("stage".to_string(), json!(mapped));
         }
@@ -1186,18 +1194,33 @@ async fn pull(client: &ApiClient) -> Result<usize, ApiError> {
         let mut t_norm = (*t).clone();
         let raw_kanban = if !t.kanban_state.trim().is_empty() {
             t.kanban_state.as_str()
-        } else if !t.stage.trim().is_empty() {
+        } else if !t.stage.trim().is_empty() && crate::pages::tickets::types::is_generic_status(&t.stage) {
             t.stage.as_str()
         } else {
             t.status.as_str()
         };
         let normalized_col = from_sheet_status(raw_kanban).to_string();
         t_norm.kanban_state = normalized_col.clone();
-        t_norm.stage = if !t.stage.trim().is_empty() {
-            t.stage.trim().to_string()
+
+        // Resolve clean activity badges and store directly into database
+        let resolved_act = crate::pages::tickets::types::resolve_ticket_activity(
+            &t.my_activity,
+            &t.stage,
+            &t.activities,
+        );
+        if !resolved_act.is_empty() {
+            t_norm.my_activity = resolved_act.clone();
+            t_norm.stage = resolved_act;
+        } else if !t.stage.trim().is_empty() && !crate::pages::tickets::types::is_generic_status(&t.stage) {
+            let act = crate::pages::tickets::types::normalize_activity_badges(&t.stage);
+            t_norm.stage = act.clone();
+            t_norm.my_activity = act;
+        } else if !t.stage.trim().is_empty() {
+            t_norm.stage = t.stage.trim().to_string();
         } else {
-            "Triage".to_string()
+            t_norm.stage = "Triage".to_string();
         };
+
         t_norm.status = if !t.status.trim().is_empty() {
             to_bpsl_status(&t.status).to_string()
         } else if normalized_col == "Completed" || normalized_col == "Cancelled" {
@@ -1205,6 +1228,36 @@ async fn pull(client: &ApiClient) -> Result<usize, ApiError> {
         } else {
             "Open".to_string()
         };
+
+        if !t.employee_name.trim().is_empty() {
+            let mut code = t_norm.employee_code.trim().to_string();
+            if !code.is_empty() && !code.contains('(') {
+                code = format!("{code} ({})", t.employee_name.trim());
+            }
+            t_norm.employee_code = code;
+            if t_norm.customer.trim().is_empty() || t_norm.customer.trim() == "Internal" {
+                t_norm.customer = t.employee_name.trim().to_string();
+            }
+        }
+
+        let existing_local = local_by_server.get(server_id.as_str())
+            .and_then(|&lid| db::get_ticket_by_id(lid).ok().flatten());
+        if let Some(ref local) = existing_local {
+            // If local ticket already had activities, and server has empty activity, preserve local!
+            if t_norm.my_activity.trim().is_empty() && !local.my_activity.trim().is_empty() {
+                t_norm.my_activity = local.my_activity.clone();
+                if t_norm.stage.trim().is_empty() || crate::pages::tickets::types::is_generic_status(&t_norm.stage) {
+                    t_norm.stage = local.my_activity.clone();
+                }
+            }
+            if (t_norm.stage.trim().is_empty() || crate::pages::tickets::types::is_generic_status(&t_norm.stage))
+                && !local.stage.trim().is_empty()
+                && !crate::pages::tickets::types::is_generic_status(&local.stage)
+            {
+                t_norm.stage = local.stage.clone();
+            }
+        }
+
         let t = &t_norm;
         // Never re-insert a row that has a queued DELETE.
         if db::server_id_has_active_delete(server_id) {
@@ -1224,9 +1277,68 @@ async fn pull(client: &ApiClient) -> Result<usize, ApiError> {
                     .find(|m| m.local_id == local_id)
                     .map(|m| m.server_last_updated.clone())
                     .unwrap_or_default();
-                if last == t.last_updated_on && !db::has_unresolved_conflict(local_id) {
+
+                let local_ticket = existing_local;
+                let mut diffs: Vec<(&'static str, String, String)> = Vec::new();
+
+                if let Some(ref local) = local_ticket {
+                    if !t.status.trim().is_empty() && local.status.trim() != t.status.trim() {
+                        diffs.push(("Status", local.status.clone(), t.status.clone()));
+                    }
+                    if !t.kanban_state.trim().is_empty() && local.kanban_state.trim() != t.kanban_state.trim() {
+                        diffs.push(("Stage", local.kanban_state.clone(), t.kanban_state.clone()));
+                    }
+                    if !t.stage.trim().is_empty() && local.stage.trim() != t.stage.trim() {
+                        diffs.push(("Stage (Activity)", local.stage.clone(), t.stage.clone()));
+                    }
+                    if !t.priority.trim().is_empty() && local.priority.trim() != t.priority.trim() {
+                        diffs.push(("Priority", local.priority.clone(), t.priority.clone()));
+                    }
+                    if !t.assigned_to.trim().is_empty() && local.assigned_to.trim() != t.assigned_to.trim() {
+                        diffs.push(("Assigned To", local.assigned_to.clone(), t.assigned_to.clone()));
+                    }
+                    if !t.category.trim().is_empty() && local.category.trim() != t.category.trim() {
+                        diffs.push(("Category", local.category.clone(), t.category.clone()));
+                    }
+                    if !t.subject.trim().is_empty() && local.subject.trim() != t.subject.trim() {
+                        diffs.push(("Subject", local.subject.clone(), t.subject.clone()));
+                    }
+                    if !t.problem_description.trim().is_empty() && local.problem_description.trim() != t.problem_description.trim() {
+                        diffs.push(("Description", local.problem_description.clone(), t.problem_description.clone()));
+                    }
+                    if !t.activities.trim().is_empty() && local.activities.trim() != t.activities.trim() {
+                        diffs.push(("Activities", local.activities.clone(), t.activities.clone()));
+                    }
+                    if !t.my_activity.trim().is_empty() && local.my_activity.trim() != t.my_activity.trim() {
+                        diffs.push(("My Activity", local.my_activity.clone(), t.my_activity.clone()));
+                    }
+                    if !t.customer.trim().is_empty() && local.customer.trim() != t.customer.trim() {
+                        diffs.push(("Customer", local.customer.clone(), t.customer.clone()));
+                    }
+                    if (local.time_spent - t.time_spent).abs() > 0.001 {
+                        diffs.push(("Time Spent", format!("{:.1}h", local.time_spent), format!("{:.1}h", t.time_spent)));
+                    }
+                    if !t.deadline.trim().is_empty() && local.deadline.trim() != t.deadline.trim() {
+                        diffs.push(("Deadline", local.deadline.clone(), t.deadline.clone()));
+                    }
+                    if !t.sla_status.trim().is_empty() && local.sla_status.trim() != t.sla_status.trim() {
+                        diffs.push(("SLA Status", local.sla_status.clone(), t.sla_status.clone()));
+                    }
+                }
+
+                let has_field_diffs = !diffs.is_empty();
+                let timestamp_changed = last != t.last_updated_on && !t.last_updated_on.is_empty();
+                let needs_activity_backfill = if let Some(ref local) = local_ticket {
+                    (!t.my_activity.trim().is_empty() && local.my_activity.trim().is_empty())
+                        || (!t.stage.trim().is_empty() && !crate::pages::tickets::types::is_generic_status(&t.stage) && crate::pages::tickets::types::is_generic_status(&local.stage))
+                } else {
+                    false
+                };
+
+                if !has_field_diffs && !timestamp_changed && !needs_activity_backfill && !db::has_unresolved_conflict(local_id) {
                     continue; // unchanged since last sync
                 }
+
                 if db::ticket_has_pending_ops(local_id) {
                     // Conflict: local changes are still queued — preserve
                     // the local row and store the server copy.
@@ -1244,11 +1356,31 @@ async fn pull(client: &ApiClient) -> Result<usize, ApiError> {
                     // truth) wins and any recorded divergence settles.
                     db::apply_server_ticket(local_id, t)?;
                     db::resolve_conflicts_for_ticket(local_id)?;
+                    for (field, old_v, new_v) in diffs {
+                        let _ = db::record_sheet_change(
+                            "ticket",
+                            server_id,
+                            &t.subject,
+                            field,
+                            &old_v,
+                            &new_v,
+                            &now_str,
+                        );
+                    }
                     changed += 1;
                 }
             }
             None => {
                 db::insert_server_ticket(t)?;
+                let _ = db::record_sheet_change(
+                    "ticket",
+                    server_id,
+                    &t.subject,
+                    "New Ticket",
+                    "—",
+                    &format!("{}: {}", t.ticket_id, t.subject),
+                    &now_str,
+                );
                 changed += 1;
             }
         }
@@ -1371,6 +1503,7 @@ pub async fn pull_tickets_now() -> Result<usize, ApiError> {
             let failed_err = db::latest_failed_error();
             with_status(|s| {
                 if count > 0 {
+                    s.last_pulled_changes = count;
                     s.revision = s.revision.wrapping_add(1);
                 }
                 s.last_success_at = Some(crate::state::format_utc(now));
@@ -1828,6 +1961,7 @@ async fn pull_reminders(client: &ApiClient) -> Result<usize, ApiError> {
         .map(|m| (m.server_id.as_str(), m.local_id))
         .collect();
     let mut changed = 0usize;
+    let now_str = crate::state::format_utc(now_epoch());
 
     for (server_id, r) in &server {
         match local_by_server.get(server_id.as_str()) {
@@ -1837,8 +1971,43 @@ async fn pull_reminders(client: &ApiClient) -> Result<usize, ApiError> {
                     .find(|m| m.local_id == local_id)
                     .map(|m| m.server_last_updated.clone())
                     .unwrap_or_default();
-                if last != r.last_updated_at {
+
+                let local_rem = db::get_reminder_by_id(local_id).ok().flatten();
+                let mut diffs: Vec<(&'static str, String, String)> = Vec::new();
+                if let Some(ref local) = local_rem {
+                    if !r.status.trim().is_empty() && local.status.trim() != r.status.trim() {
+                        diffs.push(("Status", local.status.clone(), r.status.clone()));
+                    }
+                    if !r.reminder_message.trim().is_empty() && local.reminder_message.trim() != r.reminder_message.trim() {
+                        diffs.push(("Message", local.reminder_message.clone(), r.reminder_message.clone()));
+                    }
+                    if !r.send_at.trim().is_empty() && local.send_at.trim() != r.send_at.trim() {
+                        diffs.push(("Send At", local.send_at.clone(), r.send_at.clone()));
+                    }
+                    if !r.employee_name.trim().is_empty() && local.employee_name.trim() != r.employee_name.trim() {
+                        diffs.push(("Employee Name", local.employee_name.clone(), r.employee_name.clone()));
+                    }
+                    if !r.service_category.trim().is_empty() && local.service_category.trim() != r.service_category.trim() {
+                        diffs.push(("Service Category", local.service_category.clone(), r.service_category.clone()));
+                    }
+                }
+
+                let has_diffs = !diffs.is_empty();
+                let timestamp_changed = last != r.last_updated_at && !r.last_updated_at.is_empty();
+
+                if has_diffs || timestamp_changed {
                     db::apply_server_reminder(local_id, r)?;
+                    for (field, old_v, new_v) in diffs {
+                        let _ = db::record_sheet_change(
+                            "reminder",
+                            server_id,
+                            &r.reminder_message,
+                            field,
+                            &old_v,
+                            &new_v,
+                            &now_str,
+                        );
+                    }
                     changed += 1;
                 }
                 // When remote is Completed, cancel obsolete queued updates to avoid future CONFLICT
@@ -1854,6 +2023,15 @@ async fn pull_reminders(client: &ApiClient) -> Result<usize, ApiError> {
                         changed += 1;
                     } else {
                         db::insert_server_reminder(r)?;
+                        let _ = db::record_sheet_change(
+                            "reminder",
+                            server_id,
+                            &r.reminder_message,
+                            "New Reminder",
+                            "—",
+                            &r.reminder_message,
+                            &now_str,
+                        );
                         changed += 1;
                     }
                 }

@@ -203,17 +203,19 @@ fn SyncPill() -> Element {
     let open_settings = try_use_context::<Signal<crate::state::OpenSettingsDialog>>();
 
     rsx! {
-        button {
-            r#type: "button",
-            class: "hidden items-center gap-1.5 rounded-md border border-sidebar-border/80 bg-sidebar-accent/40 px-2 py-0.5 text-[11px] font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/70 transition-colors cursor-pointer sm:inline-flex",
-            title: format!("{tooltip} · Click to configure API"),
-            onclick: move |_| {
-                if let Some(mut sig) = open_settings {
-                    sig.set(crate::state::OpenSettingsDialog(true));
-                }
-            },
-            span { class: "size-1.5 shrink-0 rounded-full {dot_class}" }
-            span { "{label}" }
+        div { class: "hidden sm:inline-flex items-center gap-1.5",
+            button {
+                r#type: "button",
+                class: "inline-flex items-center gap-1.5 rounded-md border border-sidebar-border/80 bg-sidebar-accent/40 px-2 py-0.5 text-[11px] font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/70 transition-colors cursor-pointer",
+                title: format!("{tooltip} · Click to configure API"),
+                onclick: move |_| {
+                    if let Some(mut sig) = open_settings {
+                        sig.set(crate::state::OpenSettingsDialog(true));
+                    }
+                },
+                span { class: "size-1.5 shrink-0 rounded-full {dot_class}" }
+                span { "{label}" }
+            }
         }
     }
 }

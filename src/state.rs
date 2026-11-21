@@ -75,6 +75,10 @@ fn civil_from_days(z: i64) -> (u32, u32, u32) {
 #[derive(Clone, Copy, PartialEq, Default, Debug)]
 pub struct OpenSettingsDialog(pub bool);
 
+/// Context signal wrapper to open or close the Google Sheet changes modal from anywhere in the app.
+#[derive(Clone, Copy, PartialEq, Default, Debug)]
+pub struct OpenSheetChangesDialog(pub bool);
+
 /// Global application appearance and behavior settings.
 #[derive(Clone, PartialEq, Debug)]
 pub struct AppSettings {
@@ -654,6 +658,23 @@ pub fn arrange_date_time(raw: &str) -> String {
         )
     } else {
         s.to_string()
+    }
+}
+
+/// Returns true if the given date string corresponds to today's local date (Asia/Kolkata).
+pub fn is_date_today(raw: &str) -> bool {
+    let s = raw.trim();
+    if s.is_empty() {
+        return false;
+    }
+    if s.starts_with("Today") || s == "Just now" {
+        return true;
+    }
+    let (cur_y, cur_m, cur_d) = get_real_current_date();
+    if let Some((y, m, d, _, _)) = parse_datetime_flexible(s) {
+        y == cur_y && m == cur_m && d == cur_d
+    } else {
+        false
     }
 }
 

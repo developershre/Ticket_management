@@ -664,4 +664,222 @@ mod tests {
         assert_eq!(updated_cfg.base_url, custom_url);
         assert_eq!(updated_cfg.employee_code.as_deref(), Some("10081"));
     }
+
+    /// Test 14: Tracking and displaying changes fetched from Google Sheet
+    #[test]
+    fn test_sheet_changes_recording_and_diff_tracking() {
+        let (_path, _lock) = setup_test_db();
+
+        // 1. Clear any prior changes
+        db::clear_sheet_changes().expect("clear sheet changes");
+        let changes = db::get_recent_sheet_changes(10);
+        assert!(changes.is_empty(), "Changes list must be empty initially");
+
+        // 2. Record simulated changes fetched from Google Sheet
+        db::record_sheet_change(
+            "ticket",
+            "TC-0014",
+            "Fix Waybill - Invoice Lighthouse",
+            "Status",
+            "Open",
+            "Solved(closed)",
+            "2026-11-21 09:45:00",
+        ).expect("record sheet change");
+
+        db::record_sheet_change(
+            "ticket",
+            "TC-0014",
+            "Fix Waybill - Invoice Lighthouse",
+            "Priority",
+            "Low",
+            "High",
+            "2026-11-21 09:45:00",
+        ).expect("record second sheet change");
+
+        db::record_sheet_change(
+            "reminder",
+            "REM-101",
+            "Server backup check",
+            "Status",
+            "Pending",
+            "Completed",
+            "2026-11-21 09:46:00",
+        ).expect("record reminder sheet change");
+
+        // 3. Verify retrieved records and values
+        let fetched = db::get_recent_sheet_changes(10);
+        assert_eq!(fetched.len(), 3);
+
+        // Most recent first (ordered by change_id DESC)
+        assert_eq!(fetched[0].entity_id, "REM-101");
+        assert_eq!(fetched[0].field_name, "Status");
+        assert_eq!(fetched[0].old_value, "Pending");
+        assert_eq!(fetched[0].new_value, "Completed");
+
+        assert_eq!(fetched[1].entity_id, "TC-0014");
+        assert_eq!(fetched[1].field_name, "Priority");
+        assert_eq!(fetched[1].old_value, "Low");
+        assert_eq!(fetched[1].new_value, "High");
+
+        assert_eq!(fetched[2].entity_id, "TC-0014");
+        assert_eq!(fetched[2].field_name, "Status");
+        assert_eq!(fetched[2].old_value, "Open");
+        assert_eq!(fetched[2].new_value, "Solved(closed)");
+
+        // 4. Test clearing changes log
+        db::clear_sheet_changes().expect("clear sheet changes");
+        assert!(db::get_recent_sheet_changes(10).is_empty());
+    }
+
+    /// Test 16: Activity resolution for solved/closed tickets across my_activity, stage, and activities
+    #[test]
+    fn test_resolve_ticket_activity_and_badge_extraction() {
+        use crate::pages::tickets::types::{
+            extract_processed_activities, normalize_activity_badges, resolve_ticket_activity,
+            strip_actioned_prefix, TicketItem,
+        };
+
+        // 1. strip_actioned_prefix
+        assert_eq!(strip_actioned_prefix("Actioned: WB,SALE ORDER,AMD"), "WB,SALE ORDER,AMD");
+        assert_eq!(strip_actioned_prefix("Actioned : PO,AMD"), "PO,AMD");
+        assert_eq!(strip_actioned_prefix("actioned: SO,TOL"), "SO,TOL");
+        assert_eq!(strip_actioned_prefix("CHANGE,CMOS Battery"), "CHANGE,CMOS Battery");
+
+        // 2. extract_processed_activities from macro logged string
+        assert_eq!(
+            extract_processed_activities("Processed WB,SALE ORDER,AMD in 1h 34m"),
+            Some("WB,SALE ORDER,AMD".to_string())
+        );
+        assert_eq!(
+            extract_processed_activities("Processed SO,TOL in 22h 44m"),
+            Some("SO,TOL".to_string())
+        );
+        assert_eq!(
+            extract_processed_activities("Processed Party Bill Change,Backand in 25m"),
+            Some("Party Bill Change,Backand".to_string())
+        );
+        assert_eq!(extract_processed_activities("Custom note without format"), None);
+
+        // 3. normalize_activity_badges deduplicates and filters generic states
+        assert_eq!(
+            normalize_activity_badges("WB, SALE ORDER, WB, AMD"),
+            "WB, SALE ORDER, AMD"
+        );
+        assert_eq!(
+            normalize_activity_badges("Actioned: PO, AMD, Triage, RATE, CHANGE"),
+            "PO, AMD, RATE, CHANGE"
+        );
+
+        // 4. resolve_ticket_activity with Actioned: in my_activity
+        let act1 = resolve_ticket_activity(
+            "Actioned: WB,SALE ORDER,AMD",
+            "WB,SALE ORDER,AMD",
+            "Processed WB,SALE ORDER,AMD in 1h 34m",
+        );
+        assert_eq!(act1, "WB, SALE ORDER, AMD");
+
+        // 5. resolve_ticket_activity fallback to stage when my_activity is empty
+        let act2 = resolve_ticket_activity(
+            "",
+            "PO,AMD,RATE,CHANGE",
+            "Updated rate",
+        );
+        assert_eq!(act2, "PO, AMD, RATE, CHANGE");
+
+        // 6. resolve_ticket_activity fallback to stage when my_activity is generic "Pending review"
+        let act3 = resolve_ticket_activity(
+            "Pending review",
+            "Increment, Update",
+            "Ticket open for 4d 1h",
+        );
+        assert_eq!(act3, "INCREMENT, UPDATE");
+
+        // 7. resolve_ticket_activity fallback to activities when stage is generic Solved(closed)
+        let act4 = resolve_ticket_activity(
+            "",
+            "Solved(closed)",
+            "Processed SO,TOL in 22h 44m",
+        );
+        assert_eq!(act4, "SO, TOL");
+
+        // 8. TicketItem::from_db_ticket resolves activity into item.my_activity
+        let mut db_t = crate::db::DbTicket::default();
+        db_t.ticket_id = 1004;
+        db_t.subject = "Fly Ash WHRB".to_string();
+        db_t.stage = "WB,SALE ORDER,AMD".to_string();
+        db_t.my_activity = "Actioned: WB,SALE ORDER,AMD".to_string();
+        db_t.activities = "Processed WB,SALE ORDER,AMD in 1h 34m".to_string();
+        db_t.kanban_state = "Solved(closed)".to_string();
+
+        let item = TicketItem::from_db_ticket(db_t);
+        assert_eq!(item.my_activity, "WB, SALE ORDER, AMD");
+
+        // 9. backfill_resolved_ticket_activities stores resolved activities into SQLite
+        let (_path, _lock) = setup_test_db();
+        let conn = db::get_connection().expect("test db conn");
+        conn.execute(
+            "INSERT INTO tickets (ticket_id, subject, stage, my_activity, activities, kanban_state) \
+             VALUES (9001, 'Test Backfill Ticket', 'WB,SALE ORDER,AMD', 'Actioned: WB,SALE ORDER,AMD', '', 'Solved(closed)')",
+            [],
+        ).expect("insert test row");
+
+        db::backfill_resolved_ticket_activities(&conn).expect("backfill runs");
+        let backfilled: String = conn.query_row(
+            "SELECT my_activity FROM tickets WHERE ticket_id = 9001",
+            [],
+            |r| r.get(0),
+        ).expect("query backfilled");
+        assert_eq!(backfilled, "WB, SALE ORDER, AMD");
+
+        // 10. resolve_ticket_activity prioritizes stage over generic placeholder my_activity
+        let act5 = resolve_ticket_activity(
+            "Actioned: ",
+            "WB,OFFLINE,ENTRY",
+            "",
+        );
+        assert_eq!(act5, "WB, OFFLINE, ENTRY");
+
+        // 11. normalize_activity_badges retains compound words like CANCEL in PO, Cancel
+        let act6 = resolve_ticket_activity(
+            "",
+            "PO,Cancel",
+            "",
+        );
+        assert_eq!(act6, "PO, CANCEL");
+
+        let act7 = resolve_ticket_activity(
+            "",
+            "Patch Cord Cable,Damage/Break",
+            "",
+        );
+        assert_eq!(act7, "PATCH CORD CABLE, DAMAGE/BREAK");
+    }
+
+    #[test]
+    fn test_stage_activity_preservation_in_sync_payload() {
+        use crate::api::{ApiClient, ApiConfig, ApiProtocol};
+        use crate::sync::sanitize_ticket_payload;
+
+        let cfg = ApiConfig {
+            base_url: "https://example.com/api".to_string(),
+            api_key: "test_key".to_string(),
+            protocol: ApiProtocol::LegacyV1,
+            employee_code: None,
+        };
+        let client = ApiClient::new(cfg).unwrap();
+
+        let payload = json!({
+            "stage": "WB,OFFLINE,ENTRY",
+            "my_activity": "WB,OFFLINE,ENTRY",
+            "kanban_state": "Solved",
+            "status": "Closed"
+        });
+
+        let sanitized = sanitize_ticket_payload(&client, &payload, false);
+        // Stage must NOT be converted to "Resolution" or "New" - it must preserve the user's activity string!
+        assert_eq!(sanitized["stage"], "WB,OFFLINE,ENTRY");
+        assert_eq!(sanitized["my_activity"], "WB,OFFLINE,ENTRY");
+        assert_eq!(sanitized["kanban_state"], "Solved");
+        assert_eq!(sanitized["status"], "Closed");
+    }
 }

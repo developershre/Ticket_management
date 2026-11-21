@@ -577,7 +577,7 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                             for ticket in column_tickets.iter().take(visible_limit) {
                                                 {
                                                     let id = ticket.id.clone();
-                                                    let title = ticket.title.clone();
+                                                    let title = ticket.card_display_title();
                                                     let priority = ticket.priority.clone();
                                                     let category = ticket.category.clone();
                                                     let deadline = ticket.deadline.clone();
@@ -755,12 +755,58 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                                                             }
                                                                         }
 
-                                                                        if !ticket.stage.is_empty() && ticket.stage != "Triage" && ticket.stage != ticket.kanban_state {
-                                                                            div { class: "flex items-center gap-1",
-                                                                                span {
-                                                                                    class: "inline-flex items-center rounded bg-secondary/80 border border-border/60 px-1.5 py-0.5 text-[10px] font-mono font-medium text-foreground/80 truncate max-w-full",
-                                                                                    title: "Action / Stage: {ticket.stage}",
-                                                                                    "{ticket.stage}"
+                                                                        {
+                                                                            let resolved_act = crate::pages::tickets::types::resolve_ticket_activity(
+                                                                                &ticket.my_activity,
+                                                                                &ticket.stage,
+                                                                                &ticket.activities,
+                                                                            );
+                                                                            let badges: Vec<String> = resolved_act
+                                                                                .split(',')
+                                                                                .map(|s| s.trim().to_uppercase())
+                                                                                .filter(|s| !s.is_empty())
+                                                                                .collect();
+
+                                                                            rsx! {
+                                                                                if !badges.is_empty() {
+                                                                                    div { class: "flex flex-col gap-1 pt-1 border-t border-border/30",
+                                                                                        div { class: "flex items-center justify-between text-[10px]",
+                                                                                            span { class: "font-semibold text-muted-foreground uppercase tracking-wider text-[9px]", "Activity" }
+                                                                                            if badges.len() > 3 {
+                                                                                                span { class: "text-[9px] text-muted-foreground font-medium", "{badges.len()} badges" }
+                                                                                            }
+                                                                                        }
+                                                                                        div { class: "flex flex-wrap items-center gap-1",
+                                                                                            for b in badges.iter().take(3) {
+                                                                                                span {
+                                                                                                    key: "{b}",
+                                                                                                    class: "inline-flex items-center rounded bg-[#00c5eb] dark:bg-[#00c5eb] text-slate-950 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide truncate max-w-[130px] shadow-2xs",
+                                                                                                    title: "Activity: {b}",
+                                                                                                    "{b}"
+                                                                                                }
+                                                                                            }
+                                                                                            if badges.len() > 3 {
+                                                                                                span {
+                                                                                                    class: "inline-flex items-center rounded bg-muted border border-border/60 px-1 py-0.5 text-[9px] font-bold text-muted-foreground",
+                                                                                                    title: "{resolved_act}",
+                                                                                                    "+{badges.len() - 3}"
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                } else if !ticket.stage.is_empty() && ticket.stage != "Triage" && ticket.stage != ticket.kanban_state {
+                                                                                    div { class: "flex items-center gap-1 pt-0.5",
+                                                                                        span {
+                                                                                            class: "inline-flex items-center rounded bg-secondary/80 border border-border/60 px-1.5 py-0.5 text-[10px] font-mono font-medium text-foreground/80 truncate max-w-full",
+                                                                                            title: "Action / Stage: {ticket.stage}",
+                                                                                            "{ticket.stage}"
+                                                                                        }
+                                                                                    }
+                                                                                } else if !ticket.activities.is_empty() && ticket.activities != "Ticket created" {
+                                                                                    div { class: "flex items-center gap-1 pt-0.5 text-[10px] text-muted-foreground truncate",
+                                                                                        span { class: "font-semibold text-foreground/70 shrink-0", "Activity:" }
+                                                                                        span { class: "truncate font-mono", "{ticket.activities}" }
+                                                                                    }
                                                                                 }
                                                                             }
                                                                         }

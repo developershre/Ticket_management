@@ -153,6 +153,13 @@ impl TicketItem {
             "Open".to_string()
         };
 
+        let resolved_my_activity = resolve_ticket_activity(&t.my_activity, &t.stage, &t.activities);
+        let my_activity = if !resolved_my_activity.is_empty() {
+            resolved_my_activity
+        } else {
+            t.my_activity.clone()
+        };
+
         let mut item = Self::new(
             t.ticket_id,
             &t.employee_code,
@@ -167,7 +174,7 @@ impl TicketItem {
             &t.customer,
             t.time_spent,
             &t.activities,
-            &t.my_activity,
+            &my_activity,
             &t.deadline,
             &t.sla_status,
             &t.sla_deadline,
@@ -429,6 +436,156 @@ pub fn format_card_datetime(raw: &str) -> String {
     }
 }
 
+/// Helper to strip leading "Actioned:" or "Actioned: " prefix (case-insensitive)
+pub fn strip_actioned_prefix(val: &str) -> String {
+    let trimmed = val.trim();
+    let lower = trimmed.to_lowercase();
+    if lower.starts_with("actioned:") {
+        trimmed[9..].trim().to_string()
+    } else if lower.starts_with("actioned :") {
+        trimmed[10..].trim().to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Returns true if a status/stage string is a generic workflow column or placeholder
+pub fn is_generic_status(val: &str) -> bool {
+    let lower = val.trim().to_lowercase();
+    matches!(
+        lower.as_str(),
+        "" | "triage"
+            | "pending"
+            | "pending review"
+            | "in progress"
+            | "inprogress"
+            | "hold"
+            | "on hold"
+            | "onhold"
+            | "solved"
+            | "solved(closed)"
+            | "solved (closed)"
+            | "completed"
+            | "closed"
+            | "close"
+            | "cancelled"
+            | "canceled"
+            | "open"
+            | "done"
+            | "unassigned"
+            | "new"
+            | "assigned"
+            | "investigation"
+            | "resolution"
+    )
+}
+
+/// Extracts activity tags from Google Apps Script logged text like:
+/// "Processed WB,SALE ORDER,AMD in 1h 34m" -> "WB,SALE ORDER,AMD"
+pub fn extract_processed_activities(val: &str) -> Option<String> {
+    let trimmed = val.trim();
+    let lower = trimmed.to_lowercase();
+    if lower.starts_with("processed ") {
+        let rest = &trimmed[10..];
+        if let Some(in_pos) = rest.rfind(" in ") {
+            let act_part = rest[..in_pos].trim();
+            if !act_part.is_empty() {
+                return Some(act_part.to_string());
+            }
+        } else {
+            return Some(rest.trim().to_string());
+        }
+    }
+    None
+}
+
+/// Returns true if an individual tag token is an empty or generic placeholder
+pub fn is_generic_placeholder(val: &str) -> bool {
+    let lower = val.trim().to_lowercase();
+    matches!(
+        lower.as_str(),
+        "" | "triage" | "pending review" | "unassigned" | "none" | "n/a"
+    )
+}
+
+/// Normalizes a comma-separated activity string into clean uppercase badges
+pub fn normalize_activity_badges(val: &str) -> String {
+    let clean = strip_actioned_prefix(val);
+    if is_generic_status(&clean) {
+        return String::new();
+    }
+    let parts: Vec<String> = clean
+        .split(',')
+        .map(|s| strip_actioned_prefix(s).trim().to_uppercase())
+        .filter(|s| !s.is_empty() && !is_generic_placeholder(s))
+        .collect();
+
+    let mut deduped: Vec<String> = Vec::new();
+    for p in parts {
+        if !deduped.contains(&p) {
+            deduped.push(p);
+        }
+    }
+    deduped.join(", ")
+}
+
+/// Resolves the actual activities for a ticket (especially solved/completed tickets)
+/// by checking stage (Google Sheet column T primary store), my_activity, and activities with fallbacks.
+pub fn resolve_ticket_activity(my_activity: &str, stage: &str, activities: &str) -> String {
+    let mut all_badges: Vec<String> = Vec::new();
+
+    // 1. Gather from stage (primary store in Google Sheet)
+    let cleaned_stage = stage.trim();
+    if !cleaned_stage.is_empty() && !is_generic_status(cleaned_stage) {
+        let norm = normalize_activity_badges(cleaned_stage);
+        for item in norm.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            if !all_badges.iter().any(|x: &String| x.eq_ignore_ascii_case(item)) {
+                all_badges.push(item.to_string());
+            }
+        }
+    }
+
+    // 2. Gather from my_activity (with Actioned: prefix stripped)
+    let cleaned_my_act = strip_actioned_prefix(my_activity);
+    if !cleaned_my_act.is_empty() && !is_generic_status(&cleaned_my_act) {
+        let norm = normalize_activity_badges(&cleaned_my_act);
+        for item in norm.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            if !all_badges.iter().any(|x: &String| x.eq_ignore_ascii_case(item)) {
+                all_badges.push(item.to_string());
+            }
+        }
+    }
+
+    // 3. Gather from activities field (e.g. "Processed WB,SALE ORDER,AMD in 1h 34m")
+    let cleaned_act = activities.trim();
+    if !cleaned_act.is_empty() {
+        if let Some(extracted) = extract_processed_activities(cleaned_act) {
+            let norm = normalize_activity_badges(&extracted);
+            for item in norm.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                if !all_badges.iter().any(|x: &String| x.eq_ignore_ascii_case(item)) {
+                    all_badges.push(item.to_string());
+                }
+            }
+        }
+    }
+
+    if !all_badges.is_empty() {
+        return all_badges.join(", ");
+    }
+
+    // 4. Fallback if stage has non-empty text that is not a generic placeholder
+    if !cleaned_stage.is_empty() && !cleaned_stage.eq_ignore_ascii_case("pending review") && !is_generic_status(cleaned_stage) {
+        return normalize_activity_badges(cleaned_stage);
+    }
+
+    // 5. Fallback if my_activity has non-empty text that is not "pending review"
+    if !cleaned_my_act.is_empty() && !cleaned_my_act.eq_ignore_ascii_case("pending review") && !is_generic_status(&cleaned_my_act) {
+        return normalize_activity_badges(&cleaned_my_act);
+    }
+
+    String::new()
+}
+
 #[allow(dead_code)]
 pub fn card_border_accent_class(col: &str) -> &'static str {
     match col {
@@ -687,6 +844,10 @@ impl TicketContextState {
                 }
             }
         }
+        let resolved = resolve_ticket_activity(&t.my_activity, &t.stage, &t.activities);
+        if !resolved.is_empty() {
+            t.my_activity = resolved;
+        }
         self.viewing_ticket.set(Some(t));
         self.is_view_open.set(true);
     }
@@ -735,6 +896,14 @@ impl TicketContextState {
     }
 
     pub fn open_edit(&mut self, t: TicketItem) {
+        // Find the freshest version from memory or database so even after an edit it's always completely up-to-date
+        let t = {
+            let list = self.tickets.read();
+            list.iter()
+                .find(|item| item.id == t.id || (t.ticket_id > 0 && item.ticket_id == t.ticket_id))
+                .cloned()
+                .unwrap_or(t)
+        };
         let code = t.emp_code_only().to_string();
         self.edit_employee_code.set(code.clone());
         if let Some(emp) = crate::db::find_employee_by_code(&code) {
@@ -759,13 +928,28 @@ impl TicketContextState {
         self.edit_customer.set(t.customer.clone());
         self.edit_time_spent.set(t.time_spent);
         self.edit_activities.set(t.activities.clone());
-        self.edit_my_activity.set(t.my_activity.to_uppercase());
+        let resolved_act = resolve_ticket_activity(&t.my_activity, &t.stage, &t.activities);
+        let act_to_show = if !resolved_act.is_empty() {
+            resolved_act
+        } else if !t.stage.trim().is_empty() && !is_generic_status(&t.stage) {
+            normalize_activity_badges(&t.stage)
+        } else if !t.my_activity.trim().is_empty() && !is_generic_status(&t.my_activity) {
+            normalize_activity_badges(&t.my_activity)
+        } else {
+            String::new()
+        };
+        self.edit_my_activity.set(act_to_show.clone());
         self.edit_deadline.set(t.deadline.clone());
         self.edit_sla_status.set(t.sla_status.clone());
         self.edit_sla_deadline.set(t.sla_deadline.clone());
         self.edit_rating_avg_text.set(t.rating_avg_text.clone());
         self.edit_kanban_state.set(t.kanban_state.clone());
-        self.edit_stage.set(t.stage.clone());
+        let stage_display = if !act_to_show.is_empty() {
+            act_to_show
+        } else {
+            t.stage.clone()
+        };
+        self.edit_stage.set(stage_display);
         self.edit_status.set(t.status.clone());
 
         self.editing_ticket.set(Some(t));

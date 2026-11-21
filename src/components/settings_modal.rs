@@ -122,6 +122,7 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
     let on_close = props.on_close;
     let app_settings = try_use_context::<Signal<crate::state::AppSettings>>();
     let db_sync = try_use_context::<Signal<crate::state::AppDbRevision>>();
+    let open_changes = try_use_context::<Signal<crate::state::OpenSheetChangesDialog>>();
 
     // Active tab
     let mut active_tab = use_signal(|| SettingsTab::Appearance);
@@ -2534,6 +2535,69 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                         onclick: save_sync_settings,
                                         CheckIcon { class: "size-3.5" }
                                         "Save Sync Interval"
+                                    }
+                                }
+
+                                div { class: "border-t border-border/50 my-1" }
+
+                                // Google Sheet Changes & Values Log
+                                {
+                                    let sheet_changes_list = crate::db::get_recent_sheet_changes(8);
+                                    let total_changes = sheet_changes_list.len();
+                                    rsx! {
+                                        div { class: "rounded-xl border border-border/70 bg-muted/20 p-4 flex flex-col gap-3",
+                                            div { class: "flex items-center justify-between",
+                                                div { class: "flex flex-col gap-0.5",
+                                                    div { class: "flex items-center gap-2",
+                                                        span { class: "text-xs font-bold text-foreground uppercase tracking-wider", "Recent Google Sheet Changes" }
+                                                        span { class: "text-[10px] font-mono px-1.5 py-0.5 rounded bg-primary/10 text-primary font-semibold", "{total_changes} recent" }
+                                                    }
+                                                    span { class: "text-[11px] text-muted-foreground", "Live values and field diffs captured when syncing from your Google Sheet." }
+                                                }
+
+                                                div { class: "flex items-center gap-1.5",
+                                                    Button {
+                                                        variant: "outline",
+                                                        size: "sm",
+                                                        class: "h-7 text-xs px-2.5 cursor-pointer shadow-2xs gap-1",
+                                                        onclick: move |_| {
+                                                            if let Some(mut sig) = open_changes {
+                                                                sig.set(crate::state::OpenSheetChangesDialog(true));
+                                                            }
+                                                        },
+                                                        "View All Details"
+                                                    }
+                                                }
+                                            }
+
+                                            if sheet_changes_list.is_empty() {
+                                                div { class: "py-4 text-center text-xs text-muted-foreground bg-muted/20 rounded-lg border border-border/40",
+                                                    "No remote changes logged yet. Any cell edits in Google Sheets will display their before and after values here."
+                                                }
+                                            } else {
+                                                div { class: "flex flex-col gap-2 max-h-60 overflow-y-auto pr-1",
+                                                    for item in sheet_changes_list.iter() {
+                                                        div {
+                                                            key: "{item.change_id}",
+                                                            class: "flex items-center justify-between gap-3 p-2 rounded-lg bg-card border border-border/60 text-xs",
+                                                            div { class: "flex items-center gap-2 min-w-0 flex-1",
+                                                                span { class: "font-mono font-bold text-[11px] text-foreground shrink-0", "{item.entity_id}" }
+                                                                span { class: "text-[11px] text-muted-foreground truncate max-w-[140px]", "{item.entity_title}" }
+                                                                span { class: "rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground shrink-0", "{item.field_name}" }
+                                                                span { class: "line-through text-rose-500 bg-rose-500/10 px-1.5 py-0.5 rounded text-[11px] font-mono shrink-0",
+                                                                    if item.old_value.is_empty() { "—" } else { "{item.old_value}" }
+                                                                }
+                                                                span { class: "text-muted-foreground font-bold shrink-0", "→" }
+                                                                span { class: "text-emerald-500 bg-emerald-500/10 px-1.5 py-0.5 rounded text-[11px] font-semibold font-mono shrink-0",
+                                                                    if item.new_value.is_empty() { "—" } else { "{item.new_value}" }
+                                                                }
+                                                            }
+                                                            span { class: "text-[10px] font-mono text-muted-foreground shrink-0", "{item.pulled_at}" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
 

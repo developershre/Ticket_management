@@ -10,7 +10,8 @@ use crate::icons::{ExternalLinkIcon, FileTextIcon, PaperclipIcon, PencilIcon};
 use super::super::components::get_image_preview_url;
 use super::super::types::{
     assignee_color_classes, column_display_label, get_assignee_initials, priority_badge,
-    sla_badge_class, status_badge_class, status_badge_variant, TicketContextState, TicketItem,
+    resolve_ticket_activity, sla_badge_class, status_badge_class, status_badge_variant,
+    TicketContextState, TicketItem,
 };
 
 #[derive(Props, Clone, PartialEq)]
@@ -268,22 +269,51 @@ pub fn ViewTicketDialog(mut props: ViewTicketDialogProps) -> Element {
                                     }
                                 }
 
-                                if !ticket.activities.is_empty() || !ticket.my_activity.is_empty() {
-                                    div { class: "grid grid-cols-1 sm:grid-cols-2 gap-2.5",
-                                        if !ticket.activities.is_empty() {
+                                {
+                                    let resolved_act = resolve_ticket_activity(&ticket.my_activity, &ticket.stage, &ticket.activities);
+                                    let badges: Vec<String> = resolved_act
+                                        .split(',')
+                                        .map(|s| s.trim().to_uppercase())
+                                        .filter(|s| !s.is_empty())
+                                        .collect();
+                                    let is_solved = ticket.kanban_state == "Solved"
+                                        || ticket.kanban_state == "Completed"
+                                        || ticket.status.eq_ignore_ascii_case("closed");
+                                    let activity_heading = if is_solved {
+                                        "Resolution Activity / Tags"
+                                    } else {
+                                        "My Activity / Stage Tags"
+                                    };
+
+                                    rsx! {
+                                        div { class: "grid grid-cols-1 sm:grid-cols-2 gap-2.5",
+                                            div { class: "flex flex-col gap-1.5 rounded-md bg-muted/20 p-2.5 border border-border/40",
+                                                span { class: "text-[9px] font-semibold text-muted-foreground uppercase tracking-wider",
+                                                    "{activity_heading}"
+                                                }
+                                                if !badges.is_empty() {
+                                                    div { class: "flex flex-wrap gap-1.5 pt-0.5",
+                                                        for badge in badges.iter() {
+                                                            span {
+                                                                key: "{badge}",
+                                                                class: "inline-flex items-center rounded bg-[#00c5eb] dark:bg-[#00c5eb] px-2.5 py-1 text-xs font-bold tracking-wide text-slate-950 uppercase select-none shadow-2xs",
+                                                                "{badge}"
+                                                            }
+                                                        }
+                                                    }
+                                                } else {
+                                                    span { class: "text-xs text-muted-foreground italic", "No activity badges assigned" }
+                                                }
+                                            }
                                             div { class: "flex flex-col gap-1 rounded-md bg-muted/20 p-2.5 border border-border/40",
                                                 span { class: "text-[9px] font-semibold text-muted-foreground uppercase tracking-wider",
                                                     "Logged Activities"
                                                 }
-                                                span { class: "text-xs text-foreground/90 leading-relaxed", "{ticket.activities}" }
-                                            }
-                                        }
-                                        if !ticket.my_activity.is_empty() {
-                                            div { class: "flex flex-col gap-1 rounded-md bg-muted/20 p-2.5 border border-border/40",
-                                                span { class: "text-[9px] font-semibold text-muted-foreground uppercase tracking-wider",
-                                                    "My Next Activity"
+                                                if !ticket.activities.is_empty() {
+                                                    span { class: "text-xs text-foreground/90 leading-relaxed font-mono", "{ticket.activities}" }
+                                                } else {
+                                                    span { class: "text-xs text-muted-foreground italic", "No logged activity notes" }
                                                 }
-                                                span { class: "text-xs text-foreground/90 leading-relaxed", "{ticket.my_activity}" }
                                             }
                                         }
                                     }

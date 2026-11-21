@@ -285,6 +285,9 @@ fn AppShell() -> Element {
     let mut open_settings = use_signal(state::OpenSettingsDialog::default);
     use_context_provider(|| open_settings);
 
+    let mut open_sheet_changes = use_signal(state::OpenSheetChangesDialog::default);
+    use_context_provider(|| open_sheet_changes);
+
     let is_sidebar_right = app_settings.read().sidebar_position == "right";
 
     // Restore and enforce appearance options from SQLite on launch
@@ -328,6 +331,11 @@ fn AppShell() -> Element {
                     if open_settings.read().0 {
                         components::settings_modal::SettingsModal {
                             on_close: move |_| open_settings.set(state::OpenSettingsDialog(false)),
+                        }
+                    }
+                    if open_sheet_changes.read().0 {
+                        components::sheet_changes_modal::SheetChangesModal {
+                            on_close: move |_| open_sheet_changes.set(state::OpenSheetChangesDialog(false)),
                         }
                     }
                 }

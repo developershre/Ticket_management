@@ -111,6 +111,18 @@ CREATE TABLE IF NOT EXISTS sync_conflicts (
     resolved_at DATETIME
 );
 CREATE INDEX IF NOT EXISTS idx_sync_conflicts ON sync_conflicts(status, local_ticket_id);
+
+CREATE TABLE IF NOT EXISTS sheet_changes (
+    change_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    entity_title TEXT NOT NULL,
+    field_name TEXT NOT NULL,
+    old_value TEXT NOT NULL,
+    new_value TEXT NOT NULL,
+    pulled_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sheet_changes_pulled ON sheet_changes(change_id DESC);
 `);
 
 db.exec("VACUUM;");

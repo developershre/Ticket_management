@@ -201,12 +201,58 @@ pub fn TicketActionsCell(ticket: TicketItem) -> Element {
     }
 }
 
+pub fn render_customer_cell(t: &TicketItem) -> Element {
+    let name = t.customer_display();
+    let code = t.emp_code_only();
+    rsx! {
+        div { class: "flex flex-col min-w-0 py-0.5",
+            span { class: "font-semibold text-foreground text-xs truncate", "{name}" }
+            if !code.is_empty() {
+                span { class: "text-[10px] text-muted-foreground font-mono truncate", "{code}" }
+            }
+        }
+    }
+}
+
+pub fn render_dept_cell(t: &TicketItem) -> Element {
+    let dept = t.department_display();
+    rsx! {
+        span { class: "text-xs text-foreground/90 font-medium truncate",
+            "{dept}"
+        }
+    }
+}
+
+pub fn render_division_cell(t: &TicketItem) -> Element {
+    let div_s = t.division_display();
+    rsx! {
+        span { class: "text-xs text-muted-foreground truncate",
+            "{div_s}"
+        }
+    }
+}
+
+pub fn render_subject_cell(t: &TicketItem) -> Element {
+    let subj = if !t.subject.trim().is_empty() {
+        t.subject.clone()
+    } else {
+        t.title.clone()
+    };
+    rsx! {
+        span { class: "font-medium text-foreground text-xs truncate hover:text-primary transition-colors",
+            title: "{subj}",
+            "{subj}"
+        }
+    }
+}
+
 pub fn render_id_cell(t: &TicketItem) -> Element {
     rsx! {
         TicketIdCell { ticket: t.clone() }
     }
 }
 
+#[allow(dead_code)]
 pub fn render_title_cell(t: &TicketItem) -> Element {
     rsx! {
         TicketTitleCell { ticket: t.clone() }
@@ -219,6 +265,7 @@ pub fn render_actions_cell(t: &TicketItem) -> Element {
     }
 }
 
+#[allow(dead_code)]
 pub fn render_category_cell(t: &TicketItem) -> Element {
     let cat = t.category.clone();
     let badge_cls = match cat.as_str() {
@@ -236,6 +283,7 @@ pub fn render_category_cell(t: &TicketItem) -> Element {
     }
 }
 
+#[allow(dead_code)]
 pub fn render_status_cell(t: &TicketItem) -> Element {
     let kanban = t.kanban_state.clone();
     let variant = status_badge_variant(&kanban);
@@ -265,13 +313,47 @@ pub fn render_status_cell(t: &TicketItem) -> Element {
 }
 
 pub fn render_stage_cell(t: &TicketItem) -> Element {
-    let stage = t.stage.clone();
+    let resolved_act = crate::pages::tickets::types::resolve_ticket_activity(
+        &t.my_activity,
+        &t.stage,
+        &t.activities,
+    );
+    let badges: Vec<String> = resolved_act
+        .split(',')
+        .map(|s| s.trim().to_uppercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+
     rsx! {
-        if !stage.is_empty() && stage != "Triage" && stage != t.kanban_state {
+        if !badges.is_empty() {
+            div { class: "flex flex-wrap items-center gap-1 max-w-[220px]",
+                for b in badges.iter().take(3) {
+                    span {
+                        key: "{b}",
+                        class: "inline-flex items-center rounded bg-[#00c5eb] dark:bg-[#00c5eb] text-slate-950 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide truncate max-w-[120px] shadow-2xs",
+                        title: "Activity: {b}",
+                        "{b}"
+                    }
+                }
+                if badges.len() > 3 {
+                    span {
+                        class: "text-[9px] font-bold text-muted-foreground bg-muted border border-border/50 px-1 py-0.5 rounded",
+                        title: "{resolved_act}",
+                        "+{badges.len() - 3}"
+                    }
+                }
+            }
+        } else if !t.stage.is_empty() && t.stage != "Triage" && t.stage != t.kanban_state {
             span {
                 class: "inline-flex items-center rounded bg-secondary/80 border border-border/60 px-1.5 py-0.5 text-[10px] font-mono font-medium text-foreground/80 truncate max-w-[150px]",
-                title: "Action / Stage: {stage}",
-                "{stage}"
+                title: "Action / Stage: {t.stage}",
+                "{t.stage}"
+            }
+        } else if !t.activities.is_empty() && t.activities != "Ticket created" {
+            span {
+                class: "text-[11px] text-muted-foreground truncate max-w-[150px] font-mono",
+                title: "{t.activities}",
+                "{t.activities}"
             }
         } else {
             span { class: "text-muted-foreground/50 text-[11px]", "—" }
@@ -279,6 +361,7 @@ pub fn render_stage_cell(t: &TicketItem) -> Element {
     }
 }
 
+#[allow(dead_code)]
 pub fn render_sla_cell(t: &TicketItem) -> Element {
     let sla = t.sla_status.clone();
     let class = sla_badge_class(&sla);
@@ -355,8 +438,9 @@ pub fn ticket_search_text(t: &TicketItem) -> String {
     let digits: String = emp_code.chars().filter(|c| c.is_ascii_digit()).collect();
     let prefixed = if !digits.is_empty() { format!("EMP-{digits}") } else { String::new() };
     format!(
-        "{} {} {} {} {} {} {} {} {}",
-        t.id, t.title, t.category, t.status, t.priority, emp_name, emp_code, emp_email, prefixed
+        "{} {} {} {} {} {} {} {} {} {} {} {}",
+        t.id, t.title, t.category, t.status, t.priority, emp_name, emp_code, emp_email, prefixed,
+        t.my_activity, t.activities, t.stage
     )
 }
 
@@ -369,34 +453,45 @@ pub fn ticket_columns() -> Vec<DataTableColumn<TicketItem>> {
             |t: &TicketItem| SortValue::Number(t.ticket_number()),
         ),
         DataTableColumn::new(
-            "title",
-            "Subject & Requester",
-            render_title_cell,
-            |t: &TicketItem| SortValue::Text(t.title.clone()),
+            "customer",
+            "Customer Name",
+            render_customer_cell,
+            |t: &TicketItem| SortValue::Text(t.customer_display()),
+        ),
+        DataTableColumn::new(
+            "dept",
+            "Department",
+            render_dept_cell,
+            |t: &TicketItem| SortValue::Text(t.department_display()),
+        ),
+        DataTableColumn::new(
+            "division",
+            "Division",
+            render_division_cell,
+            |t: &TicketItem| SortValue::Text(t.division_display()),
+        ),
+        DataTableColumn::new(
+            "subject",
+            "Subject",
+            render_subject_cell,
+            |t: &TicketItem| SortValue::Text(t.subject.clone()),
         ),
         DataTableColumn::new(
             "stage",
-            "Action / Stage",
+            "Stage / Action",
             render_stage_cell,
-            |t: &TicketItem| SortValue::Text(t.stage.clone()),
-        ),
-        DataTableColumn::new(
-            "category",
-            "Category",
-            render_category_cell,
-            |t: &TicketItem| SortValue::Text(t.category.clone()),
-        ),
-        DataTableColumn::new(
-            "status",
-            "Status",
-            render_status_cell,
-            |t: &TicketItem| SortValue::Text(t.status.clone()),
-        ),
-        DataTableColumn::new(
-            "sla",
-            "SLA Status",
-            render_sla_cell,
-            |t: &TicketItem| SortValue::Text(t.sla_status.clone()),
+            |t: &TicketItem| {
+                let act = crate::pages::tickets::types::resolve_ticket_activity(
+                    &t.my_activity,
+                    &t.stage,
+                    &t.activities,
+                );
+                if !act.is_empty() {
+                    SortValue::Text(act)
+                } else {
+                    SortValue::Text(t.stage.clone())
+                }
+            },
         ),
         DataTableColumn::new(
             "priority",
@@ -406,13 +501,13 @@ pub fn ticket_columns() -> Vec<DataTableColumn<TicketItem>> {
         ),
         DataTableColumn::new(
             "assignee",
-            "Assignee",
+            "Solver",
             render_assignee_cell,
             |t: &TicketItem| SortValue::Text(t.assignee.clone()),
         ),
         DataTableColumn::new(
             "created",
-            "Reported",
+            "Created On",
             render_created_cell,
             |t: &TicketItem| SortValue::Text(t.created_at.clone()),
         ),
