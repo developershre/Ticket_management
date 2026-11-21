@@ -61,7 +61,7 @@ fn main() {
     // Command-line tool to wipe the active database and leave all tables empty
     if args.first().map(String::as_str) == Some("--reset-db") {
         if let Ok(conn) = db::get_connection() {
-            let tables = ["USERS", "reminders", "tickets", "NOTES", "sync_queue", "sync_conflicts", "sync_meta"];
+            let tables = ["USERS", "reminders", "tickets", "NOTES", "sync_queue", "sync_conflicts", "sync_meta", "sheet_changes"];
             for t in tables {
                 let _ = conn.execute(&format!("DELETE FROM {}", t), []);
             }
@@ -71,13 +71,28 @@ fn main() {
         }
     }
 
+    // Command-line tool to verify and update tables without wiping existing user data
+    if args.first().map(String::as_str) == Some("--migrate-db") {
+        let active_db = db::db_path();
+        match db::init_database() {
+            Ok(_) => {
+                println!("[BPSL IT Support] Database tables at '{}' verified and updated successfully.", active_db.display());
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("[BPSL IT Support] Migration failed at '{}': {:?}", active_db.display(), e);
+                std::process::exit(1);
+            }
+        }
+    }
+
     // Command-line tool to initialize a clean, empty SQLite database with all tables
     if args.first().map(String::as_str) == Some("--init-clean-db") {
         let target = args.get(1).cloned().unwrap_or_else(|| "management.db".to_string());
         std::env::set_var("TMS_DB_PATH", &target);
         let _ = db::init_database();
         if let Ok(conn) = db::get_connection() {
-            let tables = ["USERS", "reminders", "tickets", "NOTES", "sync_queue", "sync_conflicts", "sync_meta"];
+            let tables = ["USERS", "reminders", "tickets", "NOTES", "sync_queue", "sync_conflicts", "sync_meta", "sheet_changes"];
             for t in tables {
                 let _ = conn.execute(&format!("DELETE FROM {}", t), []);
             }

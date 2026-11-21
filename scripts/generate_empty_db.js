@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS tickets (
     created_on DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_updated_on DATETIME DEFAULT CURRENT_TIMESTAMP,
     server_ticket_id TEXT,
-    server_last_updated TEXT
+    server_last_updated TEXT,
+    tag TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS NOTES(
@@ -55,6 +56,10 @@ CREATE TABLE IF NOT EXISTS NOTES(
     emp_code TEXT,
     content TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    is_pinned INTEGER DEFAULT 0,
+    category TEXT DEFAULT 'General',
+    color TEXT DEFAULT '',
     server_note_id TEXT,
     server_last_updated TEXT,
     is_deleted BOOLEAN DEFAULT 0

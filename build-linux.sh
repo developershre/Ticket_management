@@ -579,8 +579,15 @@ cp "$SCRIPT_DIR/$APP_NAME" "$BIN_DIR/$APP_NAME"
 chmod 755 "$BIN_DIR/$APP_NAME"
 ln -sf "$APP_NAME" "$BIN_DIR/management"
 
-echo "Installing seed database to $DATA_DIR..."
-cp "$SCRIPT_DIR/management.db" "$DATA_DIR/management.db"
+if [ -f "$DATA_DIR/management.db" ]; then
+    echo "Existing database detected at $DATA_DIR/management.db."
+    echo "Preserving user data and updating database tables if required..."
+    "$BIN_DIR/$APP_NAME" --migrate-db 2>/dev/null || true
+else
+    echo "Fresh install: initializing fresh database with all tables at $DATA_DIR/management.db..."
+    cp "$SCRIPT_DIR/management.db" "$DATA_DIR/management.db"
+    chmod 644 "$DATA_DIR/management.db"
+fi
 rm -f "$DATA_DIR/empty.db"
 
 echo "Installing icons to $ICON_DIR..."
