@@ -165,12 +165,19 @@ fn main() {
     // drag region and the minimize/maximize/close buttons instead.
     #[cfg(feature = "desktop")]
     {
-        use components::ui::theme::fetch_system_is_dark;
+        use components::ui::theme::{fetch_system_is_dark, ThemeMode};
         use dioxus::desktop::tao::window::Theme;
         use dioxus::desktop::{Config, LogicalSize, WindowBuilder};
 
+        let initial_mode_str = db::sync_meta_get("ui_theme_mode").unwrap_or_else(|| "system".to_string());
+        let initial_mode = ThemeMode::from_str_lossy(&initial_mode_str);
         let is_sys_dark = fetch_system_is_dark();
-        let initial_theme = if is_sys_dark {
+        let is_initial_dark = match initial_mode {
+            ThemeMode::Dark => true,
+            ThemeMode::Light => false,
+            ThemeMode::System => is_sys_dark,
+        };
+        let initial_theme = if is_initial_dark {
             Theme::Dark
         } else {
             Theme::Light
@@ -183,6 +190,88 @@ fn main() {
                     .with_custom_head(
                         r#"<script>
                         (function() {
+                            // 1. Initial theme setup before DOM paint to prevent flash of light theme
+                            var savedTheme = '';
+                            try {
+                                savedTheme = localStorage.getItem('bpsl-theme') || '';
+                            } catch(e) {}
+                            var sysDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                            var isDark = savedTheme === 'dark' || (savedTheme !== 'light' && sysDark);
+                            var root = document.documentElement;
+                            if (isDark) {
+                                root.classList.add('dark');
+                                root.style.colorScheme = 'dark';
+                            } else {
+                                root.classList.remove('dark');
+                                root.style.colorScheme = 'light';
+                            }
+
+                            // 2. Synchronous fast theme switcher function
+                            window.__setAppTheme = function(target, persist) {
+                                var root = document.documentElement;
+                                var body = document.body;
+                                var shell = document.getElementById('app-shell');
+                                var isDark;
+                                if (target === 'dark') {
+                                    isDark = true;
+                                } else if (target === 'light') {
+                                    isDark = false;
+                                } else if (target === 'toggle') {
+                                    isDark = !root.classList.contains('dark');
+                                } else {
+                                    isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                                }
+
+                                var currentlyDark = root.classList.contains('dark');
+                                if (target !== 'toggle' && currentlyDark === isDark) {
+                                    if (persist) {
+                                        try { localStorage.setItem('bpsl-theme', target); } catch(e) {}
+                                    }
+                                    return;
+                                }
+
+                                root.classList.add('theme-transitioning');
+                                if (isDark) {
+                                    root.classList.add('dark');
+                                    if (body) body.classList.add('dark');
+                                    if (shell) shell.classList.add('dark');
+                                    root.style.colorScheme = 'dark';
+                                } else {
+                                    root.classList.remove('dark');
+                                    if (body) body.classList.remove('dark');
+                                    if (shell) shell.classList.remove('dark');
+                                    root.style.colorScheme = 'light';
+                                }
+
+                                if (persist) {
+                                    var modeToStore = (target === 'toggle') ? (isDark ? 'dark' : 'light') : target;
+                                    try {
+                                        localStorage.setItem('bpsl-theme', modeToStore);
+                                    } catch(e) {}
+                                }
+
+                                clearTimeout(window.__themeTransitionTimeout);
+                                window.__themeTransitionTimeout = setTimeout(function() {
+                                    root.classList.remove('theme-transitioning');
+                                }, 100);
+                            };
+
+                            // 3. Capturing click listener for instantaneous zero-delay DOM updates
+                            document.addEventListener('click', function(e) {
+                                var toggleBtn = e.target && e.target.closest ? e.target.closest('[data-slot="theme-toggle-btn"]') : null;
+                                if (toggleBtn) {
+                                    window.__setAppTheme('toggle', true);
+                                    return;
+                                }
+                                var segBtn = e.target && e.target.closest ? e.target.closest('[data-theme-set]') : null;
+                                if (segBtn) {
+                                    var mode = segBtn.getAttribute('data-theme-set');
+                                    if (mode) window.__setAppTheme(mode, true);
+                                    return;
+                                }
+                            }, true);
+
+                            // Drag & drop handlers
                             document.addEventListener('dragstart', function(e) {
                                 var target = e.target;
                                 var el = target && target.closest ? target.closest('[draggable="true"]') : null;
@@ -224,6 +313,7 @@ fn main() {
                                     var activeEl = document.activeElement;
                                     if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) return;
                                     e.preventDefault();
+                                    if (window.__setAppTheme) window.__setAppTheme('toggle', true);
                                     var themeBtn = document.querySelector('[data-slot="theme-toggle-btn"]');
                                     if (themeBtn) themeBtn.click();
                                 }
@@ -319,7 +409,9 @@ fn AppShell() -> Element {
     rsx! {
         ToastProvider {
             SidebarProvider {
-                div { class: "{dark_cls} flex h-screen w-full flex-col overflow-hidden bg-background text-foreground transition-colors duration-200",
+                div {
+                    id: "app-shell",
+                    class: "{dark_cls} flex h-screen w-full flex-col overflow-hidden bg-background text-foreground",
                     Titlebar { app_name: "BPSL IT Support".to_string() }
                     div { class: format!("flex flex-1 overflow-hidden {}", if is_sidebar_right { "flex-row-reverse" } else { "" }),
                         AppSidebar {}

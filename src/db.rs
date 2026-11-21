@@ -326,6 +326,18 @@ pub struct DbNote {
     pub emp_code: String,
     pub content: String,
     pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+    #[serde(default)]
+    pub is_pinned: bool,
+    #[serde(default = "default_note_category")]
+    pub category: String,
+    #[serde(default)]
+    pub color: String,
+}
+
+fn default_note_category() -> String {
+    "General".to_string()
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -467,7 +479,11 @@ pub fn init_database() -> Result<()> {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             emp_code TEXT,
             content TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            is_pinned INTEGER DEFAULT 0,
+            category TEXT DEFAULT 'General',
+            color TEXT DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS reminders (
@@ -1085,7 +1101,13 @@ pub fn get_all_notes() -> Vec<DbNote> {
     };
 
     let mut stmt = match conn.prepare(
-        "SELECT id, COALESCE(emp_code, ''), COALESCE(content, ''), COALESCE(created_at, CURRENT_TIMESTAMP) FROM NOTES ORDER BY id ASC",
+        "SELECT id, COALESCE(emp_code, ''), COALESCE(content, ''), \
+                COALESCE(created_at, CURRENT_TIMESTAMP), \
+                COALESCE(updated_at, created_at, CURRENT_TIMESTAMP), \
+                COALESCE(is_pinned, 0), \
+                COALESCE(category, 'General'), \
+                COALESCE(color, '') \
+         FROM NOTES ORDER BY is_pinned DESC, id DESC",
     ) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
@@ -1097,6 +1119,10 @@ pub fn get_all_notes() -> Vec<DbNote> {
             emp_code: row.get(1)?,
             content: row.get(2)?,
             created_at: row.get(3).unwrap_or_default(),
+            updated_at: row.get(4).unwrap_or_default(),
+            is_pinned: row.get::<_, i64>(5).map(|v| v != 0).unwrap_or(false),
+            category: row.get::<_, String>(6).unwrap_or_else(|_| "General".to_string()),
+            color: row.get::<_, String>(7).unwrap_or_default(),
         })
     });
 
@@ -1106,14 +1132,90 @@ pub fn get_all_notes() -> Vec<DbNote> {
     }
 }
 
-/// Inserts a new note into `NOTES` table and returns its id.
-pub fn create_note(emp_code: &str, content: &str) -> Result<i64> {
+/// Inserts a new note with category, color and pin state.
+pub fn create_note_full(
+    emp_code: &str,
+    content: &str,
+    category: &str,
+    color: &str,
+    is_pinned: bool,
+) -> Result<i64> {
     let conn = get_connection()?;
+    let pin_val = if is_pinned { 1 } else { 0 };
     conn.execute(
-        "INSERT INTO NOTES (emp_code, content, created_at) VALUES (?1, ?2, CURRENT_TIMESTAMP)",
-        params![emp_code, content],
+        "INSERT INTO NOTES (emp_code, content, created_at, updated_at, is_pinned, category, color) \
+         VALUES (?1, ?2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?3, ?4, ?5)",
+        params![emp_code, content, pin_val, category, color],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+/// Inserts a new note into `NOTES` table and returns its id.
+pub fn create_note(emp_code: &str, content: &str) -> Result<i64> {
+    create_note_full(emp_code, content, "General", "", false)
+}
+
+/// Updates note content, category, color, and pin state.
+pub fn update_note_full(
+    id: i64,
+    content: &str,
+    category: &str,
+    color: &str,
+    is_pinned: bool,
+) -> Result<()> {
+    let conn = get_connection()?;
+    let pin_val = if is_pinned { 1 } else { 0 };
+    conn.execute(
+        "UPDATE NOTES SET content = ?1, category = ?2, color = ?3, is_pinned = ?4, updated_at = CURRENT_TIMESTAMP WHERE id = ?5",
+        params![content, category, color, pin_val, id],
+    )?;
+    Ok(())
+}
+
+/// Updates note content.
+pub fn update_note(id: i64, content: &str) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE NOTES SET content = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
+        params![content, id],
+    )?;
+    Ok(())
+}
+
+/// Toggles note pinned state between 0 and 1.
+pub fn toggle_note_pin(id: i64) -> Result<bool> {
+    let conn = get_connection()?;
+    let current_pinned: i64 = conn.query_row(
+        "SELECT COALESCE(is_pinned, 0) FROM NOTES WHERE id = ?1",
+        params![id],
+        |r| r.get(0),
+    ).unwrap_or(0);
+    let next = if current_pinned == 0 { 1 } else { 0 };
+    conn.execute(
+        "UPDATE NOTES SET is_pinned = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
+        params![next, id],
+    )?;
+    Ok(next != 0)
+}
+
+/// Updates note category.
+pub fn update_note_category(id: i64, category: &str) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE NOTES SET category = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
+        params![category, id],
+    )?;
+    Ok(())
+}
+
+/// Updates note card color theme.
+pub fn update_note_color(id: i64, color: &str) -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute(
+        "UPDATE NOTES SET color = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
+        params![color, id],
+    )?;
+    Ok(())
 }
 
 // ============================================================
@@ -1169,16 +1271,6 @@ pub fn first_cached_employee_code() -> String {
 pub fn delete_note(id: i64) -> Result<()> {
     let conn = get_connection()?;
     conn.execute("DELETE FROM NOTES WHERE id = ?1", params![id])?;
-    Ok(())
-}
-
-/// Updates note content.
-pub fn update_note(id: i64, content: &str) -> Result<()> {
-    let conn = get_connection()?;
-    conn.execute(
-        "UPDATE NOTES SET content = ?1 WHERE id = ?2",
-        params![content, id],
-    )?;
     Ok(())
 }
 
@@ -1879,6 +1971,30 @@ fn ensure_note_sync_columns(conn: &Connection) -> Result<()> {
     if !has_column("created_at") {
         let _ = conn.execute(
             "ALTER TABLE NOTES ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+            [],
+        );
+    }
+    if !has_column("updated_at") {
+        let _ = conn.execute(
+            "ALTER TABLE NOTES ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+            [],
+        );
+    }
+    if !has_column("is_pinned") {
+        let _ = conn.execute(
+            "ALTER TABLE NOTES ADD COLUMN is_pinned INTEGER DEFAULT 0",
+            [],
+        );
+    }
+    if !has_column("category") {
+        let _ = conn.execute(
+            "ALTER TABLE NOTES ADD COLUMN category TEXT DEFAULT 'General'",
+            [],
+        );
+    }
+    if !has_column("color") {
+        let _ = conn.execute(
+            "ALTER TABLE NOTES ADD COLUMN color TEXT DEFAULT ''",
             [],
         );
     }

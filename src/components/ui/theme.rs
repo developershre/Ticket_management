@@ -223,6 +223,9 @@ impl ThemeContext {
 
     pub fn set_mode(&mut self, mode: ThemeMode) {
         self.mode.set(mode);
+        spawn(async move {
+            let _ = crate::db::sync_meta_set("ui_theme_mode", mode.as_str());
+        });
     }
 
     /// Quickly flips between Light and Dark modes.
@@ -263,7 +266,14 @@ pub fn ThemeProvider(props: ThemeProviderProps) -> Element {
     // 1. Fetch system theme DIRECTLY from the operating system synchronously at launch
     let initial_sys_dark = fetch_system_is_dark();
     let mut system_dark = use_signal(move || initial_sys_dark);
-    let mut mode = use_signal(|| props.default_mode);
+
+    // Initial mode: load synchronously from SQLite database if available, else props.default_mode
+    let initial_mode = {
+        crate::db::sync_meta_get("ui_theme_mode")
+            .map(|s| ThemeMode::from_str_lossy(&s))
+            .unwrap_or(props.default_mode)
+    };
+    let mut mode = use_signal(move || initial_mode);
 
     let ctx = ThemeContext { mode, system_dark };
     use_context_provider(|| ctx);
@@ -309,7 +319,10 @@ pub fn ThemeProvider(props: ThemeProviderProps) -> Element {
             if let Ok(saved) = eval.recv::<String>().await {
                 if !saved.is_empty() {
                     let m = ThemeMode::from_str_lossy(&saved);
-                    mode.set(m);
+                    if *mode.peek() != m {
+                        mode.set(m);
+                        let _ = crate::db::sync_meta_set("ui_theme_mode", m.as_str());
+                    }
                 }
             }
         });
@@ -351,22 +364,32 @@ pub fn ThemeProvider(props: ThemeProviderProps) -> Element {
         let js = format!(
             r#"
             (function() {{
-                const dark = {is_dark};
-                const mode = "{mode_str}";
-                try {{
-                    localStorage.setItem("bpsl-theme", mode);
-                }} catch (e) {{}}
-
-                const root = document.documentElement;
-                const body = document.body;
-                if (dark) {{
-                    root.classList.add("dark");
-                    if (body) body.classList.add("dark");
-                    root.style.colorScheme = "dark";
+                if (window.__setAppTheme) {{
+                    window.__setAppTheme("{mode_str}", true);
                 }} else {{
-                    root.classList.remove("dark");
-                    if (body) body.classList.remove("dark");
-                    root.style.colorScheme = "light";
+                    const dark = {is_dark};
+                    const mode = "{mode_str}";
+                    try {{
+                        localStorage.setItem("bpsl-theme", mode);
+                    }} catch (e) {{}}
+
+                    const root = document.documentElement;
+                    const body = document.body;
+                    const shell = document.getElementById("app-shell");
+                    root.classList.add("theme-transitioning");
+                    if (dark) {{
+                        root.classList.add("dark");
+                        if (body) body.classList.add("dark");
+                        if (shell) shell.classList.add("dark");
+                        root.style.colorScheme = "dark";
+                    }} else {{
+                        root.classList.remove("dark");
+                        if (body) body.classList.remove("dark");
+                        if (shell) shell.classList.remove("dark");
+                        root.style.colorScheme = "light";
+                    }}
+                    clearTimeout(window.__themeTransitionTimeout);
+                    window.__themeTransitionTimeout = setTimeout(() => root.classList.remove("theme-transitioning"), 100);
                 }}
             }})();
             "#
@@ -402,28 +425,29 @@ pub fn ThemeToggle(props: ThemeToggleProps) -> Element {
     let tooltip_text = format!("Theme: {} (Click to switch)", mode.label());
 
     rsx! {
-                        button {
-                    r#type: "button",
-                    "data-slot": "theme-toggle-btn",
-                    title: "{tooltip_text}",
-                    class: "group relative inline-flex size-8 items-center justify-center rounded-md \
-                            border border-border/60 bg-background/80 text-foreground/80 \
-                            hover:bg-accent hover:text-accent-foreground \
-                            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring \
-                            transition-all duration-200 cursor-pointer {props.class}",
-                    onclick: move |e| {
-                        e.stop_propagation();
-                        theme.toggle();
-                    },
-                    if is_dark {
-                        SunIcon { class: "size-4 text-foreground transition-transform duration-300 group-hover:rotate-45" }
-                    } else {
-                        MoonIcon { class: "size-4 text-foreground transition-transform duration-300 group-hover:-rotate-12" }
-                    }
-                    if props.show_label {
-                        span { class: "ml-2 text-xs font-medium", "{mode.label()}" }
-                    }
-                }
+        button {
+            r#type: "button",
+            "data-slot": "theme-toggle-btn",
+            "data-current-dark": "{is_dark}",
+            title: "{tooltip_text}",
+            class: "group relative inline-flex size-8 items-center justify-center rounded-md \
+                    border border-border/60 bg-background/80 text-foreground/80 \
+                    hover:bg-accent hover:text-accent-foreground \
+                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring \
+                    transition-all duration-200 cursor-pointer {props.class}",
+            onclick: move |e| {
+                e.stop_propagation();
+                theme.toggle();
+            },
+            if is_dark {
+                SunIcon { class: "size-4 text-foreground transition-transform duration-300 group-hover:rotate-45" }
+            } else {
+                MoonIcon { class: "size-4 text-foreground transition-transform duration-300 group-hover:-rotate-12" }
+            }
+            if props.show_label {
+                span { class: "ml-2 text-xs font-medium", "{mode.label()}" }
+            }
+        }
     }
 }
 
@@ -446,10 +470,12 @@ pub fn ThemeSegmented(props: ThemeSegmentedProps) -> Element {
         } else {
             "text-muted-foreground hover:text-foreground hover:bg-background/50 font-normal"
         };
+        let mode_val = mode.as_str();
 
         rsx! {
             button {
                 r#type: "button",
+                "data-theme-set": "{mode_val}",
                 class: "flex flex-1 items-center justify-center gap-1.5 rounded-md px-2.5 py-1 text-xs \
                         transition-all duration-150 cursor-pointer outline-none {active_cls}",
                 onclick: move |e| {

@@ -14,14 +14,10 @@ pub mod types;
 
 // Re-export items for backwards compatibility across the project
 #[allow(unused_imports)]
-pub use components::{AdvancedFilterBar, AdvancedFilterState, AttachmentPicker, InsightsPanel};
+pub use components::{AdvancedFilterBar, AdvancedFilterState, AttachmentPicker};
 pub use dialogs::{AddCustomViewDialog, CreateTicketDialog, EditTicketDialog, ViewTicketDialog};
 pub use kanban::KanbanBoard;
-#[allow(unused_imports)]
-pub use table_view::{
-    ticket_columns, ticket_filter_value, ticket_priority_filter_value, ticket_row_id,
-    ticket_search_text,
-};
+pub use table_view::{ticket_columns, ticket_row_id, ticket_search_text};
 pub use types::{
     assignee_color_classes, get_assignee_initials, initial_tickets, load_custom_kanban_views,
     load_hide_empty_views, load_hidden_views, save_custom_kanban_views, save_hidden_views,

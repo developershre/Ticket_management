@@ -11,8 +11,7 @@ use crate::icons::{CopyIcon, EyeIcon, MoreHorizontalIcon, PencilIcon, TrashIcon}
 
 use super::components::TicketContextMenu;
 use super::types::{
-    assignee_color_classes, column_display_label, get_assignee_initials, priority_badge,
-    sla_badge_class, status_badge_class, status_badge_variant, TicketContextState, TicketItem,
+    assignee_color_classes, get_assignee_initials, priority_badge, TicketContextState, TicketItem,
 };
 
 #[component]
@@ -252,63 +251,9 @@ pub fn render_id_cell(t: &TicketItem) -> Element {
     }
 }
 
-#[allow(dead_code)]
-pub fn render_title_cell(t: &TicketItem) -> Element {
-    rsx! {
-        TicketTitleCell { ticket: t.clone() }
-    }
-}
-
 pub fn render_actions_cell(t: &TicketItem) -> Element {
     rsx! {
         TicketActionsCell { ticket: t.clone() }
-    }
-}
-
-#[allow(dead_code)]
-pub fn render_category_cell(t: &TicketItem) -> Element {
-    let cat = t.category.clone();
-    let badge_cls = match cat.as_str() {
-        "Network" => "text-sky-500 dark:text-sky-400 border-sky-500/35 bg-sky-500/15",
-        "Hardware" => "text-amber-500 dark:text-amber-400 border-amber-500/35 bg-amber-500/15",
-        "Software" => "text-purple-500 dark:text-purple-400 border-purple-500/35 bg-purple-500/15",
-        "Security" => "text-rose-500 dark:text-rose-400 border-rose-500/35 bg-rose-500/15",
-        "Infrastructure" => "text-cyan-500 dark:text-cyan-400 border-cyan-500/35 bg-cyan-500/15",
-        _ => "text-emerald-500 dark:text-emerald-400 border-emerald-500/35 bg-emerald-500/15",
-    };
-    rsx! {
-        span { class: "rounded-md px-2 py-0.5 text-[10px] font-semibold border {badge_cls}",
-            "{cat}"
-        }
-    }
-}
-
-#[allow(dead_code)]
-pub fn render_status_cell(t: &TicketItem) -> Element {
-    let kanban = t.kanban_state.clone();
-    let variant = status_badge_variant(&kanban);
-    let class = status_badge_class(&kanban);
-    let label = column_display_label(&kanban);
-    let is_open = t.status.eq_ignore_ascii_case("Open");
-    rsx! {
-        div { class: "flex items-center gap-1.5 flex-wrap",
-            span {
-                class: if is_open {
-                    "inline-flex items-center gap-1 text-[9px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded px-1.5 py-0.2"
-                } else {
-                    "inline-flex items-center gap-1 text-[9px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-500/10 border border-slate-500/30 rounded px-1.5 py-0.2"
-                },
-                span {
-                    class: if is_open {
-                        "size-1.5 rounded-full bg-emerald-500 animate-pulse"
-                    } else {
-                        "size-1.5 rounded-full bg-slate-400"
-                    }
-                }
-                "{t.status}"
-            }
-            Badge { variant: "{variant}", class: "text-[10px] font-semibold {class}", "{label}" }
-        }
     }
 }
 
@@ -351,21 +296,6 @@ pub fn render_stage_cell(t: &TicketItem) -> Element {
             }
         } else {
             span { class: "text-muted-foreground/50 text-[11px]", "—" }
-        }
-    }
-}
-
-#[allow(dead_code)]
-pub fn render_sla_cell(t: &TicketItem) -> Element {
-    let sla = t.sla_status.clone();
-    let class = sla_badge_class(&sla);
-    rsx! {
-        if !sla.is_empty() {
-            span { class: "rounded px-1.5 py-0.5 text-[10px] font-semibold border {class}",
-                "{sla}"
-            }
-        } else {
-            span { class: "text-muted-foreground/60 text-xs", "—" }
         }
     }
 }
@@ -413,16 +343,6 @@ pub fn render_created_cell(t: &TicketItem) -> Element {
 
 pub fn ticket_row_id(t: &TicketItem) -> String {
     t.id.clone()
-}
-
-#[allow(dead_code)]
-pub fn ticket_filter_value(t: &TicketItem) -> String {
-    t.status.clone()
-}
-
-#[allow(dead_code)]
-pub fn ticket_priority_filter_value(t: &TicketItem) -> String {
-    t.priority.clone()
 }
 
 pub fn ticket_search_text(t: &TicketItem) -> String {

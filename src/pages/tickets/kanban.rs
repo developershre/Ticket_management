@@ -16,8 +16,8 @@ use crate::icons::{
 use super::components::{ColumnContextMenu, TicketContextMenu};
 use super::types::{
     column_display_label, kanban_grid_layout_class, priority_badge, save_hidden_views,
-    save_hide_empty_views, status_badge_class, status_badge_variant, KanbanViewDef,
-    TicketContextState, TicketItem,
+    save_hide_empty_views, status_badge_class, status_badge_variant, target_col_to_sheet_status,
+    KanbanViewDef, TicketContextState, TicketItem,
 };
 
 #[derive(Props, Clone, PartialEq)]
@@ -73,15 +73,7 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
     };
 
     let mut move_to_column_end = move |src_id: String, target_col: String| {
-        let (sheet_kanban, sheet_status) = match target_col.as_str() {
-            "Pending" => ("Pending", "Open"),
-            "InProgress" => ("In Progress", "Open"),
-            "Hold" | "Onhold" => ("Hold", "Open"),
-            "Solved" => ("Solved", "Open"),
-            "Completed" => ("Solved(closed)", "Closed"),
-            "Cancelled" => ("Cancelled", "Closed"),
-            _ => (target_col.as_str(), "Open"),
-        };
+        let (sheet_kanban, sheet_status) = target_col_to_sheet_status(&target_col);
 
         let mut list = state.tickets.write();
         if let Some(pos) = list.iter().position(|t| t.id == src_id) {
@@ -114,15 +106,7 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
         if src_id == target_card_id {
             return;
         }
-        let (sheet_kanban, sheet_status) = match target_col.as_str() {
-            "Pending" => ("Pending", "Open"),
-            "InProgress" => ("In Progress", "Open"),
-            "Hold" | "Onhold" => ("Hold", "Open"),
-            "Solved" => ("Solved", "Open"),
-            "Completed" => ("Solved(closed)", "Closed"),
-            "Cancelled" => ("Cancelled", "Closed"),
-            _ => (target_col.as_str(), "Open"),
-        };
+        let (sheet_kanban, sheet_status) = target_col_to_sheet_status(&target_col);
 
         let mut list = state.tickets.write();
         if let Some(src_pos) = list.iter().position(|t| t.id == src_id) {

@@ -4,13 +4,6 @@ pub mod input;
 #[allow(unused_imports)]
 pub use input::Input;
 
-pub mod input_group;
-#[allow(unused_imports)]
-pub use input_group::{
-    InputGroup, InputGroupAddon, InputGroupAddonPosition, InputGroupButton, InputGroupControl,
-    InputGroupText,
-};
-
 pub mod dropdown_menu;
 #[allow(unused_imports)]
 pub use dropdown_menu::{
@@ -78,13 +71,6 @@ pub mod switch;
 #[allow(unused_imports)]
 pub use switch::Switch;
 
-pub mod breadcrumb;
-#[allow(unused_imports)]
-pub use breadcrumb::{
-    Breadcrumb, BreadcrumbEllipsis, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage,
-    BreadcrumbSeparator,
-};
-
 pub mod badge;
 #[allow(unused_imports)]
 pub use badge::Badge;
@@ -132,10 +118,6 @@ pub use card::{Card, CardContent, CardDescription, CardFooter, CardHeader, CardT
 pub mod separator;
 #[allow(unused_imports)]
 pub use separator::Separator;
-
-pub mod skeleton;
-#[allow(unused_imports)]
-pub use skeleton::Skeleton;
 
 pub mod clock_date_picker;
 #[allow(unused_imports)]

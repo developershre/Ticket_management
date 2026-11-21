@@ -1,16 +1,6 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[allow(dead_code)]
-pub const COLUMN_NAMES: &[&str] = &[
-    "Pending",
-    "InProgress",
-    "Hold",
-    "Solved",
-    "Completed",
-    "Cancelled",
-];
-
 /// Parses an ID string (e.g. "IT-123", "TC-0004", "123") into an i64 ticket ID.
 #[allow(dead_code)]
 pub fn parse_ticket_num(id: &str) -> Option<i64> {
@@ -256,11 +246,6 @@ impl TicketItem {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn display_tc_id(&self) -> String {
-        format!("TC-{:04}", self.ticket_id)
-    }
-
     pub fn ticket_number(&self) -> i64 {
         let digits: String = self.id.chars().filter(|c| c.is_ascii_digit()).collect();
         if let Ok(num) = digits.parse::<i64>() {
@@ -328,16 +313,6 @@ impl TicketItem {
             return self.email_address.trim().to_string();
         }
         "N/A".to_string()
-    }
-
-    #[allow(dead_code)]
-    pub fn assignee_card_display(&self) -> String {
-        let a = self.assigned_to.trim();
-        if a.is_empty() || a.eq_ignore_ascii_case("unassigned") {
-            "Unassigned".to_string()
-        } else {
-            a.to_string()
-        }
     }
 }
 
@@ -426,20 +401,6 @@ pub fn column_display_label(col: &str) -> &'static str {
         "Completed" => "Solved (Closed)",
         "Cancelled" => "Cancelled",
         _ => "Custom View",
-    }
-}
-
-#[allow(dead_code)]
-pub fn format_card_datetime(raw: &str) -> String {
-    let s = raw.trim();
-    if s.is_empty() {
-        return "N/A".to_string();
-    }
-    let formatted = crate::state::arrange_date_time(s);
-    if formatted.is_empty() {
-        "N/A".to_string()
-    } else {
-        formatted
     }
 }
 
@@ -604,91 +565,16 @@ pub fn resolve_ticket_activity(my_activity: &str, stage: &str, activities: &str)
     resolve_ticket_activity_all(my_activity, stage, activities, "")
 }
 
-#[allow(dead_code)]
-pub fn card_border_accent_class(col: &str) -> &'static str {
+/// Standardizes a column / status ID to its corresponding Google Sheet status and macro status (Open/Closed).
+pub fn target_col_to_sheet_status(col: &str) -> (&str, &'static str) {
     match col {
-        "Hold" | "Onhold" => "border-l-4 border-l-amber-500",
-        "Cancelled" => "border-l-4 border-l-red-500",
-        "Completed" => "border-l-4 border-l-emerald-600",
-        "InProgress" => "border-l-4 border-l-sky-500",
-        "Pending" => "border-l-4 border-l-amber-400",
-        "Solved" => "border-l-4 border-l-purple-500",
-        _ => "border-l-4 border-l-slate-400",
-    }
-}
-
-#[allow(dead_code)]
-pub fn card_status_pill_label(col: &str) -> &'static str {
-    match col {
-        "Hold" | "Onhold" => "HOLD",
-        "Cancelled" => "CANCELLED",
-        "Completed" => "SOLVED(CLOSED)",
-        "InProgress" => "IN PROGRESS",
-        "Pending" => "PENDING",
-        "Solved" => "SOLVED",
-        _ => "CUSTOM",
-    }
-}
-
-#[allow(dead_code)]
-pub fn card_status_pill_class(col: &str) -> &'static str {
-    match col {
-        "Hold" | "Onhold" => "bg-amber-100 text-amber-900 border border-amber-200/60 dark:bg-amber-950/40 dark:text-amber-200",
-        "Cancelled" => "bg-red-100 text-red-700 border border-red-200/60 dark:bg-red-950/40 dark:text-red-300",
-        "Completed" => "bg-emerald-100 text-emerald-800 border border-emerald-200/60 dark:bg-emerald-950/40 dark:text-emerald-300",
-        "InProgress" => "bg-sky-100 text-sky-800 border border-sky-200/60 dark:bg-sky-950/40 dark:text-sky-300",
-        "Pending" => "bg-amber-100 text-amber-800 border border-amber-200/60 dark:bg-amber-950/40 dark:text-amber-300",
-        "Solved" => "bg-purple-100 text-purple-800 border border-purple-200/60 dark:bg-purple-950/40 dark:text-purple-300",
-        _ => "bg-slate-100 text-slate-800 border border-slate-200/60 dark:bg-slate-800 dark:text-slate-200",
-    }
-}
-
-#[allow(dead_code)]
-pub fn column_header_accent_class(col: &str) -> &'static str {
-    match col {
-        "Hold" | "Onhold" => "bg-amber-400",
-        "Cancelled" => "bg-red-500",
-        "Completed" => "bg-emerald-700",
-        "InProgress" => "bg-sky-500",
-        "Pending" => "bg-amber-400",
-        "Solved" => "bg-purple-600",
-        _ => "bg-slate-400",
-    }
-}
-
-#[allow(dead_code)]
-pub fn column_count_badge_class(col: &str) -> &'static str {
-    match col {
-        "Hold" | "Onhold" => "bg-amber-400 text-slate-950 font-bold",
-        "Cancelled" => "bg-red-500 text-white font-bold",
-        "Completed" => "bg-emerald-700 text-white font-bold",
-        "InProgress" => "bg-sky-500 text-white font-bold",
-        "Pending" => "bg-amber-400 text-slate-950 font-bold",
-        "Solved" => "bg-purple-600 text-white font-bold",
-        _ => "bg-slate-600 text-white font-bold",
-    }
-}
-
-#[allow(dead_code)]
-pub fn priority_pill_class(prio: &str) -> &'static str {
-    match prio {
-        "Critical" | "High" => "bg-red-500 text-white",
-        "Medium" => "bg-amber-400 text-slate-950",
-        "Low" => "bg-sky-500 text-white",
-        _ => "bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200",
-    }
-}
-
-#[allow(dead_code)]
-pub fn column_subtitle(col: &str) -> &'static str {
-    match col {
-        "Pending" => "New & open",
-        "InProgress" => "Active support",
-        "Hold" | "Onhold" => "Waiting / paused",
-        "Solved" => "Solved, awaiting close",
-        "Completed" => "Resolved & closed",
-        "Cancelled" => "Cancelled / duplicate",
-        _ => "",
+        "Pending" => ("Pending", "Open"),
+        "InProgress" => ("In Progress", "Open"),
+        "Hold" | "Onhold" => ("Hold", "Open"),
+        "Solved" => ("Solved", "Open"),
+        "Completed" => ("Solved(closed)", "Closed"),
+        "Cancelled" => ("Cancelled", "Closed"),
+        _ => (col, "Open"),
     }
 }
 
@@ -982,21 +868,12 @@ impl TicketContextState {
     pub fn update_status(&mut self, ticket_id: &str, new_status: &str) {
         let mut local_num = None;
         let mut target_stage = None;
-        let derived_macro_status = if new_status.eq_ignore_ascii_case("Completed")
-            || new_status.eq_ignore_ascii_case("Solved(closed)")
-            || new_status.eq_ignore_ascii_case("Solved (closed)")
-            || new_status.eq_ignore_ascii_case("Closed")
-            || new_status.eq_ignore_ascii_case("Cancelled")
-        {
-            "Closed".to_string()
-        } else {
-            "Open".to_string()
-        };
+        let (sheet_kanban, derived_macro_status) = target_col_to_sheet_status(new_status);
 
         {
             let mut list = self.tickets.write();
             if let Some(pos) = list.iter().position(|t| t.id == ticket_id) {
-                list[pos].status = derived_macro_status.clone();
+                list[pos].status = derived_macro_status.to_string();
                 list[pos].kanban_state = new_status.to_string();
                 target_stage = Some(list[pos].stage.clone());
                 local_num = Some(list[pos].ticket_id);
@@ -1005,14 +882,6 @@ impl TicketContextState {
         let num = local_num.or_else(|| crate::db::find_ticket_local_id(ticket_id));
         if let Some(num) = num {
             let _ = crate::db::update_ticket_status(num, new_status);
-            let sheet_kanban = match new_status {
-                "InProgress" => "In Progress",
-                "Hold" => "Hold",
-                "Solved" => "Solved",
-                "Completed" => "Solved(closed)",
-                "Cancelled" => "Cancelled",
-                other => other,
-            };
             let mut payload = serde_json::json!({
                 "kanban_state": sheet_kanban,
                 "status": derived_macro_status,
@@ -1088,24 +957,7 @@ impl TicketContextState {
     }
 
     pub fn move_column_tickets(&mut self, from_col: &str, to_col: &str) {
-        let derived_macro_status = if to_col.eq_ignore_ascii_case("Completed")
-            || to_col.eq_ignore_ascii_case("Solved(closed)")
-            || to_col.eq_ignore_ascii_case("Solved (closed)")
-            || to_col.eq_ignore_ascii_case("Closed")
-            || to_col.eq_ignore_ascii_case("Cancelled")
-        {
-            "Closed".to_string()
-        } else {
-            "Open".to_string()
-        };
-        let sheet_kanban = match to_col {
-            "InProgress" => "In Progress",
-            "Hold" => "Hold",
-            "Solved" => "Solved",
-            "Completed" => "Solved(closed)",
-            "Cancelled" => "Cancelled",
-            other => other,
-        };
+        let (sheet_kanban, derived_macro_status) = target_col_to_sheet_status(to_col);
 
         let mut list = self.tickets.write();
         for t in list.iter_mut() {
@@ -1118,7 +970,7 @@ impl TicketContextState {
             };
             if current == from_col {
                 t.kanban_state = to_col.to_string();
-                t.status = derived_macro_status.clone();
+                t.status = derived_macro_status.to_string();
                 let num = t.ticket_id;
                 let _ = crate::db::update_ticket_status(num, to_col);
                 let mut payload = serde_json::json!({

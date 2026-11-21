@@ -373,7 +373,7 @@ body {
     color: var(--foreground, #e6e9f0);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
-    transition: background-color 0.15s ease, color 0.15s ease;
+    transition: background-color 0.08s ease-out, color 0.08s ease-out;
     scroll-behavior: smooth;
 }
 
@@ -460,6 +460,45 @@ textarea,
 /* ============================================================
  * Transitions & Micro-Animations Suite
  * ============================================================ */
+
+/* ============================================================
+ * Fast, Snappy Theme Transitioning
+ * Coordinates immediate, ultra-responsive transitions strictly across
+ * primary layout surfaces without heavy universal (*) style recalculations.
+ * ============================================================ */
+html.theme-transitioning,
+html.theme-transitioning body,
+html.theme-transitioning #app-shell,
+html.theme-transitioning [data-slot="sidebar"],
+html.theme-transitioning [data-slot="titlebar"],
+html.theme-transitioning [data-slot="card"],
+html.theme-transitioning .bg-background,
+html.theme-transitioning .bg-card,
+html.theme-transitioning .bg-sidebar,
+html.theme-transitioning .bg-popover,
+html.theme-transitioning .bg-muted,
+html.theme-transitioning .border-border,
+html.theme-transitioning .border-sidebar-border {
+    transition: background-color 0.08s ease-out,
+                border-color 0.08s ease-out,
+                color 0.08s ease-out !important;
+    transition-delay: 0s !important;
+}
+
+/* Snappy transitions on core layout surfaces */
+#app-shell,
+[data-slot="titlebar"],
+[data-slot="sidebar"],
+[data-slot="card"],
+.bg-background,
+.bg-card,
+.bg-sidebar,
+.bg-popover,
+.bg-muted,
+.border-border,
+.border-sidebar-border {
+    transition: background-color 0.08s ease-out, border-color 0.08s ease-out, color 0.08s ease-out;
+}
 
 /* Base animation variables */
 :root {
