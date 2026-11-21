@@ -6,6 +6,7 @@ pub mod api;
 mod components;
 pub mod db;
 mod icons;
+pub mod notifications;
 mod pages;
 mod state;
 pub mod sync;

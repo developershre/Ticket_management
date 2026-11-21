@@ -235,6 +235,9 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
     let initial_notify_sync = crate::db::sync_meta_get("sync_notify_on_pull").unwrap_or_else(|| "false".to_string());
     let mut notify_on_pull = use_signal(|| initial_notify_sync == "true");
 
+    let initial_win_notif = crate::db::sync_meta_get("ui_windows_notifications").map(|v| v != "false").unwrap_or(true);
+    let mut windows_notifications = use_signal(|| initial_win_notif);
+
     // ========================================================
     // TAB 4: API & Connection State
     // ========================================================
@@ -474,6 +477,8 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         let _ = crate::db::sync_meta_set("ui_reminder_advance_mins", &adv_val.to_string());
         let _ = crate::db::sync_meta_set("ui_sla_warning_hours", &sla_str);
         let _ = crate::db::sync_meta_set("sync_notify_on_pull", if notif_pull { "true" } else { "false" });
+        let win_notif = *windows_notifications.read();
+        let _ = crate::db::sync_meta_set("ui_windows_notifications", if win_notif { "true" } else { "false" });
 
         crate::state::set_sound_enabled(snd_on && !dnd);
         crate::state::set_sound_volume(&snd_vol);
@@ -485,6 +490,7 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                 settings.toast_duration_secs = dur_val;
                 settings.reminder_advance_mins = adv_val;
                 settings.notify_on_remote_pull = notif_pull;
+                settings.windows_notifications = win_notif;
             });
         }
         crate::state::play_sound(&tone);
@@ -501,6 +507,7 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         reminder_advance.set("15".to_string());
         sla_warning_hours.set("2".to_string());
         notify_on_pull.set(false);
+        windows_notifications.set(true);
 
         let _ = crate::db::sync_meta_set("ui_sound_enabled", "true");
         let _ = crate::db::sync_meta_set("ui_chime_tone", "arpeggio");
@@ -510,6 +517,7 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         let _ = crate::db::sync_meta_set("ui_reminder_advance_mins", "15");
         let _ = crate::db::sync_meta_set("ui_sla_warning_hours", "2");
         let _ = crate::db::sync_meta_set("sync_notify_on_pull", "false");
+        let _ = crate::db::sync_meta_set("ui_windows_notifications", "true");
 
         crate::state::set_sound_enabled(true);
         crate::state::set_sound_volume("medium");
@@ -2061,6 +2069,34 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                 }
 
                                 div { class: "border-t border-border/50" }
+
+                                // Windows Desktop Notifications Toggle
+                                SettingToggle {
+                                    title: "Windows Desktop Notifications",
+                                    description: "Receive native Windows notifications for new tickets, status changes, and due reminders.",
+                                    checked: *windows_notifications.read(),
+                                    on_toggle: move |_| {
+                                        let next = !*windows_notifications.read();
+                                        windows_notifications.set(next);
+                                    },
+                                }
+
+                                // Test Windows Notification
+                                div { class: "flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-border/50",
+                                    div { class: "space-y-0.5",
+                                        div { class: "text-xs font-medium text-foreground", "Test Desktop Notification" }
+                                        div { class: "text-[11px] text-muted-foreground", "Send a sample Windows notification to test your system settings." }
+                                    }
+                                    button {
+                                        r#type: "button",
+                                        class: "h-8 text-xs px-3 rounded-md bg-secondary text-secondary-foreground hover:bg-secondary/80 font-medium transition-colors cursor-pointer",
+                                        onclick: move |_| {
+                                            crate::notifications::test_notification();
+                                            toast.info("Notification Sent", "Check your Windows Action Center or notification banner.");
+                                        },
+                                        "Send Test Alert"
+                                    }
+                                }
 
                                 // Notify on Pull
                                 SettingToggle {

@@ -527,6 +527,9 @@ pub async fn run_cycle() {
         }
     }
 
+    // ---- Windows desktop notification checks (due reminders & approaching SLAs) ----
+    check_due_reminders_and_alerts(now);
+
     // ---- Final status ----
     let pending = db::pending_op_count();
     let conflicts = db::unresolved_conflict_count();
@@ -1187,6 +1190,8 @@ async fn pull(client: &ApiClient) -> Result<usize, ApiError> {
         .map(|m| (m.server_id.as_str(), m.local_id))
         .collect();
     let mut changed = 0usize;
+    let mut new_pulled_tickets: Vec<ServerTicket> = Vec::new();
+    let mut status_changes: Vec<(String, String, String)> = Vec::new();
     let now_str = crate::state::format_utc(now_epoch());
 
     // ---- server rows → local ----
@@ -1298,6 +1303,7 @@ async fn pull(client: &ApiClient) -> Result<usize, ApiError> {
                 if let Some(ref local) = local_ticket {
                     if !t.status.trim().is_empty() && local.status.trim() != t.status.trim() {
                         diffs.push(("Status", local.status.clone(), t.status.clone()));
+                        status_changes.push((t.ticket_id.clone(), t.subject.clone(), t.status.clone()));
                     }
                     if !t.kanban_state.trim().is_empty() && local.kanban_state.trim() != t.kanban_state.trim() {
                         diffs.push(("Stage", local.kanban_state.clone(), t.kanban_state.clone()));
@@ -1397,8 +1403,21 @@ async fn pull(client: &ApiClient) -> Result<usize, ApiError> {
                     &now_str,
                 );
                 changed += 1;
+                new_pulled_tickets.push(t.clone());
             }
         }
+    }
+
+    // Dispatch native Windows desktop notifications for newly pulled tickets and status changes
+    if new_pulled_tickets.len() == 1 {
+        let t = &new_pulled_tickets[0];
+        crate::notifications::notify_new_ticket(&t.ticket_id, &t.subject, &t.employee_name, &t.priority);
+    } else if new_pulled_tickets.len() > 1 {
+        let latest = &new_pulled_tickets[0];
+        crate::notifications::notify_multiple_new_tickets(new_pulled_tickets.len(), &latest.ticket_id, &latest.subject);
+    }
+    for (tid, subj, new_status) in status_changes {
+        crate::notifications::notify_ticket_status_change(&tid, &subj, &new_status);
     }
 
     // ---- local rows whose server counterpart is gone ----
@@ -1976,6 +1995,7 @@ async fn pull_reminders(client: &ApiClient) -> Result<usize, ApiError> {
         .map(|m| (m.server_id.as_str(), m.local_id))
         .collect();
     let mut changed = 0usize;
+    let mut new_pulled_reminders: Vec<ServerReminder> = Vec::new();
     let now_str = crate::state::format_utc(now_epoch());
 
     for (server_id, r) in &server {
@@ -2162,4 +2182,63 @@ pub async fn delete_employee_immediate(emp_code: &str) -> Result<(), ApiError> {
     client.employees_delete(emp_code).await?;
     let _ = db::delete_employee_db(emp_code);
     Ok(())
+}
+
+/// Scans local SQLite database for pending reminders due soon and tickets with impending SLA deadlines,
+/// triggering native Windows desktop notifications.
+pub fn check_due_reminders_and_alerts(now: i64) {
+    if !crate::notifications::is_windows_notifications_enabled() {
+        return;
+    }
+
+    // 1. Pending reminders approaching or past due
+    let reminders = db::get_all_reminders();
+    let advance_mins: i64 = db::sync_meta_get("ui_reminder_advance_mins")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(15);
+    let advance_secs = advance_mins * 60;
+
+    for r in &reminders {
+        if r.status.eq_ignore_ascii_case("completed") || r.status.eq_ignore_ascii_case("cancelled") {
+            continue;
+        }
+        if let Some(target_epoch) = crate::notifications::parse_timestamp_to_epoch(&r.send_at) {
+            // Alert if within advance window, or if past due within the last 24 hours
+            if now >= (target_epoch - advance_secs) && now <= (target_epoch + 86_400) {
+                crate::notifications::notify_reminder_due(
+                    &r.reminder_id.to_string(),
+                    &r.reminder_message,
+                    &r.employee_name,
+                    &r.send_at,
+                );
+            }
+        }
+    }
+
+    // 2. Open tickets approaching SLA deadline (within 1 hour or recently overdue)
+    let tickets = db::get_all_tickets();
+    for t in &tickets {
+        if t.status.eq_ignore_ascii_case("closed")
+            || t.kanban_state.eq_ignore_ascii_case("completed")
+            || t.kanban_state.eq_ignore_ascii_case("cancelled")
+        {
+            continue;
+        }
+        let dl = if !t.sla_deadline.trim().is_empty() {
+            &t.sla_deadline
+        } else {
+            &t.deadline
+        };
+        if !dl.trim().is_empty() {
+            if let Some(dl_epoch) = crate::notifications::parse_timestamp_to_epoch(dl) {
+                if now >= (dl_epoch - 3600) && now <= (dl_epoch + 14400) {
+                    crate::notifications::notify_sla_warning(
+                        &t.ticket_id.to_string(),
+                        &t.subject,
+                        dl,
+                    );
+                }
+            }
+        }
+    }
 }

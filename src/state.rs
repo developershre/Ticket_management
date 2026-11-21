@@ -108,6 +108,7 @@ pub struct AppSettings {
     pub sound_volume: String,
     pub reminder_advance_mins: u32,
     pub notify_on_remote_pull: bool,
+    pub windows_notifications: bool,
 }
 
 impl Default for AppSettings {
@@ -165,6 +166,9 @@ impl AppSettings {
             notify_on_remote_pull: crate::db::sync_meta_get("sync_notify_on_pull")
                 .map(|v| v == "true")
                 .unwrap_or(false),
+            windows_notifications: crate::db::sync_meta_get("ui_windows_notifications")
+                .map(|v| v != "false")
+                .unwrap_or(true),
         }
     }
 }
