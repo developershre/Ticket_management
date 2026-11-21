@@ -18,8 +18,8 @@ use crate::components::ui::select::SimpleSelect;
 use crate::components::ui::separator::Separator;
 use crate::components::ui::toast::ToastState;
 use crate::icons::{
-    ArrowDownIcon, ArrowUpIcon, BellIcon, CalendarIcon, CheckIcon, ClockIcon, CopyIcon, EyeIcon, FilterIcon,
-    GripVerticalIcon, PencilIcon, PlusIcon, SearchIcon, TicketIcon, TrashIcon,
+    ArrowDownIcon, ArrowUpIcon, BellIcon, CalendarIcon, CheckIcon, ClockIcon, CopyIcon, EyeIcon,
+    FilterIcon, GripVerticalIcon, PencilIcon, PlusIcon, SearchIcon, TicketIcon, TrashIcon,
 };
 
 /// Reminder item model stored in reactive state with all 12 fields.
@@ -124,13 +124,22 @@ fn initial_reminders() -> Vec<ReminderItem> {
         } else {
             format!("REM-{}", r.reminder_id)
         };
-        let (emp_name, emp_email) = if let Some(emp) = crate::db::find_employee_by_code(r.employee_code.trim()) {
-            let name = if !emp.emp_name.trim().is_empty() { emp.emp_name } else { r.employee_name };
-            let email = if !emp.emp_email.trim().is_empty() { emp.emp_email } else { r.email_address };
-            (name, email)
-        } else {
-            (r.employee_name, r.email_address)
-        };
+        let (emp_name, emp_email) =
+            if let Some(emp) = crate::db::find_employee_by_code(r.employee_code.trim()) {
+                let name = if !emp.emp_name.trim().is_empty() {
+                    emp.emp_name
+                } else {
+                    r.employee_name
+                };
+                let email = if !emp.emp_email.trim().is_empty() {
+                    emp.emp_email
+                } else {
+                    r.email_address
+                };
+                (name, email)
+            } else {
+                (r.employee_name, r.email_address)
+            };
         let item = ReminderItem {
             id: display_id,
             reminder_id: r.reminder_id,
@@ -154,10 +163,15 @@ fn initial_reminders() -> Vec<ReminderItem> {
 
         // In-memory duplicate guard: compare data and keep strictly one card
         let dup_pos = items.iter().position(|existing: &ReminderItem| {
-            if !item.server_reminder_id.is_empty() && item.server_reminder_id == existing.server_reminder_id {
+            if !item.server_reminder_id.is_empty()
+                && item.server_reminder_id == existing.server_reminder_id
+            {
                 return true;
             }
-            let same_code = existing.employee_code.trim().eq_ignore_ascii_case(item.employee_code.trim());
+            let same_code = existing
+                .employee_code
+                .trim()
+                .eq_ignore_ascii_case(item.employee_code.trim());
             let same_msg = existing.reminder_message.trim() == item.reminder_message.trim();
             same_code && same_msg
         });
@@ -746,7 +760,9 @@ pub fn Reminders() -> Element {
 
     // Save modifications to existing reminder
     let mut save_reminder_edits = move || {
-        let Some(curr) = active_reminder.read().clone() else { return; };
+        let Some(curr) = active_reminder.read().clone() else {
+            return;
+        };
         let rem_id = curr.reminder_id;
         let emp_code = edit_employee_code.read().trim().to_string();
         if emp_code.is_empty() {
@@ -781,7 +797,11 @@ pub fn Reminders() -> Element {
         }
         let cat = edit_category.read().trim().to_string();
         let send_at = edit_send_at.read().trim().to_string();
-        let final_send_at = if send_at.is_empty() { curr.send_at.clone() } else { send_at };
+        let final_send_at = if send_at.is_empty() {
+            curr.send_at.clone()
+        } else {
+            send_at
+        };
         let freq = edit_repeat_frequency.read().trim().to_lowercase();
         let final_freq = if freq == "once" { "once" } else { "daily" };
         let cc = edit_cc_emails.read().trim().to_string();
@@ -846,10 +866,16 @@ pub fn Reminders() -> Element {
             return;
         }
         let mut list = reminders.write();
-        if let Some(src_pos) = list.iter().position(|r| r.id == src_id || r.reminder_id.to_string() == src_id) {
+        if let Some(src_pos) = list
+            .iter()
+            .position(|r| r.id == src_id || r.reminder_id.to_string() == src_id)
+        {
             let item = list.remove(src_pos);
             let title = item.title().to_string();
-            if let Some(target_pos) = list.iter().position(|r| r.id == target_id || r.reminder_id.to_string() == target_id) {
+            if let Some(target_pos) = list
+                .iter()
+                .position(|r| r.id == target_id || r.reminder_id.to_string() == target_id)
+            {
                 list.insert(target_pos, item);
                 let new_rank = target_pos + 1;
                 toast.info(
@@ -865,7 +891,10 @@ pub fn Reminders() -> Element {
     // Toggle completion status
     let mut toggle_done = move |id: String| {
         let mut list = reminders.write();
-        if let Some(item) = list.iter_mut().find(|r| r.id == id || r.reminder_id.to_string() == id) {
+        if let Some(item) = list
+            .iter_mut()
+            .find(|r| r.id == id || r.reminder_id.to_string() == id)
+        {
             if item.done || item.status.eq_ignore_ascii_case("completed") {
                 toast.warning("Finalized", "Completed reminders cannot be modified.");
                 return;
@@ -875,7 +904,10 @@ pub fn Reminders() -> Element {
             let rem_id = item.reminder_id;
             let _ = crate::db::update_reminder_status(rem_id, "Completed");
             let _ = crate::db::cancel_queued_updates_for_reminder(rem_id);
-            crate::sync::enqueue_reminder_update(rem_id, serde_json::json!({ "status": "Completed" }));
+            crate::sync::enqueue_reminder_update(
+                rem_id,
+                serde_json::json!({ "status": "Completed" }),
+            );
             toast.info("Status Changed", "Reminder marked Completed");
             if let Some(mut sync) = db_sync {
                 sync.with_mut(|r| r.0 += 1);
@@ -921,7 +953,9 @@ pub fn Reminders() -> Element {
                             "Send Failed",
                             "The Google Sheet 'Reminders' tab headers must match the layout with 'CC Emails' and 'Repeat Frequency'.",
                         );
-                    } else if err_str.contains("already sent today") || err_str.contains("once-per-day") {
+                    } else if err_str.contains("already sent today")
+                        || err_str.contains("once-per-day")
+                    {
                         toast.warning(
                             "Already Sent Today",
                             "An email was already sent today for this reminder. Use 'Force Resend' to bypass the daily guard.",
@@ -937,7 +971,10 @@ pub fn Reminders() -> Element {
     // Delete reminder
     let mut delete_reminder = move |id: String| {
         let mut list = reminders.write();
-        if let Some(pos) = list.iter().position(|r| r.id == id || r.reminder_id.to_string() == id) {
+        if let Some(pos) = list
+            .iter()
+            .position(|r| r.id == id || r.reminder_id.to_string() == id)
+        {
             let item = list.remove(pos);
             let rem_id = item.reminder_id;
             let server_id = item.server_reminder_id.clone();
@@ -964,7 +1001,10 @@ pub fn Reminders() -> Element {
     // Change category
     let mut change_category = move |(id, new_tag): (String, String)| {
         let mut list = reminders.write();
-        if let Some(item) = list.iter_mut().find(|r| r.id == id || r.reminder_id.to_string() == id) {
+        if let Some(item) = list
+            .iter_mut()
+            .find(|r| r.id == id || r.reminder_id.to_string() == id)
+        {
             if item.done || item.status.eq_ignore_ascii_case("completed") {
                 toast.warning("Finalized", "Completed reminders cannot be updated.");
                 return;
@@ -989,7 +1029,10 @@ pub fn Reminders() -> Element {
     // Change timing
     let mut change_timing = move |(id, new_when): (String, String)| {
         let mut list = reminders.write();
-        if let Some(item) = list.iter_mut().find(|r| r.id == id || r.reminder_id.to_string() == id) {
+        if let Some(item) = list
+            .iter_mut()
+            .find(|r| r.id == id || r.reminder_id.to_string() == id)
+        {
             if item.done || item.status.eq_ignore_ascii_case("completed") {
                 toast.warning("Finalized", "Completed reminders cannot be updated.");
                 return;
@@ -1011,7 +1054,10 @@ pub fn Reminders() -> Element {
     // Move to top
     let mut move_to_top = move |id: String| {
         let mut list = reminders.write();
-        if let Some(pos) = list.iter().position(|r| r.id == id || r.reminder_id.to_string() == id) {
+        if let Some(pos) = list
+            .iter()
+            .position(|r| r.id == id || r.reminder_id.to_string() == id)
+        {
             let item = list.remove(pos);
             let title = item.title().to_string();
             list.insert(0, item);
@@ -1022,7 +1068,10 @@ pub fn Reminders() -> Element {
     // Move to bottom
     let mut move_to_bottom = move |id: String| {
         let mut list = reminders.write();
-        if let Some(pos) = list.iter().position(|r| r.id == id || r.reminder_id.to_string() == id) {
+        if let Some(pos) = list
+            .iter()
+            .position(|r| r.id == id || r.reminder_id.to_string() == id)
+        {
             let item = list.remove(pos);
             let title = item.title().to_string();
             list.push(item);
@@ -1033,7 +1082,10 @@ pub fn Reminders() -> Element {
     // Move relative (-1 or +1)
     let mut move_relative = move |(id, dir): (String, i32)| {
         let mut list = reminders.write();
-        if let Some(pos) = list.iter().position(|r| r.id == id || r.reminder_id.to_string() == id) {
+        if let Some(pos) = list
+            .iter()
+            .position(|r| r.id == id || r.reminder_id.to_string() == id)
+        {
             let len = list.len();
             let new_pos = (pos as isize + dir as isize).clamp(0, (len - 1) as isize) as usize;
             if new_pos != pos {
@@ -1083,7 +1135,12 @@ pub fn Reminders() -> Element {
                 || item.when().to_lowercase().contains(&q)
                 || item.tag().to_lowercase().contains(&q)
                 || item.ticket_id.to_lowercase().contains(&q)
-                || crate::db::matches_emp_query(&item.employee_code, &item.employee_name, &item.email_address, &q);
+                || crate::db::matches_emp_query(
+                    &item.employee_code,
+                    &item.employee_name,
+                    &item.email_address,
+                    &q,
+                );
             let match_cat = cat == "All" || item.tag() == cat;
             match_q && match_cat
         })
@@ -1202,7 +1259,7 @@ pub fn Reminders() -> Element {
                     }
                 } else {
                     div { class: "flex-1 overflow-y-auto min-h-0 pr-1 w-full",
-                        div { class: "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3.5 w-full pb-6",
+                        div { class: "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3.5 w-full pb-6 p-2",
                             for reminder in filtered.iter() {
                             {
                                 let id = reminder.id.clone();
