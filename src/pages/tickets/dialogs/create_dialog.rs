@@ -184,6 +184,7 @@ pub fn CreateTicketDialog(mut props: CreateTicketDialogProps) -> Element {
                     "Ticket Created",
                     format!("{real_id_str} created successfully"),
                 );
+                crate::notifications::notify_new_ticket(&real_id_str, &subject_val, &assignee_val, &priority_val);
                 props.open.set(false);
             }
             Err(e) => {

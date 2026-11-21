@@ -747,6 +747,7 @@ pub fn Reminders() -> Element {
                     "Reminder Scheduled",
                     format!("Reminder for {emp_name} ({emp_code}) created successfully"),
                 );
+                crate::notifications::notify_new_reminder(&format!("REM-{new_id}"), &msg_val, &emp_name);
                 is_create_open.set(false);
             }
             Err(e) => {
