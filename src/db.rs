@@ -33,23 +33,33 @@ fn is_dir_writable(dir: &Path) -> bool {
 
 fn resolve_db_path() -> PathBuf {
     // If installed in Program Files or a read-only system folder, always store user
-    // data in %APPDATA%\BPSL IT Support\ to avoid permission errors on write/WAL.
+    // data in %APPDATA%\BPSL IT Support\ or ~/.local/share/bpsl-it-support/ to avoid permission errors on write/WAL.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
             let parent_str = parent.to_string_lossy().to_lowercase();
-            let is_system_install = parent_str.contains("program files") || !is_dir_writable(parent);
+            let is_system_install = parent_str.contains("program files")
+                || parent_str.starts_with("/usr")
+                || parent_str.starts_with("/opt")
+                || !is_dir_writable(parent);
             if is_system_install {
-                if let Some(app_data) = std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA")) {
-                    let app_dir = PathBuf::from(app_data).join("BPSL IT Support");
+                let user_data_base = std::env::var_os("APPDATA")
+                    .or_else(|| std::env::var_os("LOCALAPPDATA"))
+                    .map(|d| PathBuf::from(d).join("BPSL IT Support"))
+                    .or_else(|| {
+                        std::env::var_os("XDG_DATA_HOME")
+                            .map(PathBuf::from)
+                            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+                            .map(|d| d.join("bpsl-it-support"))
+                    });
+
+                if let Some(app_dir) = user_data_base {
                     let _ = std::fs::create_dir_all(&app_dir);
                     let target_db = app_dir.join("management.db");
                     if !target_db.exists() {
                         let seed_candidates = [
                             parent.join("management.db"),
-                            parent.join("empty.db"),
                             parent.join("resources").join("management.db"),
-                            parent.join("resources").join("empty.db"),
-                            parent.join("../assets/database.db"),
+                            PathBuf::from("/usr/share/bpsl-it-support/management.db"),
                         ];
                         for seed in &seed_candidates {
                             if seed.exists() {
@@ -58,7 +68,7 @@ fn resolve_db_path() -> PathBuf {
                             }
                         }
                     }
-                    // In a system install, ALWAYS return target_db in AppData so SQLite can write
+                    // In a system install, ALWAYS return target_db in AppData/XDG data dir so SQLite can write
                     return target_db;
                 }
             }
@@ -71,14 +81,6 @@ fn resolve_db_path() -> PathBuf {
             let next_to_exe = parent.join("management.db");
             if next_to_exe.exists() {
                 return next_to_exe;
-            }
-            // If empty.db was bundled next to exe, copy it to management.db
-            let empty_seed = parent.join("empty.db");
-            if empty_seed.exists() && is_dir_writable(parent) {
-                let _ = std::fs::copy(&empty_seed, &next_to_exe);
-                if next_to_exe.exists() {
-                    return next_to_exe;
-                }
             }
             if let Some(up) = parent.parent() {
                 let candidate2 = up.join("management.db");

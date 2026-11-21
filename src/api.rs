@@ -1039,7 +1039,7 @@ impl ApiClient {
     /// Posts one envelope and unwraps the response envelope. Note the API
     /// answers with HTTP 200 even for failures â€” success/error live in
     /// the body. Automatically retries transient LOCK_TIMEOUT and busy errors.
-    async fn post(&self, action: &str, data: Value) -> Result<Value, ApiError> {
+    pub(crate) async fn post(&self, action: &str, data: Value) -> Result<Value, ApiError> {
         let mut attempts = 0usize;
         const MAX_LOCK_ATTEMPTS: usize = 3;
 
@@ -1251,7 +1251,7 @@ impl ApiClient {
 
     /// Executes a `GET` or `POST` request against the unauthenticated BPSL Ticket API (`?api=...`)
     /// with the same transient retry logic (empty response, HTML cold start, 429/5xx, lock/busy).
-    async fn send_rest(
+    pub(crate) async fn send_rest(
         &self,
         method: reqwest::Method,
         api_route: &str,

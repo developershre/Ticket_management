@@ -2075,7 +2075,7 @@ async fn pull_reminders(client: &ApiClient) -> Result<usize, ApiError> {
         }
     }
     for r in new_pulled_reminders {
-        crate::notifications::notify_new_reminder(&r.server_reminder_id, &r.reminder_message, &r.employee_name);
+        crate::notifications::notify_new_reminder(&r.reminder_id, &r.reminder_message, &r.employee_name);
     }
     let _ = db::deduplicate_reminders_db();
     Ok(changed)

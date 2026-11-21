@@ -268,6 +268,10 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
     let initial_offline = crate::db::sync_meta_get("sync_offline_mode").map(|v| v == "true").unwrap_or(false);
     let mut work_offline = use_signal(|| initial_offline);
 
+    let mut schema_report = use_signal(|| Option::<crate::sheet_crud::SchemaVerificationReport>::None);
+    let mut is_verifying_schema = use_signal(|| false);
+    let mut is_initializing_schema = use_signal(|| false);
+
     // ========================================================
     // TAB 5: Sync & Data State
     // ========================================================
@@ -876,6 +880,90 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                     let elapsed = start.elapsed().as_millis();
                     crate::state::play_sound("alert");
                     test_status.set(TestStatus::Error(format!("{err} ({elapsed} ms)")));
+                }
+            }
+        });
+    };
+
+    let handle_verify_schema = move |_| {
+        let url = base_url.read().trim().to_string();
+        let key = api_key.read().trim().to_string();
+        let proto = api_protocol.read().trim().to_string();
+
+        if url.is_empty() {
+            toast.error("Validation Error", "Please provide a Google Apps Script Web App URL first.");
+            return;
+        }
+
+        is_verifying_schema.set(true);
+
+        spawn(async move {
+            let cfg = crate::api::ApiConfig {
+                base_url: url,
+                api_key: key,
+                employee_code: None,
+                protocol: crate::api::ApiProtocol::from_str_opt(&proto).unwrap_or(crate::api::ApiProtocol::BpslRest),
+            };
+            match crate::api::ApiClient::new(cfg) {
+                Ok(client) => match client.crud_verify_schema().await {
+                    Ok(report) => {
+                        if report.valid {
+                            toast.success("Schema Valid", "Connected Google Sheet has all required tabs and columns!");
+                        } else {
+                            toast.warning("Schema Incomplete", "Some required tabs or columns are missing in the Google Sheet.");
+                        }
+                        schema_report.set(Some(report));
+                        is_verifying_schema.set(false);
+                    }
+                    Err(e) => {
+                        toast.error("Verification Error", format!("Failed to verify schema: {e}"));
+                        is_verifying_schema.set(false);
+                    }
+                },
+                Err(e) => {
+                    toast.error("Client Error", format!("Failed to initialize client: {e}"));
+                    is_verifying_schema.set(false);
+                }
+            }
+        });
+    };
+
+    let handle_init_schema = move |_| {
+        let url = base_url.read().trim().to_string();
+        let key = api_key.read().trim().to_string();
+        let proto = api_protocol.read().trim().to_string();
+
+        if url.is_empty() {
+            toast.error("Validation Error", "Please provide a Google Apps Script Web App URL first.");
+            return;
+        }
+
+        is_initializing_schema.set(true);
+
+        spawn(async move {
+            let cfg = crate::api::ApiConfig {
+                base_url: url.clone(),
+                api_key: key.clone(),
+                employee_code: None,
+                protocol: crate::api::ApiProtocol::from_str_opt(&proto).unwrap_or(crate::api::ApiProtocol::BpslRest),
+            };
+            match crate::api::ApiClient::new(cfg.clone()) {
+                Ok(client) => match client.crud_init_schema().await {
+                    Ok(_) => {
+                        toast.success("Initialized", "Google Sheet tabs and standard headers initialized successfully!");
+                        if let Ok(report) = client.crud_verify_schema().await {
+                            schema_report.set(Some(report));
+                        }
+                        is_initializing_schema.set(false);
+                    }
+                    Err(e) => {
+                        toast.error("Initialization Failed", format!("Failed to auto-init schema: {e}"));
+                        is_initializing_schema.set(false);
+                    }
+                },
+                Err(e) => {
+                    toast.error("Client Error", format!("Failed to initialize client: {e}"));
+                    is_initializing_schema.set(false);
                 }
             }
         });
@@ -2459,6 +2547,86 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                                 span { class: "font-medium leading-tight break-all", "{err}" }
                                             }
                                         },
+                                    }
+                                }
+
+                                // Universal Google Sheet Schema & CRUD Manager
+                                div { class: "flex flex-col gap-3 rounded-xl border border-border/70 bg-muted/20 p-3.5",
+                                    div { class: "flex items-center justify-between",
+                                        div { class: "flex items-center gap-2",
+                                            span { class: "text-sm", "📊" }
+                                            div { class: "flex flex-col",
+                                                span { class: "text-xs font-semibold text-foreground", "Google Sheet Schema & Universal CRUD" }
+                                                span { class: "text-[11px] text-muted-foreground", "Validate tabs (Tickets, Employees, Reminders, Notes) or auto-setup" }
+                                            }
+                                        }
+                                        div { class: "flex items-center gap-2",
+                                            Button {
+                                                variant: "outline",
+                                                class: "h-7 text-xs px-2.5 font-medium cursor-pointer shadow-2xs hover:bg-background",
+                                                disabled: *is_verifying_schema.read() || *is_initializing_schema.read(),
+                                                onclick: handle_verify_schema,
+                                                if *is_verifying_schema.read() {
+                                                    span { class: "flex items-center gap-1",
+                                                        span { class: "size-3 border-2 border-primary border-t-transparent rounded-full animate-spin mr-1" }
+                                                        "Checking…"
+                                                    }
+                                                }
+                                                if !*is_verifying_schema.read() {
+                                                    "Verify Schema"
+                                                }
+                                            }
+                                            Button {
+                                                variant: "default",
+                                                class: "h-7 text-xs px-2.5 font-medium bg-blue-600 hover:bg-blue-700 text-white cursor-pointer shadow-2xs",
+                                                disabled: *is_verifying_schema.read() || *is_initializing_schema.read(),
+                                                onclick: handle_init_schema,
+                                                if *is_initializing_schema.read() {
+                                                    span { class: "flex items-center gap-1",
+                                                        span { class: "size-3 border-2 border-white border-t-transparent rounded-full animate-spin mr-1" }
+                                                        "Setting up…"
+                                                    }
+                                                }
+                                                if !*is_initializing_schema.read() {
+                                                    "Auto-Setup Sheet"
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if let Some(ref rep) = *schema_report.read() {
+                                        div { class: "flex flex-col gap-2 rounded-lg border border-border/60 bg-background/50 p-2.5 text-xs animate-in fade-in-0",
+                                            div { class: "flex items-center justify-between font-medium",
+                                                span { class: if rep.valid { "text-emerald-500 font-semibold" } else { "text-amber-500 font-semibold" },
+                                                    if rep.valid { "✓ All standard tabs and columns verified" } else { "⚠ Schema incomplete - click Auto-Setup to fix" }
+                                                }
+                                                if let Some(ref title) = rep.spreadsheet_title {
+                                                    span { class: "text-[10px] text-muted-foreground truncate max-w-[180px]", "{title}" }
+                                                }
+                                            }
+                                            div { class: "grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1",
+                                                for (name , val) in rep.sheets.iter() {
+                                                    div { class: "p-2 rounded border border-border/40 bg-card flex flex-col gap-0.5",
+                                                        div { class: "flex items-center justify-between",
+                                                            span { class: "font-semibold text-foreground text-[11px]", "{name}" }
+                                                            if val.exists && val.is_valid {
+                                                                span { class: "text-emerald-500 text-[10px] font-bold", "✓ OK" }
+                                                            } else if val.exists {
+                                                                span { class: "text-amber-500 text-[10px] font-bold", "⚠ cols" }
+                                                            } else {
+                                                                span { class: "text-destructive text-[10px] font-bold", "✗ Missing" }
+                                                            }
+                                                        }
+                                                        span { class: "text-[10px] text-muted-foreground", "{val.total_rows} rows" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    div { class: "text-[11px] text-muted-foreground bg-muted/40 rounded p-2 flex items-center justify-between border border-border/40",
+                                        span { "Universal Apps Script backend script located at:" }
+                                        code { class: "px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono text-primary", "scripts/GoogleAppsScript_Universal_TMS.js" }
                                     }
                                 }
 

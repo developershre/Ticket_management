@@ -416,10 +416,8 @@ pub fn Tickets() -> Element {
 
     let toast = use_context::<ToastState>();
 
-    // Quick add ticket to column
+    // Quick add ticket to column (Direct online creation to Google Sheet)
     let quick_add_ticket = move |col: String| {
-        let count = tickets.read().len() + 1;
-        let fallback_id = format!("IT-{}", 200 + count);
         let col_disp = types::column_display_label(&col);
         let title = format!("New request ({col_disp})");
         let employee = crate::db::configured_employee_code();
@@ -427,8 +425,7 @@ pub fn Tickets() -> Element {
         let customer = crate::db::employee_name(&employee);
         let category = "General".to_string();
         let priority = "Medium".to_string();
-        let assignee = "GR".to_string();
-        let created_at = crate::state::format_local_now();
+        let assignee = "IT Support".to_string();
 
         if employee.is_empty() {
             toast.error(
@@ -438,51 +435,56 @@ pub fn Tickets() -> Element {
             return;
         }
 
-        let db_id = crate::db::create_ticket(
-            &title,
-            &category,
-            &priority,
-            &employee,
-            &assignee,
-            &col,
-            "Quick ticket created via column quick-add action",
-        );
-        let real_id = if let Ok(id) = db_id {
-            format!("IT-{id}")
-        } else {
-            fallback_id
+        let client = match crate::sync::get_client().or_else(|_| crate::sync::reload_client()) {
+            Ok(c) => c,
+            Err(_) => {
+                toast.error(
+                    "Google Sheet Disconnected",
+                    "Tickets cannot be created offline. Please connect your Google Sheet in Settings before quick-adding tickets.",
+                );
+                return;
+            }
         };
-        if let Ok(id) = db_id {
-            crate::sync::enqueue_create(id);
-        }
-        let numeric_id = db_id.unwrap_or(200 + count as i64);
 
-        tickets.write().insert(0, TicketItem::new(
-            numeric_id,
-            &employee,
-            &email,
-            &category,
-            &title,
-            "Quick ticket created via column quick-add action",
-            "",
-            "",
-            &priority,
-            &assignee,
-            &customer,
-            0.0,
-            "Ticket created",
-            "Initial assignment to team lead",
-            "",
-            "Within SLA",
-            "",
-            "",
-            &col,
-            "Triage",
-            "Open",
-            &created_at,
-            &created_at,
-        ));
-        toast.success("Ticket Created", format!("{real_id} created in {col_disp}"));
+        let payload = serde_json::json!({
+            "employee_code": employee,
+            "email_address": email,
+            "category": category,
+            "subject": title,
+            "problem_description": "Quick ticket created via column quick-add action",
+            "priority": priority,
+            "assigned_to": assignee,
+            "customer": customer,
+            "time_spent": 0.0,
+            "activities": "Ticket created",
+            "my_activity": "Initial triage & review",
+            "sla_status": "Within SLA",
+            "kanban_state": col,
+            "stage": "Triage",
+            "status": "Open",
+        });
+
+        let sanitized = crate::sync::sanitize_ticket_payload(&client, &payload, true);
+
+        spawn(async move {
+            match client.tickets_create(&sanitized).await {
+                Ok(server_ticket) => {
+                    let local_id = crate::db::insert_server_ticket(&server_ticket).unwrap_or(0);
+                    let item = TicketItem::from_server_ticket(&server_ticket, local_id);
+                    tickets.write().insert(0, item);
+                    toast.success(
+                        "Ticket Created in Google Sheet",
+                        format!("{} registered directly in Google Sheet ({col_disp})", server_ticket.ticket_id),
+                    );
+                }
+                Err(e) => {
+                    toast.error(
+                        "Google Sheet Creation Failed",
+                        format!("Could not create ticket in Google Sheet: {e}. Offline creation is disabled."),
+                    );
+                }
+            }
+        });
     };
 
     let mut handle_create_view = move |_| {

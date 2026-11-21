@@ -48,3 +48,32 @@ To run for a different platform, use the `--platform platform` flag. E.g.
 dx serve --platform desktop
 ```
 
+---
+
+## Production Installers & Packaging
+
+### Linux Installers (Fedora, Linux Mint, Ubuntu, Arch, Portable)
+
+Use the automated Linux packaging script:
+
+```bash
+# Build all packages (.rpm, .deb, .pkg.tar.zst, and .tar.gz)
+./build-linux.sh --all
+
+# Or build for a specific distribution:
+./build-linux.sh --fedora      # Fedora / RHEL / CentOS (.rpm)
+./build-linux.sh --mint        # Linux Mint / Ubuntu / Debian (.deb)
+./build-linux.sh --arch        # Arch Linux / Manjaro (.pkg.tar.zst + PKGBUILD)
+./build-linux.sh --tarball     # Universal portable archive (.tar.gz)
+```
+
+See [docs/LINUX_PACKAGING.md](file:///home/gamerrock/Documents/projects/Ticket_management/docs/LINUX_PACKAGING.md) for full distribution installation commands and specifications.
+
+### Windows Installer (MSI)
+
+Use PowerShell:
+```powershell
+.\build-msi.ps1
+```
+
+

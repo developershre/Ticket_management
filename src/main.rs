@@ -8,6 +8,7 @@ pub mod db;
 mod icons;
 pub mod notifications;
 mod pages;
+pub mod sheet_crud;
 mod state;
 pub mod sync;
 mod sync_test;

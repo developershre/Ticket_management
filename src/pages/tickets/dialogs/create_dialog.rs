@@ -34,7 +34,19 @@ pub fn CreateTicketDialog(mut props: CreateTicketDialogProps) -> Element {
     let create_attachment_url = state.create_attachment_url;
     let create_kanban_state = state.create_kanban_state;
 
+    let mut is_submitting = use_signal(|| false);
+
+    let is_sheet_configured = {
+        let (url, _, _) = crate::db::get_system_api_config();
+        url.map(|u| !u.trim().is_empty()).unwrap_or(false)
+            || std::env::var("TMS_API_BASE_URL").map(|u| !u.trim().is_empty()).unwrap_or(false)
+    };
+
     let mut save_create = move || {
+        if *is_submitting.read() {
+            return;
+        }
+
         let emp_code = create_employee_code.read().trim().to_string();
         if emp_code.is_empty() {
             toast.error("Validation Error", "Please enter Employee Code");
@@ -78,6 +90,17 @@ pub fn CreateTicketDialog(mut props: CreateTicketDialogProps) -> Element {
             return;
         }
 
+        let client = match crate::sync::get_client().or_else(|_| crate::sync::reload_client()) {
+            Ok(c) => c,
+            Err(_) => {
+                toast.error(
+                    "Google Sheet Disconnected",
+                    "Tickets cannot be created offline. Please connect your Google Sheet Web App URL in Settings > API & Connection before creating tickets.",
+                );
+                return;
+            }
+        };
+
         let emp_combined = if name_val.is_empty() {
             emp_code.clone()
         } else {
@@ -120,80 +143,76 @@ pub fn CreateTicketDialog(mut props: CreateTicketDialogProps) -> Element {
             "Open".to_string()
         };
 
-        let input = crate::db::NewTicketInput {
-            employee_code: emp_combined.clone(),
-            email_address: email_val.clone(),
-            category: cat_val.clone(),
-            subject: subj_val.clone(),
-            problem_description: desc_val.clone(),
-            attachment_name: att_name_val.clone(),
-            attachment_url: att_url_val.clone(),
-            priority: prio_val.clone(),
-            assigned_to: assigned_val.clone(),
-            customer: cust_val.clone(),
-            time_spent: time_val,
-            activities: act_val.clone(),
-            my_activity: my_act_val.clone(),
-            deadline: deadline_val.clone(),
-            sla_status: sla_stat_val.clone(),
-            sla_deadline: sla_dead_val.clone(),
-            rating_avg_text: rating_val.clone(),
-            kanban_state: kanban_val.clone(),
-            stage: stage_val.clone(),
-            status: status_val.clone(),
-        };
+        let payload = serde_json::json!({
+            "employee_code": emp_combined,
+            "email_address": email_val,
+            "category": cat_val,
+            "subject": subj_val,
+            "problem_description": desc_val,
+            "attachment_name": att_name_val,
+            "attachment_url": att_url_val,
+            "priority": prio_val,
+            "assigned_to": assigned_val,
+            "customer": cust_val,
+            "time_spent": time_val,
+            "activities": act_val,
+            "my_activity": my_act_val,
+            "deadline": deadline_val,
+            "sla_status": sla_stat_val,
+            "sla_deadline": sla_dead_val,
+            "rating_avg_text": rating_val,
+            "kanban_state": kanban_val,
+            "stage": stage_val,
+            "status": status_val,
+        });
 
-        match crate::db::create_ticket_full(&input) {
-            Ok(new_id) => {
-                let real_id_str = format!("IT-{new_id}");
-                let now_str = crate::state::format_local_now();
-                let new_ticket = TicketItem::new(
-                    new_id,
-                    &emp_combined,
-                    &email_val,
-                    &cat_val,
-                    &subj_val,
-                    &desc_val,
-                    &att_name_val,
-                    &att_url_val,
-                    &prio_val,
-                    &assigned_val,
-                    &cust_val,
-                    time_val,
-                    &act_val,
-                    &my_act_val,
-                    &deadline_val,
-                    &sla_stat_val,
-                    &sla_dead_val,
-                    &rating_val,
-                    &kanban_val,
-                    &stage_val,
-                    &status_val,
-                    &now_str,
-                    &now_str,
-                );
-                state.tickets.write().insert(0, new_ticket);
+        let sanitized = crate::sync::sanitize_ticket_payload(&client, &payload, true);
 
-                crate::sync::enqueue_create(new_id);
+        is_submitting.set(true);
 
-                if let Some(mut sync) = db_sync {
-                    sync.with_mut(|r| r.0 += 1);
+        spawn(async move {
+            match client.tickets_create(&sanitized).await {
+                Ok(server_ticket) => {
+                    let local_id = crate::db::insert_server_ticket(&server_ticket).unwrap_or(0);
+                    let new_ticket = TicketItem::from_server_ticket(&server_ticket, local_id);
+                    state.tickets.write().insert(0, new_ticket);
+
+                    if let Some(mut sync) = db_sync {
+                        sync.with_mut(|r| r.0 += 1);
+                    }
+
+                    crate::notifications::notify_new_ticket(
+                        &server_ticket.ticket_id,
+                        &server_ticket.subject,
+                        &server_ticket.assigned_to,
+                        &server_ticket.priority,
+                    );
+
+                    toast.success(
+                        "Ticket Created in Google Sheet",
+                        format!("Ticket {} created and registered directly in Google Sheet.", server_ticket.ticket_id),
+                    );
+
+                    create_employee_code.set(String::new());
+                    create_emp_name.set(String::new());
+                    create_email_address.set(String::new());
+                    create_subject.set(String::new());
+                    create_problem_description.set(String::new());
+
+                    is_submitting.set(false);
+                    props.open.set(false);
                 }
-
-                toast.success(
-                    "Ticket Created",
-                    format!("{real_id_str} created successfully"),
-                );
-                crate::notifications::notify_new_ticket(&real_id_str, &subject_val, &assignee_val, &priority_val);
-                props.open.set(false);
+                Err(err) => {
+                    is_submitting.set(false);
+                    toast.error(
+                        "Google Sheet Creation Failed",
+                        format!(
+                            "Could not create ticket in Google Sheet: {err}. Offline ticket creation is disabled. Please verify your connection.",
+                        ),
+                    );
+                }
             }
-            Err(e) => {
-                toast.error(
-                    "Database Error",
-                    format!("Failed to create ticket: {:?}", e),
-                );
-            }
-        }
+        });
     };
 
     rsx! {
@@ -203,7 +222,19 @@ pub fn CreateTicketDialog(mut props: CreateTicketDialogProps) -> Element {
                     class: "space-y-1 pb-3 text-left",
                     DialogTitle { class: "text-2xl font-bold tracking-tight text-foreground", "Create Support Ticket" }
                     DialogDescription { class: "text-sm text-muted-foreground",
-                        "Enter your employee details and describe the issue."
+                        "Enter ticket details. All tickets are validated and created directly in the connected Google Sheet."
+                    }
+                }
+
+                if !is_sheet_configured {
+                    div { class: "mb-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-500 text-xs flex items-center gap-2",
+                        span { class: "font-semibold", "Google Sheet Connection Required:" }
+                        span { "Offline ticket creation is disabled. Please connect your Google Sheet in Settings before submitting tickets." }
+                    }
+                } else {
+                    div { class: "mb-2 px-3 py-1.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-xs flex items-center gap-2",
+                        span { class: "inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" }
+                        span { class: "font-medium", "Google Sheet Connected · Direct Online Upload Active" }
                     }
                 }
 
@@ -350,12 +381,24 @@ pub fn CreateTicketDialog(mut props: CreateTicketDialogProps) -> Element {
                     class: "flex items-center justify-start gap-3 pt-3",
                     button {
                         r#type: "button",
-                        class: "inline-flex items-center justify-center rounded-md bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-2.5 text-sm shadow-xs transition-colors cursor-pointer",
+                        disabled: *is_submitting.read(),
+                        class: if *is_submitting.read() {
+                            "inline-flex items-center justify-center rounded-md bg-blue-600/70 text-white font-medium px-6 py-2.5 text-sm cursor-not-allowed gap-2"
+                        } else {
+                            "inline-flex items-center justify-center rounded-md bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-2.5 text-sm shadow-xs transition-colors cursor-pointer"
+                        },
                         onclick: move |_| save_create(),
-                        "Submit Ticket"
+                        if *is_submitting.read() {
+                            span { class: "inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-1.5" }
+                            "Uploading to Google Sheet..."
+                        }
+                        if !*is_submitting.read() {
+                            "Submit Ticket to Sheet"
+                        }
                     }
                     button {
                         r#type: "button",
+                        disabled: *is_submitting.read(),
                         class: "inline-flex items-center justify-center rounded-md border border-border bg-card hover:bg-muted text-foreground font-medium px-4 py-2.5 text-sm transition-colors cursor-pointer",
                         onclick: move |_| props.open.set(false),
                         "Cancel"

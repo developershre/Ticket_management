@@ -3,7 +3,7 @@
 Builds the production release and creates the .msi installer for BPSL IT Support.
 
 .DESCRIPTION
-1. Generates a fresh, pristine empty SQLite database (empty.db) with all schema tables and 0 rows.
+1. Generates a fresh, pristine empty SQLite database (management.db) with all schema tables and 0 rows.
 2. Ensures WiX toolset is accessible on PATH.
 3. Compiles and packages the release into a Windows .msi installer using dx bundle.
 4. Outputs the ready-to-distribute .msi installer in target\dx\management\bundle\windows\msi\.
@@ -32,7 +32,6 @@ node (Join-Path $PSScriptRoot "scripts\generate_empty_db.js") "management.db"
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Failed to generate management.db."
 }
-Copy-Item "management.db" "empty.db" -Force
 
 # 3. Build and package .msi installer
 $mode = if ($DebugBuild) { "" } else { "--release" }

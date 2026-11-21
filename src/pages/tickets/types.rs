@@ -190,6 +190,67 @@ impl TicketItem {
         item
     }
 
+    pub fn from_server_ticket(t: &crate::api::ServerTicket, local_id: i64) -> Self {
+        let raw_kanban = if !t.kanban_state.trim().is_empty() {
+            &t.kanban_state
+        } else if !t.stage.trim().is_empty() {
+            &t.stage
+        } else {
+            &t.status
+        };
+        let kanban_state = crate::sync::from_sheet_status(raw_kanban).to_string();
+        let stage = if !t.stage.trim().is_empty() {
+            t.stage.clone()
+        } else {
+            "Triage".to_string()
+        };
+        let status = if !t.status.trim().is_empty() {
+            t.status.clone()
+        } else if kanban_state == "Completed" || kanban_state == "Cancelled" {
+            "Closed".to_string()
+        } else {
+            "Open".to_string()
+        };
+
+        let resolved_my_activity = resolve_ticket_activity_all(&t.my_activity, &t.stage, &t.activities, "");
+        let my_activity = if !resolved_my_activity.is_empty() {
+            resolved_my_activity
+        } else {
+            t.my_activity.clone()
+        };
+
+        let mut item = Self::new(
+            local_id,
+            &t.employee_code,
+            &t.email_address,
+            &t.category,
+            &t.subject,
+            &t.problem_description,
+            &t.attachment_name,
+            &t.attachment_url,
+            &t.priority,
+            &t.assigned_to,
+            &t.customer,
+            t.time_spent,
+            &t.activities,
+            &my_activity,
+            &t.deadline,
+            &t.sla_status,
+            &t.sla_deadline,
+            &t.rating_avg_text,
+            &kanban_state,
+            &stage,
+            &status,
+            &t.created_on,
+            &t.last_updated_on,
+        );
+        item.tag = my_activity;
+        if !t.ticket_id.trim().is_empty() {
+            item.id = t.ticket_id.clone();
+        }
+        item
+    }
+
     pub fn emp_code_only(&self) -> &str {
         if let Some(idx) = self.employee_code.find('(') {
             self.employee_code[..idx].trim()

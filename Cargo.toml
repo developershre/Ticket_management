@@ -19,6 +19,7 @@ tokio = { version = "1", features = ["time", "rt", "sync"] }
 reqwest = { version = "0.12", features = ["json"] }
 futures-channel = "0.3"
 futures-util = "0.3"
+notify-rust = "4.19.0"
 
 [features]
 default = ["desktop"]

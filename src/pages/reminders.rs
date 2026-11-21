@@ -707,7 +707,7 @@ pub fn Reminders() -> Element {
             employee_name: emp_name.clone(),
             email_address: email_val.clone(),
             service_category: cat_val.clone(),
-            reminder_message: reminder_msg,
+            reminder_message: reminder_msg.clone(),
             send_at: final_send_at,
             status: "Pending".to_string(),
             email_sent_at: "Not sent yet".to_string(),
@@ -747,7 +747,7 @@ pub fn Reminders() -> Element {
                     "Reminder Scheduled",
                     format!("Reminder for {emp_name} ({emp_code}) created successfully"),
                 );
-                crate::notifications::notify_new_reminder(&format!("REM-{new_id}"), &msg_val, &emp_name);
+                crate::notifications::notify_new_reminder(&format!("REM-{new_id}"), &reminder_msg, &emp_name);
                 is_create_open.set(false);
             }
             Err(e) => {

@@ -17,3 +17,8 @@ management.db-wal
 .env
 
 tools/*
+dist/
+*.deb
+*.rpm
+*.pkg.tar.zst
+*.tar.gz

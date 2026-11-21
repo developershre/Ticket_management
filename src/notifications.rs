@@ -8,6 +8,8 @@ use std::collections::HashSet;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use notify_rust::{Notification, Timeout, Urgency};
+
 /// Icon type for native notification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NotificationIcon {
@@ -45,14 +47,15 @@ fn should_notify(key: &str) -> bool {
     set.insert(key.to_string())
 }
 
-/// Checks whether Windows desktop notifications are enabled in user settings.
+/// Checks whether desktop OS notifications are enabled in user settings.
 pub fn is_windows_notifications_enabled() -> bool {
     crate::db::sync_meta_get("ui_windows_notifications")
         .map(|v| v != "false")
         .unwrap_or(true)
 }
 
-/// Simple RFC 4648 standard base64 encoder to avoid external crate dependencies.
+/// Simple RFC 4648 standard base64 encoder for Windows PowerShell fallback.
+#[allow(dead_code)]
 fn to_base64(bytes: &[u8]) -> String {
     const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
@@ -77,50 +80,82 @@ fn to_base64(bytes: &[u8]) -> String {
     out
 }
 
-/// Dispatches an OS notification to Windows. Runs asynchronously on a separate thread.
-pub fn send_windows_notification(title: &str, body: &str, icon: NotificationIcon) {
+#[cfg(target_os = "windows")]
+#[allow(dead_code)]
+fn fallback_powershell_toast(title: &str, body: &str, icon: NotificationIcon) {
+    let t_b64 = to_base64(title.as_bytes());
+    let b_b64 = to_base64(body.as_bytes());
+    let icon_str = icon.as_str();
+
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let script = format!(
+        r#"
+        Add-Type -AssemblyName System.Windows.Forms
+        $t = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('{t_b64}'))
+        $b = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('{b_b64}'))
+        $n = New-Object System.Windows.Forms.NotifyIcon
+        $n.Icon = [System.Drawing.SystemIcons]::Information
+        $n.BalloonTipTitle = $t
+        $n.BalloonTipText = $b
+        $n.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::{icon_str}
+        $n.Visible = $True
+        $n.ShowBalloonTip(5000)
+        Start-Sleep -Milliseconds 450
+        $n.Dispose()
+        "#
+    );
+
+    let _ = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+}
+
+/// Dispatches an actual OS notification directly to the Windows Notification Center / Action Center,
+/// Linux D-Bus desktop notification server, or macOS notification center using `notify-rust`.
+/// Runs asynchronously in a background thread so it never blocks the UI.
+pub fn send_desktop_notification(title: &str, body: &str, icon: NotificationIcon) {
     if !is_windows_notifications_enabled() {
         return;
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        let t_b64 = to_base64(title.as_bytes());
-        let b_b64 = to_base64(body.as_bytes());
-        let icon_str = icon.as_str();
+    let title_owned = title.to_string();
+    let body_owned = body.to_string();
 
-        std::thread::spawn(move || {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
+    std::thread::spawn(move || {
+        let urgency = match icon {
+            NotificationIcon::Info => Urgency::Normal,
+            NotificationIcon::Warning => Urgency::Normal,
+            NotificationIcon::Error => Urgency::Critical,
+        };
 
-            let script = format!(
-                r#"
-                Add-Type -AssemblyName System.Windows.Forms
-                $t = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('{t_b64}'))
-                $b = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('{b_b64}'))
-                $n = New-Object System.Windows.Forms.NotifyIcon
-                $n.Icon = [System.Drawing.SystemIcons]::Information
-                $n.BalloonTipTitle = $t
-                $n.BalloonTipText = $b
-                $n.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::{icon_str}
-                $n.Visible = $True
-                $n.ShowBalloonTip(5000)
-                Start-Sleep -Milliseconds 450
-                $n.Dispose()
-                "#
-            );
+        let mut n = Notification::new();
+        n.appname("BPSL IT Support")
+            .summary(&title_owned)
+            .body(&body_owned)
+            .urgency(urgency)
+            .timeout(Timeout::Milliseconds(6000));
 
-            let _ = std::process::Command::new("powershell")
-                .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &script])
-                .creation_flags(CREATE_NO_WINDOW)
-                .output();
-        });
-    }
+        #[cfg(target_os = "windows")]
+        {
+            n.app_id("BPSL.ITSupport");
+        }
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        println!("[desktop-notification] {title}: {body}");
-    }
+        if let Err(e) = n.show() {
+            eprintln!("[desktop-notification] notify-rust error: {e}");
+            #[cfg(target_os = "windows")]
+            {
+                fallback_powershell_toast(&title_owned, &body_owned, icon);
+            }
+        }
+    });
+}
+
+/// Dispatches an OS notification. Backward-compatible alias for `send_desktop_notification`.
+pub fn send_windows_notification(title: &str, body: &str, icon: NotificationIcon) {
+    send_desktop_notification(title, body, icon);
 }
 
 /// Helper: Notify when a single new ticket is detected from remote sync or created.
@@ -220,5 +255,27 @@ pub fn parse_timestamp_to_epoch(raw: &str) -> Option<i64> {
         Some(civil_epoch - crate::state::LOCAL_TZ_OFFSET_SECS)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_notification_deduplication() {
+        assert!(should_notify("test_key_unique_abc_1"));
+        assert!(!should_notify("test_key_unique_abc_1"));
+    }
+
+    #[test]
+    fn test_notification_builder_configuration() {
+        let mut n = Notification::new();
+        n.appname("BPSL IT Support")
+            .summary("Test Ticket Alert")
+            .body("Ticket #IT-0145 assigned")
+            .urgency(Urgency::Normal)
+            .timeout(Timeout::Milliseconds(4000));
+        // Builds without panic
     }
 }
