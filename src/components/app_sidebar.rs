@@ -19,16 +19,8 @@ use crate::Route;
 pub fn AppSidebar() -> Element {
     let toast = try_use_context::<crate::components::ui::toast::ToastState>();
     let db_sync = try_use_context::<Signal<crate::state::AppDbRevision>>();
-    // Read every badge count in one pass; touching `db_sync` registers
-    // this component for reloads when the sync worker bumps the revision.
-    let (
-        notes_count,
-        tickets_count,
-        employees_count,
-        reminders_count,
-        active_sheet_id,
-        sheet_sources,
-    ) = {
+    // Read badge counts memoized so routing transitions don't re-query SQLite
+    let sidebar_data = use_memo(move || {
         if let Some(sync) = db_sync {
             let _ = sync();
         }
@@ -40,7 +32,15 @@ pub fn AppSidebar() -> Element {
             crate::db::get_active_sheet_source_id(),
             crate::db::get_all_sheet_sources(),
         )
-    };
+    });
+    let (
+        notes_count,
+        tickets_count,
+        employees_count,
+        reminders_count,
+        active_sheet_id,
+        sheet_sources,
+    ) = sidebar_data();
 
     let count_badge = |n: usize| {
         if n > 0 {
@@ -49,11 +49,6 @@ pub fn AppSidebar() -> Element {
             None
         }
     };
-
-    let mut active_sheet_sig = use_signal(|| active_sheet_id.clone());
-    if *active_sheet_sig.read() != active_sheet_id {
-        active_sheet_sig.set(active_sheet_id.clone());
-    }
 
     rsx! {
         Sidebar {

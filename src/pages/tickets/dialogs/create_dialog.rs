@@ -137,10 +137,13 @@ pub fn CreateTicketDialog(mut props: CreateTicketDialogProps) -> Element {
         } else {
             stage_raw.trim().to_string()
         };
-        let status_val = if kanban_val == "Completed" || kanban_val == "Cancelled" {
-            "Closed".to_string()
-        } else {
-            "Open".to_string()
+        let status_val = match kanban_val.as_str() {
+            "Completed" => "Closed".to_string(),
+            "Cancelled" => "Cancelled".to_string(),
+            "InProgress" => "InProgress".to_string(),
+            "Hold" => "Hold".to_string(),
+            "Solved" => "Solved".to_string(),
+            _ => "Pending".to_string(),
         };
 
         let payload = serde_json::json!({

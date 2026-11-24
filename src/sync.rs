@@ -911,13 +911,15 @@ pub fn to_sheet_stage(val: &str) -> &'static str {
     }
 }
 
-/// Maps internal status to Google Sheet's status column ("Open", "In Progress", "On Hold", "Closed").
+/// Maps internal status to Google Sheet's status column ("Open", "In Progress", "On Hold", "Solved", "Closed", "Cancelled").
 pub fn to_sheet_status(val: &str) -> &'static str {
     match val {
         "Pending" | "Open" | "To Do" | "Todo" | "New" => "Open",
         "InProgress" | "In Progress" | "In-Progress" => "In Progress",
         "Onhold" | "On Hold" | "On-Hold" | "Hold" => "On Hold",
-        "Completed" | "Done" | "Resolved" | "Closed" => "Closed",
+        "Solved" => "Solved",
+        "Completed" | "Done" | "Resolved" | "Closed" | "Solved(closed)" | "Solved (closed)" => "Closed",
+        "Cancelled" | "Canceled" | "Rejected" | "Duplicate" => "Cancelled",
         other => match other {
             s if s.eq_ignore_ascii_case("pending")
                 || s.eq_ignore_ascii_case("open")
@@ -928,14 +930,18 @@ pub fn to_sheet_status(val: &str) -> &'static str {
             s if s.eq_ignore_ascii_case("inprogress") || s.eq_ignore_ascii_case("in progress") => {
                 "In Progress"
             }
-            s if s.eq_ignore_ascii_case("onhold") || s.eq_ignore_ascii_case("on hold") => "On Hold",
+            s if s.eq_ignore_ascii_case("onhold") || s.eq_ignore_ascii_case("on hold") || s.eq_ignore_ascii_case("hold") => "On Hold",
+            s if s.eq_ignore_ascii_case("solved") => "Solved",
             s if s.eq_ignore_ascii_case("completed")
                 || s.eq_ignore_ascii_case("done")
                 || s.eq_ignore_ascii_case("resolved")
-                || s.eq_ignore_ascii_case("closed") =>
+                || s.eq_ignore_ascii_case("closed")
+                || s.eq_ignore_ascii_case("solved(closed)")
+                || s.eq_ignore_ascii_case("solved (closed)") =>
             {
                 "Closed"
             }
+            s if s.eq_ignore_ascii_case("cancelled") || s.eq_ignore_ascii_case("canceled") => "Cancelled",
             _ => "Open",
         },
     }
@@ -1020,21 +1026,65 @@ pub fn to_bpsl_stage(val: &str) -> &'static str {
     to_bpsl_kanban_state(val)
 }
 
-fn to_bpsl_status(val: &str) -> &'static str {
+pub fn to_bpsl_status(val: &str) -> &'static str {
     let trimmed = val.trim();
-    if trimmed.eq_ignore_ascii_case("closed")
-        || trimmed.eq_ignore_ascii_case("close")
-        || trimmed.eq_ignore_ascii_case("completed")
-        || trimmed.eq_ignore_ascii_case("done")
-        || trimmed.eq_ignore_ascii_case("resolved")
-        || trimmed.eq_ignore_ascii_case("solved(closed)")
-        || trimmed.eq_ignore_ascii_case("solved (closed)")
-        || trimmed.eq_ignore_ascii_case("cancelled")
-        || trimmed.eq_ignore_ascii_case("canceled")
-    {
-        "Closed"
-    } else {
-        "Open"
+    match trimmed {
+        "Pending" | "Open" | "To Do" | "Todo" | "New" => "Pending",
+        "InProgress" | "In Progress" | "In-Progress" | "Investigation" => "InProgress",
+        "Hold" | "On Hold" | "Onhold" | "On-Hold" | "Blocked" => "Hold",
+        "Solved" | "Assigned" => "Solved",
+        "Completed" | "Done" | "Resolution" | "Resolved" | "Closed" | "Close"
+        | "Solved(closed)" | "Solved (closed)" => "Closed",
+        "Cancelled" | "Canceled" | "Rejected" | "Duplicate" => "Cancelled",
+        other => match other {
+            s if s.eq_ignore_ascii_case("pending")
+                || s.eq_ignore_ascii_case("open")
+                || s.eq_ignore_ascii_case("new")
+                || s.eq_ignore_ascii_case("to do")
+                || s.eq_ignore_ascii_case("todo") =>
+            {
+                "Pending"
+            }
+            s if s.eq_ignore_ascii_case("in progress")
+                || s.eq_ignore_ascii_case("inprogress")
+                || s.eq_ignore_ascii_case("in-progress")
+                || s.eq_ignore_ascii_case("investigation") =>
+            {
+                "InProgress"
+            }
+            s if s.eq_ignore_ascii_case("hold")
+                || s.eq_ignore_ascii_case("on hold")
+                || s.eq_ignore_ascii_case("onhold")
+                || s.eq_ignore_ascii_case("on-hold")
+                || s.eq_ignore_ascii_case("blocked") =>
+            {
+                "Hold"
+            }
+            s if s.eq_ignore_ascii_case("solved")
+                || s.eq_ignore_ascii_case("assigned") =>
+            {
+                "Solved"
+            }
+            s if s.eq_ignore_ascii_case("solved(closed)")
+                || s.eq_ignore_ascii_case("solved (closed)")
+                || s.eq_ignore_ascii_case("completed")
+                || s.eq_ignore_ascii_case("done")
+                || s.eq_ignore_ascii_case("resolution")
+                || s.eq_ignore_ascii_case("resolved")
+                || s.eq_ignore_ascii_case("closed")
+                || s.eq_ignore_ascii_case("close") =>
+            {
+                "Closed"
+            }
+            s if s.eq_ignore_ascii_case("cancelled")
+                || s.eq_ignore_ascii_case("canceled")
+                || s.eq_ignore_ascii_case("rejected")
+                || s.eq_ignore_ascii_case("duplicate") =>
+            {
+                "Cancelled"
+            }
+            _ => "Pending",
+        },
     }
 }
 
@@ -1236,10 +1286,8 @@ async fn pull(client: &ApiClient) -> Result<usize, ApiError> {
 
         t_norm.status = if !t.status.trim().is_empty() {
             to_bpsl_status(&t.status).to_string()
-        } else if normalized_col == "Completed" || normalized_col == "Cancelled" {
-            "Closed".to_string()
         } else {
-            "Open".to_string()
+            to_bpsl_status(&normalized_col).to_string()
         };
 
         if !t.employee_name.trim().is_empty() {
@@ -1495,9 +1543,9 @@ pub async fn pull_tickets_now() -> Result<usize, ApiError> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
 
-    // If tickets were pulled literally within the last 3 seconds, avoid hammering Google Apps Script;
+    // If tickets were pulled within MIN_PULL_GAP_SECS, avoid hammering Google Apps Script;
     // ensure status is accurately reflected as synced/idle.
-    if now.saturating_sub(last_pull) < 3 {
+    if now.saturating_sub(last_pull) < MIN_PULL_GAP_SECS {
         let pending = db::pending_op_count();
         let conflicts = db::unresolved_conflict_count();
         let failed_err = db::latest_failed_error();
@@ -1581,7 +1629,7 @@ pub async fn pull_employees_now() -> Result<usize, ApiError> {
     let last_emp_pull: i64 = db::sync_meta_get("last_employee_pull_at")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    if now.saturating_sub(last_emp_pull) < 3 {
+    if now.saturating_sub(last_emp_pull) < 30 {
         return Ok(0);
     }
     let count = pull_employees(&client).await?;

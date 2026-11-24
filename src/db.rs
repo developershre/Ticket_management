@@ -581,57 +581,54 @@ pub fn init_database() -> Result<()> {
         [],
     )?;
 
-    // Seed Google Sheet configuration in sync_meta if not already present.
-    // If an existing .env is present, migrate its settings into the database.
-    // If not, default to the built-in REST endpoint. This allows the application
-    // to run 100% standalone from the single SQLite database.
-    let existing_url: Option<String> = conn
-        .query_row(
-            "SELECT value FROM sync_meta WHERE key = 'system_api_base_url'",
-            [],
-            |r| r.get(0),
-        )
-        .optional()
-        .ok()
-        .flatten();
+    // If an existing .env is present with custom credentials, migrate its settings into the database.
+    // If not, leave sync_meta completely empty (0 rows) so the bundled database has no pre-entered data or settings.
+    let (dot_url, dot_key, dot_emp, dot_proto) = crate::api::ApiConfig::read_dotenv_values();
+    if dot_url.is_some() || dot_key.is_some() || dot_emp.is_some() || dot_proto.is_some() {
+        let existing_url: Option<String> = conn
+            .query_row(
+                "SELECT value FROM sync_meta WHERE key = 'system_api_base_url'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .ok()
+            .flatten();
 
-    if existing_url.is_none() || existing_url.as_deref() == Some("") {
-        let (dot_url, dot_key, dot_emp, dot_proto) = crate::api::ApiConfig::read_dotenv_values();
-        let base_url = dot_url.unwrap_or_else(|| DEFAULT_REST_SHEET_URL.to_string());
-        let _ = conn.execute(
-            "INSERT INTO sync_meta (key, value) VALUES ('system_api_base_url', ?1) \
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![base_url],
-        );
-        if let Some(key) = dot_key {
-            if !key.trim().is_empty() {
+        if existing_url.is_none() || existing_url.as_deref() == Some("") {
+            if let Some(base_url) = dot_url {
                 let _ = conn.execute(
-                    "INSERT INTO sync_meta (key, value) VALUES ('system_api_key', ?1) \
+                    "INSERT INTO sync_meta (key, value) VALUES ('system_api_base_url', ?1) \
                      ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                    params![key],
+                    params![base_url],
+                );
+            }
+            if let Some(key) = dot_key {
+                if !key.trim().is_empty() {
+                    let _ = conn.execute(
+                        "INSERT INTO sync_meta (key, value) VALUES ('system_api_key', ?1) \
+                         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        params![key],
+                    );
+                }
+            }
+            if let Some(emp) = dot_emp {
+                if !emp.trim().is_empty() {
+                    let _ = conn.execute(
+                        "INSERT INTO sync_meta (key, value) VALUES ('system_employee_code', ?1) \
+                         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        params![emp],
+                    );
+                }
+            }
+            if let Some(proto) = dot_proto {
+                let _ = conn.execute(
+                    "INSERT INTO sync_meta (key, value) VALUES ('system_api_protocol', ?1) \
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![proto],
                 );
             }
         }
-        if let Some(emp) = dot_emp {
-            if !emp.trim().is_empty() {
-                let _ = conn.execute(
-                    "INSERT INTO sync_meta (key, value) VALUES ('system_employee_code', ?1) \
-                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                    params![emp],
-                );
-            }
-        }
-        let proto = dot_proto.unwrap_or_else(|| "rest".to_string());
-        let _ = conn.execute(
-            "INSERT INTO sync_meta (key, value) VALUES ('system_api_protocol', ?1) \
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![proto],
-        );
-        let _ = conn.execute(
-            "INSERT INTO sync_meta (key, value) VALUES ('active_sheet_source_id', 'rest') \
-             ON CONFLICT(key) DO NOTHING",
-            [],
-        );
     }
 
     let _ = backfill_resolved_ticket_activities(&conn);
@@ -768,16 +765,14 @@ pub fn get_all_tickets() -> Vec<DbTicket> {
 /// Updates the kanban_state, status, and last_updated_on of a ticket in `tickets` table without overwriting stage.
 pub fn update_ticket_status(ticket_id: i64, new_kanban_state: &str) -> Result<()> {
     let conn = get_connection()?;
-    let new_status = if new_kanban_state.eq_ignore_ascii_case("Completed")
-        || new_kanban_state.eq_ignore_ascii_case("Solved(closed)")
-        || new_kanban_state.eq_ignore_ascii_case("Solved (closed)")
-        || new_kanban_state.eq_ignore_ascii_case("Closed")
-        || new_kanban_state.eq_ignore_ascii_case("Cancelled")
-        || new_kanban_state.eq_ignore_ascii_case("Canceled")
-    {
-        "Closed"
-    } else {
-        "Open"
+    let normalized = crate::sync::from_sheet_status(new_kanban_state);
+    let new_status = match normalized {
+        "InProgress" => "InProgress",
+        "Hold" => "Hold",
+        "Solved" => "Solved",
+        "Completed" => "Closed",
+        "Cancelled" => "Cancelled",
+        _ => "Pending",
     };
 
     conn.execute(
@@ -786,7 +781,7 @@ pub fn update_ticket_status(ticket_id: i64, new_kanban_state: &str) -> Result<()
         SET kanban_state = ?1, status = ?2, last_updated_on = datetime('now', '+330 minutes')
         WHERE ticket_id = ?3
         "#,
-        params![new_kanban_state, new_status, ticket_id],
+        params![normalized, new_status, ticket_id],
     )?;
     Ok(())
 }
@@ -799,21 +794,17 @@ pub fn update_ticket_kanban_and_stage(
     new_status: Option<&str>,
 ) -> Result<()> {
     let conn = get_connection()?;
+    let normalized = crate::sync::from_sheet_status(new_kanban_state);
     let status_str = match new_status {
         Some(s) => s.to_string(),
-        None => {
-            if new_kanban_state.eq_ignore_ascii_case("Completed")
-                || new_kanban_state.eq_ignore_ascii_case("Solved(closed)")
-                || new_kanban_state.eq_ignore_ascii_case("Solved (closed)")
-                || new_kanban_state.eq_ignore_ascii_case("Closed")
-                || new_kanban_state.eq_ignore_ascii_case("Cancelled")
-                || new_kanban_state.eq_ignore_ascii_case("Canceled")
-            {
-                "Closed".to_string()
-            } else {
-                "Open".to_string()
-            }
-        }
+        None => match normalized {
+            "InProgress" => "InProgress".to_string(),
+            "Hold" => "Hold".to_string(),
+            "Solved" => "Solved".to_string(),
+            "Completed" => "Closed".to_string(),
+            "Cancelled" => "Cancelled".to_string(),
+            _ => "Pending".to_string(),
+        },
     };
 
     if let Some(stg) = new_stage {
@@ -823,7 +814,7 @@ pub fn update_ticket_kanban_and_stage(
             SET kanban_state = ?1, stage = ?2, status = ?3, last_updated_on = datetime('now', '+330 minutes')
             WHERE ticket_id = ?4
             "#,
-            params![new_kanban_state, stg, status_str, ticket_id],
+            params![normalized, stg, status_str, ticket_id],
         )?;
     } else {
         conn.execute(
@@ -832,7 +823,7 @@ pub fn update_ticket_kanban_and_stage(
             SET kanban_state = ?1, status = ?2, last_updated_on = datetime('now', '+330 minutes')
             WHERE ticket_id = ?3
             "#,
-            params![new_kanban_state, status_str, ticket_id],
+            params![normalized, status_str, ticket_id],
         )?;
     }
     Ok(())

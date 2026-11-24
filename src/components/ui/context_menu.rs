@@ -95,19 +95,37 @@ const CONTENT_OPEN_JS: &str = r#"
 var uid="__UID__";
 var m=document.querySelector('[data-popup="'+uid+'"]');
 if(!m)return;
-var x=parseFloat(m.style.left), y=parseFloat(m.style.top);
-if(!isFinite(x))x=0;
-if(!isFinite(y))y=0;
-var w=m.offsetWidth, h=m.offsetHeight, pad=8;
-var vw=window.innerWidth, vh=window.innerHeight;
-if(x+w>vw-pad)x=Math.max(pad, vw-w-pad);
-if(y+h>vh-pad)y=Math.max(pad, vh-h-pad);
-if(x<pad)x=pad;
-if(y<pad)y=pad;
-m.style.left=x+"px";
-m.style.top=y+"px";
-var first=m.querySelector('[role="menuitem"]');
+
+var targetX=parseFloat(m.getAttribute("data-target-x"));
+var targetY=parseFloat(m.getAttribute("data-target-y"));
+if(!isFinite(targetX))targetX=parseFloat(m.style.left)||0;
+if(!isFinite(targetY))targetY=parseFloat(m.style.top)||0;
+
+var curStyleLeft=parseFloat(m.style.left)||0;
+var curStyleTop=parseFloat(m.style.top)||0;
+
+// Measure containing block offset
+var rect=m.getBoundingClientRect();
+var ox=rect.left-curStyleLeft;
+var oy=rect.top-curStyleTop;
+
+var w=m.offsetWidth||192;
+var h=m.offsetHeight||220;
+var pad=8;
+var vw=window.innerWidth;
+var vh=window.innerHeight;
+
+if(targetX+w>vw-pad)targetX=Math.max(pad,vw-w-pad);
+if(targetY+h>vh-pad)targetY=Math.max(pad,vh-h-pad);
+if(targetX<pad)targetX=pad;
+if(targetY<pad)targetY=pad;
+
+m.style.left=(targetX-ox)+"px";
+m.style.top=(targetY-oy)+"px";
+
+var first=m.querySelector('[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"]');
 if(first)first.focus();
+
 if(window["__ctx_kb_"+uid])return;
 function close(){
   var b=document.getElementById("__CLOSE__");
@@ -197,10 +215,12 @@ pub fn ContextMenuContent(props: ContextMenuContentProps) -> Element {
         return rsx! {};
     }
 
+    let target_x = (state.x)();
+    let target_y = (state.y)();
     let style = format!(
         "position: fixed; left: {}px; top: {}px; z-index: 9999;",
-        (state.x)(),
-        (state.y)()
+        target_x,
+        target_y
     );
 
     rsx! {
@@ -226,9 +246,11 @@ pub fn ContextMenuContent(props: ContextMenuContentProps) -> Element {
             div {
                 "data-slot": "context-menu-content",
                 "data-popup": uid,
+                "data-target-x": "{target_x}",
+                "data-target-y": "{target_y}",
                 role: "menu",
                 style: "{style}",
-                class: "min-w-44 max-h-[var(--available-height,80vh)] overflow-visible rounded-md border border-border/80 bg-popover/95 p-1 text-popover-foreground shadow-md backdrop-blur-sm ring-1 ring-foreground/5 outline-none animate-in fade-in-0 zoom-in-95 duration-100 {props.class}",
+                class: "min-w-40 max-h-[var(--available-height,80vh)] overflow-visible rounded-md border border-border/80 bg-popover/95 p-1 text-popover-foreground shadow-md backdrop-blur-sm ring-1 ring-foreground/5 outline-none animate-in fade-in-0 duration-75 {props.class}",
                 onclick: move |event| event.stop_propagation(),
                 oncontextmenu: move |event| event.prevent_default(),
                 {props.children}
@@ -277,7 +299,7 @@ pub fn ContextMenuLabel(props: ContextMenuLabelProps) -> Element {
     rsx! {
         div {
             "data-slot": "context-menu-label",
-            class: "px-2 py-1.5 text-xs font-semibold text-foreground {inset_class} {props.class}",
+            class: "px-2 py-1 text-xs font-semibold text-foreground {inset_class} {props.class}",
             {props.children}
         }
     }
@@ -326,7 +348,7 @@ pub fn ContextMenuItem(props: ContextMenuItemProps) -> Element {
             role: "menuitem",
             tabindex: if props.disabled { "-1" } else { "0" },
             "aria-disabled": "{props.disabled}",
-            class: "relative flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs outline-none select-none transition-colors duration-100 {inset_class} {variant_class} {props.class} {disabled_class}",
+            class: "relative flex items-center gap-1.5 rounded-sm px-2 py-1 text-xs outline-none select-none transition-colors duration-100 {inset_class} {variant_class} {props.class} {disabled_class}",
             onclick: move |_| {
                 if !props.disabled {
                     props.on_select.call(());
@@ -354,7 +376,7 @@ pub fn ContextMenuSeparator(props: ContextMenuSeparatorProps) -> Element {
         div {
             "data-slot": "context-menu-separator",
             role: "separator",
-            class: "-mx-1 my-1 h-px bg-border/60 {props.class}",
+            class: "-mx-1 my-0.5 h-px bg-border/60 {props.class}",
         }
     }
 }
@@ -414,7 +436,7 @@ pub fn ContextMenuCheckboxItem(props: ContextMenuCheckboxItemProps) -> Element {
             "aria-checked": "{props.checked}",
             "aria-disabled": "{props.disabled}",
             tabindex: "0",
-            class: "relative flex items-center gap-2 rounded-sm py-1.5 pr-8 pl-2 text-xs outline-none select-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground transition-colors duration-100 {inset_class} {disabled_class} {props.class}",
+            class: "relative flex items-center gap-1.5 rounded-sm py-1 pr-7 pl-2 text-xs outline-none select-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground transition-colors duration-100 {inset_class} {disabled_class} {props.class}",
             onclick: move |_| {
                 if !props.disabled {
                     props.on_checked_change.call(!props.checked);
@@ -493,7 +515,7 @@ pub fn ContextMenuRadioItem(props: ContextMenuRadioItemProps) -> Element {
             "aria-checked": "{selected}",
             "aria-disabled": "{props.disabled}",
             tabindex: "0",
-            class: "relative flex items-center gap-2 rounded-sm py-1.5 pr-8 pl-2 text-xs outline-none select-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground transition-colors duration-100 {disabled_class} {props.class}",
+            class: "relative flex items-center gap-1.5 rounded-sm py-1 pr-7 pl-2 text-xs outline-none select-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground transition-colors duration-100 {disabled_class} {props.class}",
             onclick: move |_| {
                 if !props.disabled {
                     group_value.set(props.value.clone());
@@ -561,12 +583,16 @@ var r=m.getBoundingClientRect();
 if(r.right > window.innerWidth - 8){
     m.style.left="auto";
     m.style.right="100%";
-    m.style.marginRight="4px";
+    m.style.marginRight="2px";
     m.style.marginLeft="0px";
 }
 if(r.bottom > window.innerHeight - 8){
     var diff = r.bottom - (window.innerHeight - 8);
-    m.style.top = (-diff) + "px";
+    var newTop = -diff;
+    if(r.top - diff < 8){
+        newTop = -(r.top - 8);
+    }
+    m.style.top = newTop + "px";
 }
 })();
 "#;
@@ -592,7 +618,7 @@ pub fn ContextMenuSubTrigger(props: ContextMenuSubTriggerProps) -> Element {
             role: "menuitem",
             tabindex: "0",
             "aria-expanded": if (sub.open)() { "true" } else { "false" },
-            class: "flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-xs outline-none select-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground transition-colors duration-100 {inset_class} {props.class}",
+            class: "flex w-full cursor-pointer items-center gap-1.5 rounded-sm px-2 py-1 text-xs outline-none select-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground transition-colors duration-100 {inset_class} {props.class}",
             onmouseenter: move |_| sub.open.set(true),
             onclick: move |e: MouseEvent| {
                 e.stop_propagation();
@@ -644,7 +670,7 @@ pub fn ContextMenuSubContent(props: ContextMenuSubContentProps) -> Element {
             "data-slot": "context-menu-sub-content",
             "data-popup": uid,
             role: "menu",
-            class: "absolute left-full top-0 ml-1 z-50 min-w-40 max-h-72 overflow-y-auto rounded-md border border-border/80 bg-popover/95 p-1 text-popover-foreground shadow-xl backdrop-blur-md ring-1 ring-foreground/5 outline-none animate-in fade-in-0 zoom-in-95 duration-100 {props.class}",
+            class: "absolute left-full top-0 ml-0.5 z-50 min-w-36 max-h-72 overflow-y-auto rounded-md border border-border/80 bg-popover/95 p-1 text-popover-foreground shadow-xl backdrop-blur-md ring-1 ring-foreground/5 outline-none animate-in fade-in-0 duration-75 {props.class}",
             onclick: move |event| event.stop_propagation(),
             oncontextmenu: move |event| event.prevent_default(),
             {props.children}

@@ -36,7 +36,7 @@ pub fn TicketContextMenu(props: TicketContextMenuProps) -> Element {
     rsx! {
         ContextMenu {
             ContextMenuTrigger { class: "contents", {props.children} }
-            ContextMenuContent { class: "w-56 rounded-md shadow-xl border-border/80 bg-popover/95 backdrop-blur-md",
+            ContextMenuContent { class: "w-48 rounded-md shadow-xl border-border/80 bg-popover/95 backdrop-blur-md",
                 ContextMenuLabel {
                     div { class: "flex items-center justify-between gap-2",
                         span { class: "font-mono font-bold text-foreground text-xs", "{t_id}" }
@@ -258,7 +258,7 @@ pub fn TableFloatingContextMenu(props: TableFloatingContextMenuProps) -> Element
     });
 
     rsx! {
-        ContextMenuContent { class: "w-56 rounded-md shadow-xl border-border/80 bg-popover/95 backdrop-blur-md",
+        ContextMenuContent { class: "w-48 rounded-md shadow-xl border-border/80 bg-popover/95 backdrop-blur-md",
             ContextMenuLabel {
                 div { class: "flex items-center justify-between gap-2",
                     span { class: "font-mono font-bold text-foreground text-xs", "{t_id}" }
@@ -472,7 +472,7 @@ pub fn ColumnContextMenu(props: ColumnContextMenuProps) -> Element {
     rsx! {
         ContextMenu {
             ContextMenuTrigger { class: "contents", {props.children} }
-            ContextMenuContent { class: "w-56 rounded-md shadow-xl border-border/80 bg-popover/95 backdrop-blur-md",
+            ContextMenuContent { class: "w-48 rounded-md shadow-xl border-border/80 bg-popover/95 backdrop-blur-md",
                 ContextMenuLabel {
                     span { class: "font-semibold text-foreground text-xs", "View: {col_disp}" }
                 }
@@ -551,6 +551,121 @@ pub fn ColumnContextMenu(props: ColumnContextMenuProps) -> Element {
                     on_select: move |_| props.on_clear_filters.call(()),
                     "Clear Column Filters"
                 }
+            }
+        }
+    }
+}
+
+#[derive(Props, Clone, PartialEq)]
+pub struct ColumnFloatingContextMenuProps {
+    pub column: String,
+    pub title: String,
+    pub is_custom: bool,
+    #[props(default)]
+    pub all_targets: Vec<(String, String)>,
+    pub open: Signal<bool>,
+    pub x: Signal<f64>,
+    pub y: Signal<f64>,
+    pub on_quick_add: EventHandler<String>,
+    pub on_filter_column: EventHandler<String>,
+    pub on_clear_filters: EventHandler<()>,
+    pub on_hide_column: EventHandler<String>,
+    pub on_delete_column: EventHandler<(String, String)>,
+}
+
+#[component]
+pub fn ColumnFloatingContextMenu(props: ColumnFloatingContextMenuProps) -> Element {
+    let mut state = use_context::<TicketContextState>();
+    let toast = use_context::<ToastState>();
+    let col = props.column;
+    let col_disp = props.title;
+
+    use_context_provider(|| crate::components::ui::context_menu::ContextMenuState {
+        open: props.open,
+        x: props.x,
+        y: props.y,
+    });
+
+    rsx! {
+        ContextMenuContent { class: "w-48 rounded-md shadow-xl border-border/80 bg-popover/95 backdrop-blur-md",
+            ContextMenuLabel {
+                span { class: "font-semibold text-foreground text-xs", "View: {col_disp}" }
+            }
+            ContextMenuSeparator {}
+            ContextMenuItem {
+                on_select: {
+                    let col_c = col.clone();
+                    let handler = props.on_quick_add;
+                    move |_| handler.call(col_c.clone())
+                },
+                PlusIcon { class: "size-3.5 text-primary" }
+                "Quick Add Ticket"
+            }
+            ContextMenuItem {
+                on_select: {
+                    let col_c = col.clone();
+                    let handler = props.on_filter_column;
+                    move |_| handler.call(col_c.clone())
+                },
+                FilterIcon { class: "size-3.5 text-muted-foreground" }
+                "Filter: Only {col_disp}"
+            }
+            ContextMenuItem {
+                on_select: {
+                    let col_c = col.clone();
+                    let handler = props.on_hide_column;
+                    move |_| handler.call(col_c.clone())
+                },
+                EyeOffIcon { class: "size-3.5 text-muted-foreground" }
+                "Hide This View"
+            }
+            if props.is_custom {
+                ContextMenuItem {
+                    on_select: {
+                        let col_c = col.clone();
+                        let d_name = col_disp.clone();
+                        let handler = props.on_delete_column;
+                        move |_| handler.call((col_c.clone(), d_name.clone()))
+                    },
+                    TrashIcon { class: "size-3.5 text-destructive" }
+                    "Delete Custom View"
+                }
+            }
+            if !props.all_targets.is_empty() {
+                ContextMenuSub {
+                    ContextMenuSubTrigger { "Move All Tickets To" }
+                    ContextMenuSubContent {
+                        for (target_id, target_label) in props.all_targets.iter() {
+                            {
+                                let is_current = target_id == &col;
+                                let from_c = col.clone();
+                                let to_c = target_id.clone();
+                                let target_lbl = target_label.clone();
+                                rsx! {
+                                    ContextMenuItem {
+                                        key: "move-all-{target_id}",
+                                        disabled: is_current,
+                                        on_select: move |_| {
+                                            state.move_column_tickets(&from_c, &to_c);
+                                            toast.info("Tickets Moved", format!("All tickets moved to {target_lbl}"));
+                                        },
+                                        div { class: "flex items-center justify-between w-full",
+                                            span { "{target_label}" }
+                                            if is_current {
+                                                span { class: "text-[10px] text-muted-foreground font-mono ml-auto", "current" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            ContextMenuSeparator {}
+            ContextMenuItem {
+                on_select: move |_| props.on_clear_filters.call(()),
+                "Clear Column Filters"
             }
         }
     }

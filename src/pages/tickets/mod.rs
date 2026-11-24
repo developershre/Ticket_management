@@ -21,7 +21,7 @@ pub use table_view::{ticket_columns, ticket_row_id, ticket_search_text};
 pub use types::{
     assignee_color_classes, get_assignee_initials, initial_tickets, load_custom_kanban_views,
     load_hide_empty_views, load_hidden_views, save_custom_kanban_views, save_hidden_views,
-    CustomKanbanView, KanbanViewDef, TicketContextState, TicketItem,
+    target_col_to_sheet_status, CustomKanbanView, KanbanViewDef, TicketContextState, TicketItem,
 };
 
 #[component]
@@ -446,6 +446,7 @@ pub fn Tickets() -> Element {
             }
         };
 
+        let (sheet_kb, sheet_st) = target_col_to_sheet_status(&col);
         let payload = serde_json::json!({
             "employee_code": employee,
             "email_address": email,
@@ -459,9 +460,9 @@ pub fn Tickets() -> Element {
             "activities": "Ticket created",
             "my_activity": "Initial triage & review",
             "sla_status": "Within SLA",
-            "kanban_state": col,
+            "kanban_state": sheet_kb,
             "stage": "Triage",
-            "status": "Open",
+            "status": sheet_st,
         });
 
         let sanitized = crate::sync::sanitize_ticket_payload(&client, &payload, true);

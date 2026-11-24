@@ -196,6 +196,13 @@ pub fn CalendarPage() -> Element {
 
         let mut entries = Vec::new();
 
+        // Pre-build department lookup map in memory (avoids hundreds of SQLite lookups)
+        let emp_dept_map: std::collections::HashMap<String, String> = crate::db::get_all_employees()
+            .into_iter()
+            .filter(|e| !e.emp_code.trim().is_empty())
+            .map(|e| (e.emp_code.trim().to_lowercase(), e.department))
+            .collect();
+
         // 1. Tickets
         let tickets = get_all_tickets();
         for t in tickets {
@@ -225,8 +232,7 @@ pub fn CalendarPage() -> Element {
             } else {
                 t.employee_code.trim()
             };
-            let emp_db = crate::db::find_employee_by_code(emp_clean);
-            let dept = emp_db.as_ref().map(|e| e.department.clone()).or_else(|| {
+            let dept = emp_dept_map.get(&emp_clean.to_lowercase()).cloned().or_else(|| {
                 if !t.customer.trim().is_empty() && t.customer.trim() != "Internal" {
                     Some(t.customer.trim().to_string())
                 } else {

@@ -5,5 +5,7 @@ pub mod multi_activity;
 
 pub use advanced_filter::{AdvancedFilterBar, AdvancedFilterState};
 pub use attachment_picker::{get_image_preview_url, AttachmentPicker};
-pub use context_menus::{ColumnContextMenu, TableFloatingContextMenu, TicketContextMenu};
+pub use context_menus::{
+    ColumnFloatingContextMenu, TableFloatingContextMenu, TicketContextMenu,
+};
 pub use multi_activity::MultiActivitySelector;

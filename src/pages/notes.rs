@@ -283,7 +283,26 @@ pub fn NotesPage() -> Element {
             .collect::<Vec<NoteItem>>()
     });
     let notes_data = notes_memo();
-    let all_employees = crate::db::get_all_employees();
+
+    let all_employees_memo = use_memo(move || {
+        let _ = local_revision();
+        if let Some(sync) = db_sync {
+            let _ = sync();
+        }
+        crate::db::get_all_employees()
+    });
+    let all_employees = all_employees_memo();
+
+    let emp_name_map = use_memo(move || {
+        let emps = all_employees_memo();
+        let mut map = std::collections::HashMap::new();
+        for e in emps.iter() {
+            if !e.emp_code.is_empty() {
+                map.insert(e.emp_code.trim().to_string(), e.emp_name.trim().to_string());
+            }
+        }
+        map
+    });
 
     let total_count = notes_data.len();
     let pinned_count = notes_data.iter().filter(|n| n.is_pinned).count();
@@ -297,13 +316,14 @@ pub fn NotesPage() -> Element {
     }
 
     // Filter by search query, category, and author
-    let mut filtered_notes: Vec<NoteItem> = {
+    let filtered_notes = use_memo(move || {
+        let notes_list = notes_memo();
         let q = search_query.read().trim().to_lowercase();
         let cat = selected_category.read().clone();
         let author = selected_author.read().clone();
+        let sort = *sort_option.read();
 
-        notes_data
-            .clone()
+        let mut list: Vec<NoteItem> = notes_list
             .into_iter()
             .filter(|n| {
                 // Category filter
@@ -334,34 +354,36 @@ pub fn NotesPage() -> Element {
 
                 true
             })
-            .collect()
-    };
+            .collect();
 
-    // Apply sorting
-    match *sort_option.read() {
-        SortOption::Newest => {
-            filtered_notes.sort_by(|a, b| b.id.cmp(&a.id));
+        // Apply sorting
+        match sort {
+            SortOption::Newest => {
+                list.sort_by(|a, b| b.id.cmp(&a.id));
+            }
+            SortOption::Oldest => {
+                list.sort_by(|a, b| a.id.cmp(&b.id));
+            }
+            SortOption::RecentlyUpdated => {
+                list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            }
+            SortOption::TitleAZ => {
+                list.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+            }
+            SortOption::TitleZA => {
+                list.sort_by(|a, b| b.title.to_lowercase().cmp(&a.title.to_lowercase()));
+            }
         }
-        SortOption::Oldest => {
-            filtered_notes.sort_by(|a, b| a.id.cmp(&b.id));
-        }
-        SortOption::RecentlyUpdated => {
-            filtered_notes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-        }
-        SortOption::TitleAZ => {
-            filtered_notes.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
-        }
-        SortOption::TitleZA => {
-            filtered_notes.sort_by(|a, b| b.title.to_lowercase().cmp(&a.title.to_lowercase()));
-        }
-    }
+
+        list
+    });
 
     // Partition into Pinned vs Regular (when in All or non-pinned filter)
     let is_pinned_filter = *selected_category.read() == "Pinned";
     let (pinned_notes, other_notes): (Vec<NoteItem>, Vec<NoteItem>) = if is_pinned_filter {
-        (filtered_notes.clone(), Vec::new())
+        (filtered_notes.read().clone(), Vec::new())
     } else {
-        filtered_notes.iter().cloned().partition(|n| n.is_pinned)
+        filtered_notes.read().iter().cloned().partition(|n| n.is_pinned)
     };
 
     rsx! {
@@ -474,7 +496,7 @@ pub fn NotesPage() -> Element {
                             class: "h-8.5 px-2.5 text-xs gap-1.5 shadow-2xs cursor-pointer font-medium border-border/80",
                             title: "Copy all filtered notes as Markdown",
                             onclick: {
-                                let f_notes = filtered_notes.clone();
+                                let f_notes = filtered_notes.read().clone();
                                 move |_| {
                                     if f_notes.is_empty() {
                                         toast.warning("Nothing to export", "No notes match the current filters.");
@@ -595,7 +617,7 @@ pub fn NotesPage() -> Element {
             // Main Content Area
             // ============================================================
             main { class: "flex-1 overflow-y-auto p-4 sm:p-6",
-                if filtered_notes.is_empty() {
+                if filtered_notes.read().is_empty() {
                     div { class: "flex flex-col items-center justify-center min-h-[380px] text-center p-8 rounded-2xl border border-dashed border-border/70 bg-card/30",
                         div { class: "flex size-14 items-center justify-center rounded-2xl bg-muted/60 text-muted-foreground mb-3",
                             FileTextIcon { class: "size-7" }
@@ -641,7 +663,7 @@ pub fn NotesPage() -> Element {
                     // Compact List View
                     // ============================================================
                     div { class: "flex flex-col rounded-xl border border-border/80 bg-card divide-y divide-border/60 overflow-hidden shadow-2xs",
-                        for note in filtered_notes.iter() {
+                        for note in filtered_notes.read().iter() {
                             {
                                 let n = note.clone();
                                 let n_id = n.id;
@@ -651,8 +673,10 @@ pub fn NotesPage() -> Element {
                                 let cat_str = n.category.clone();
                                 let color_stripe = note_stripe_color(&n.color);
                                 let emp_code_str = n.emp_code.clone();
-                                let emp_display = crate::db::find_employee_by_code(&emp_code_str)
-                                    .map(|e| e.emp_name)
+                                let emp_display = emp_name_map
+                                    .read()
+                                    .get(&emp_code_str)
+                                    .cloned()
                                     .unwrap_or_else(|| emp_code_str.clone());
 
                                 rsx! {
@@ -867,8 +891,10 @@ pub fn NotesPage() -> Element {
                                 }
                                 if !n.emp_code.is_empty() {
                                     {
-                                        let emp_name = crate::db::find_employee_by_code(&n.emp_code)
-                                            .map(|e| e.emp_name)
+                                        let emp_name = emp_name_map
+                                            .read()
+                                            .get(&n.emp_code)
+                                            .cloned()
                                             .unwrap_or_else(|| n.emp_code.clone());
                                         rsx! {
                                             DialogDescription { class: "text-xs text-muted-foreground mt-0.5",
@@ -1261,8 +1287,10 @@ fn render_note_card(
     let color_classes = note_card_color_classes(&note.color);
     let color_stripe = note_stripe_color(&note.color);
     let emp_code_str = note.emp_code.clone();
-    let emp_display_name = crate::db::find_employee_by_code(&emp_code_str)
-        .map(|e| e.emp_name)
+    let emp_display_name = all_employees
+        .iter()
+        .find(|e| e.emp_code.eq_ignore_ascii_case(&emp_code_str))
+        .map(|e| e.emp_name.clone())
         .unwrap_or_else(|| emp_code_str.clone());
 
     let note_for_click = note.clone();
@@ -1395,7 +1423,7 @@ fn render_note_card(
 
             // Right-Click Context Menu
             ContextMenuContent {
-                class: "w-56 rounded-md shadow-xl border-border/80 bg-popover/95 backdrop-blur-md",
+                class: "w-48 rounded-md shadow-xl border-border/80 bg-popover/95 backdrop-blur-md",
                 ContextMenuLabel {
                     div { class: "flex items-center justify-between gap-2",
                         span { class: "font-mono font-bold text-foreground text-xs", "#{n_id}" }

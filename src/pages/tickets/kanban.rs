@@ -13,7 +13,7 @@ use crate::icons::{
     PlusIcon, SearchIcon, TrashIcon,
 };
 
-use super::components::{ColumnContextMenu, TicketContextMenu};
+use super::components::{ColumnFloatingContextMenu, TableFloatingContextMenu};
 use super::types::{
     column_display_label, kanban_grid_layout_class, priority_badge, save_hidden_views,
     save_hide_empty_views, status_badge_class, status_badge_variant, target_col_to_sheet_status,
@@ -65,6 +65,17 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
     let mut dragged_id = use_signal(|| Option::<String>::None);
     let mut drag_over_col = use_signal(|| Option::<String>::None);
     let mut drag_over_card = use_signal(|| Option::<String>::None);
+
+    // Floating context menu reactive states
+    let mut card_ctx_ticket: Signal<Option<TicketItem>> = use_signal(|| None);
+    let mut card_ctx_open = use_signal(|| false);
+    let mut card_ctx_x = use_signal(|| 0.0);
+    let mut card_ctx_y = use_signal(|| 0.0);
+
+    let mut col_ctx_data: Signal<Option<(String, String, bool)>> = use_signal(|| None);
+    let mut col_ctx_open = use_signal(|| false);
+    let mut col_ctx_x = use_signal(|| 0.0);
+    let mut col_ctx_y = use_signal(|| 0.0);
 
     let mut clear_drag_state = move || {
         dragged_id.set(None);
@@ -406,13 +417,9 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                 ""
                             };
                             let col_hide = column.clone();
-                            let col_del_id = column.clone();
-                            let col_del_name = col_display.clone();
                             let col_over1 = column.clone();
-                            let col_over2 = column.clone();
                             let col_drop1 = column.clone();
                             let col_enter2 = column.clone();
-                            let col_over3 = column.clone();
                             let col_drop2 = column.clone();
                             let flex_col_cls = if visible_view_defs.read().len() == 1 {
                                 "w-full max-w-3xl flex-1 shrink-0"
@@ -421,34 +428,23 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                             };
 
                             rsx! {
-                                ColumnContextMenu {
-                                    column: column.clone(),
-                                    title: col_display.clone(),
-                                    is_custom,
-                                    all_targets: all_targets.clone(),
-                                    on_quick_add: {
-                                        let h = props.on_quick_add;
-                                        move |col| h.call(col)
+                                div {
+                                    key: "board-col-{column}",
+                                    class: "{flex_col_cls} flex flex-col h-full min-h-0 rounded-md border border-border/70 bg-card/75 p-3 transition-colors duration-150 {col_highlight}",
+                                    oncontextmenu: {
+                                        let col_ctx = column.clone();
+                                        let col_disp_ctx = col_display.clone();
+                                        let is_cust_ctx = is_custom;
+                                        move |e: MouseEvent| {
+                                            e.prevent_default();
+                                            let coords = e.client_coordinates();
+                                            card_ctx_open.set(false);
+                                            col_ctx_data.set(Some((col_ctx.clone(), col_disp_ctx.clone(), is_cust_ctx)));
+                                            col_ctx_x.set(coords.x);
+                                            col_ctx_y.set(coords.y);
+                                            col_ctx_open.set(true);
+                                        }
                                     },
-                                    on_filter_column: move |col| search_query.set(col),
-                                    on_clear_filters: move |_| {
-                                        search_query.set(String::new());
-                                        selected_priority.set("All".to_string());
-                                    },
-                                    on_hide_column: move |col| {
-                                        hidden_views.with_mut(|set| {
-                                            set.insert(col);
-                                            save_hidden_views(set);
-                                        });
-                                    },
-                                    on_delete_column: {
-                                        let h = props.on_delete_custom_view;
-                                        move |_| h.call((col_del_id.clone(), col_del_name.clone()))
-                                    },
-
-                                    div {
-                                        key: "board-col-{column}",
-                                        class: "{flex_col_cls} flex flex-col h-full min-h-0 rounded-md border border-border/70 bg-card/75 p-3 transition-colors duration-150 {col_highlight}",
                                         ondragenter: move |e: DragEvent| {
                                             e.prevent_default();
                                             if drag_over_col.read().as_deref() != Some(&col_over1) {
@@ -457,9 +453,6 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                         },
                                         ondragover: move |e: DragEvent| {
                                             e.prevent_default();
-                                            if drag_over_col.read().as_deref() != Some(&col_over2) {
-                                                drag_over_col.set(Some(col_over2.clone()));
-                                            }
                                         },
                                         ondrop: move |e: DragEvent| {
                                             e.prevent_default();
@@ -540,9 +533,6 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                             },
                                             ondragover: move |e: DragEvent| {
                                                 e.prevent_default();
-                                                if drag_over_col.read().as_deref() != Some(&col_over3) {
-                                                    drag_over_col.set(Some(col_over3.clone()));
-                                                }
                                             },
                                             ondrop: move |e: DragEvent| {
                                                 e.prevent_default();
@@ -587,10 +577,8 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
 
                                                     let id_for_start = id.clone();
                                                     let id_for_enter = id.clone();
-                                                    let id_for_over = id.clone();
                                                     let id_for_drop = id.clone();
                                                     let col_for_card_enter = column.clone();
-                                                    let col_for_card_over = column.clone();
                                                     let col_for_card_drop = column.clone();
 
                                                     rsx! {
@@ -608,12 +596,6 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                                             },
                                                             ondragover: move |e: DragEvent| {
                                                                 e.prevent_default();
-                                                                if drag_over_card.read().as_deref() != Some(&id_for_over) {
-                                                                    drag_over_card.set(Some(id_for_over.clone()));
-                                                                }
-                                                                if drag_over_col.read().as_deref() != Some(&col_for_card_over) {
-                                                                    drag_over_col.set(Some(col_for_card_over.clone()));
-                                                                }
                                                             },
                                                             ondrop: move |e: DragEvent| {
                                                                 e.prevent_default();
@@ -634,25 +616,33 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                                                 div { class: "h-1 w-full rounded-full bg-primary animate-pulse my-0.5" }
                                                             }
 
-                                                            TicketContextMenu {
-                                                                ticket: ticket.clone(),
-                                                                on_view: move |t| state.open_view(t),
-                                                                on_edit: move |t| state.open_edit(t),
-
-                                                                div {
-                                                                    draggable: "true",
-                                                                    "data-drag-id": "{id}",
-                                                                    class: "select-none {card_cls} {col_stripe}",
-                                                                    ondragstart: move |_| {
-                                                                        dragged_id.set(Some(id_for_start.clone()));
-                                                                    },
-                                                                    ondragend: move |_| {
-                                                                        clear_drag_state();
-                                                                    },
-                                                                    ondoubleclick: {
-                                                                        let t_dbl = ticket.clone();
-                                                                        move |_| state.open_view(t_dbl.clone())
-                                                                    },
+                                                            div {
+                                                                draggable: "true",
+                                                                "data-drag-id": "{id}",
+                                                                class: "select-none {card_cls} {col_stripe}",
+                                                                ondragstart: move |_| {
+                                                                    dragged_id.set(Some(id_for_start.clone()));
+                                                                },
+                                                                ondragend: move |_| {
+                                                                    clear_drag_state();
+                                                                },
+                                                                ondoubleclick: {
+                                                                    let t_dbl = ticket.clone();
+                                                                    move |_| state.open_view(t_dbl.clone())
+                                                                },
+                                                                oncontextmenu: {
+                                                                    let t_ctx = ticket.clone();
+                                                                    move |e: MouseEvent| {
+                                                                        e.prevent_default();
+                                                                        e.stop_propagation();
+                                                                        let coords = e.client_coordinates();
+                                                                        col_ctx_open.set(false);
+                                                                        card_ctx_ticket.set(Some(t_ctx.clone()));
+                                                                        card_ctx_x.set(coords.x);
+                                                                        card_ctx_y.set(coords.y);
+                                                                        card_ctx_open.set(true);
+                                                                    }
+                                                                },
 
                                                                     div { class: "pointer-events-none flex flex-col gap-2 w-full",
                                                                         div { class: "flex items-center justify-between gap-1.5",
@@ -831,7 +821,6 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                                         }
                                                     }
                                                 }
-                                            }
 
                                             if remaining_col_count > 0 {
                                                 div { class: "flex items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/30 px-2.5 py-2 text-[11px]",
@@ -888,14 +877,9 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                                     }
                                                 },
                                                 ondragover: {
-                                                    let col_b = column.clone();
                                                     move |e: DragEvent| {
                                                         e.prevent_default();
                                                         e.stop_propagation();
-                                                        if drag_over_col.read().as_deref() != Some(&col_b) {
-                                                            drag_over_col.set(Some(col_b.clone()));
-                                                        }
-                                                        drag_over_card.set(None);
                                                     }
                                                 },
                                                 ondrop: {
@@ -923,9 +907,54 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
                                             }
                                         }
                                     }
-                                }
                             }
                         }
+                    }
+                }
+            }
+
+            if card_ctx_open() {
+                if let Some(t) = card_ctx_ticket() {
+                    TableFloatingContextMenu {
+                        ticket: t,
+                        open: card_ctx_open,
+                        x: card_ctx_x,
+                        y: card_ctx_y,
+                        on_view: move |item| state.open_view(item),
+                        on_edit: move |item| state.open_edit(item),
+                    }
+                }
+            }
+
+            if col_ctx_open() {
+                if let Some((col, title, is_cust)) = col_ctx_data() {
+                    ColumnFloatingContextMenu {
+                        column: col,
+                        title,
+                        is_custom: is_cust,
+                        all_targets: all_targets.clone(),
+                        open: col_ctx_open,
+                        x: col_ctx_x,
+                        y: col_ctx_y,
+                        on_quick_add: {
+                            let h = props.on_quick_add;
+                            move |c| h.call(c)
+                        },
+                        on_filter_column: move |col| search_query.set(col),
+                        on_clear_filters: move |_| {
+                            search_query.set(String::new());
+                            selected_priority.set("All".to_string());
+                        },
+                        on_hide_column: move |col| {
+                            hidden_views.with_mut(|set| {
+                                set.insert(col);
+                                save_hidden_views(set);
+                            });
+                        },
+                        on_delete_column: {
+                            let h = props.on_delete_custom_view;
+                            move |(del_id, del_name)| h.call((del_id, del_name))
+                        },
                     }
                 }
             }

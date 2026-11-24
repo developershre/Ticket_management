@@ -91,17 +91,20 @@ impl AdvancedFilterState {
         if *status != "All" && !status.is_empty() {
             match status.as_str() {
                 "Open" => {
-                    if !t.status.eq_ignore_ascii_case("Open") {
+                    if t.is_closed() {
                         return false;
                     }
                 }
                 "Closed" => {
-                    if !t.status.eq_ignore_ascii_case("Closed") {
+                    if !t.is_closed() {
                         return false;
                     }
                 }
                 specific => {
-                    if !t.kanban_state.eq_ignore_ascii_case(specific) {
+                    let normalized = crate::sync::from_sheet_status(specific);
+                    let ticket_kb = crate::sync::from_sheet_status(&t.kanban_state);
+                    let ticket_st = crate::sync::from_sheet_status(&t.status);
+                    if ticket_kb != normalized && ticket_st != normalized {
                         return false;
                     }
                 }

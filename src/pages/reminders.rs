@@ -55,34 +55,20 @@ impl ReminderItem {
     pub fn tag(&self) -> &str {
         &self.service_category
     }
+    #[inline]
     pub fn display_name(&self) -> String {
-        let code = self.employee_code.trim();
-        if !code.is_empty() {
-            // Always query database directly to get the latest employee details
-            if let Some(emp) = crate::db::find_employee_by_code(code) {
-                if !emp.emp_name.trim().is_empty() {
-                    return emp.emp_name;
-                }
-            }
-        }
         if !self.employee_name.trim().is_empty() {
             return self.employee_name.trim().to_string();
         }
+        let code = self.employee_code.trim();
         if !code.is_empty() {
             return code.to_string();
         }
         "Unknown".to_string()
     }
 
+    #[inline]
     pub fn display_email(&self) -> String {
-        let code = self.employee_code.trim();
-        if !code.is_empty() {
-            if let Some(emp) = crate::db::find_employee_by_code(code) {
-                if !emp.emp_email.trim().is_empty() {
-                    return emp.emp_email;
-                }
-            }
-        }
         self.email_address.clone()
     }
 }
@@ -110,8 +96,6 @@ fn status_badge_variant(status: &str) -> &'static str {
 }
 
 fn initial_reminders() -> Vec<ReminderItem> {
-    // Run DB deduplication first to ensure SQLite table has strictly one row per reminder
-    let _ = crate::db::deduplicate_reminders_db();
     let rows = crate::db::get_all_reminders();
     let mut items: Vec<ReminderItem> = Vec::new();
 
@@ -226,7 +210,7 @@ fn ReminderContextMenu(props: ReminderContextMenuProps) -> Element {
                 {props.children}
             }
             ContextMenuContent {
-                class: "w-56 rounded-md shadow-xl border-border/80 bg-popover/95 backdrop-blur-md",
+                class: "w-48 rounded-md shadow-xl border-border/80 bg-popover/95 backdrop-blur-md",
                 ContextMenuLabel {
                     div { class: "flex items-center justify-between gap-2",
                         span { class: "font-mono font-bold text-foreground text-xs", "#{rank} Priority" }
@@ -437,7 +421,7 @@ fn RemindersPageContextMenu(props: RemindersPageContextMenuProps) -> Element {
                 {props.children}
             }
             ContextMenuContent {
-                class: "w-52 rounded-md shadow-xl border-border/80 bg-popover/95 backdrop-blur-md",
+                class: "w-48 rounded-md shadow-xl border-border/80 bg-popover/95 backdrop-blur-md",
                 ContextMenuLabel {
                     span { class: "font-semibold text-foreground text-xs", "Reminders Actions" }
                 }

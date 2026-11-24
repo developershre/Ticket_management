@@ -27,3 +27,41 @@ web = ["dioxus/web"]
 desktop = ["dioxus/desktop"]
 mobile = ["dioxus/mobile"]
 server = ["dioxus/server"]
+
+[package.metadata.deb]
+name = "bpsl-it-support"
+maintainer = "developershre <developershre0901@gmail.com>"
+copyright = "Copyright © 2026 Bhagwati Power and Steel Limited"
+depends = "$auto, libc6 (>= 2.31), libgtk-3-0 (>= 3.24) | libgtk-3-0t64, libwebkit2gtk-4.1-0 (>= 2.36) | libwebkit2gtk-4.0-37, libssl3 | libssl1.1"
+recommends = "libayatana-appindicator3-1 | libappindicator3-1"
+section = "utils"
+priority = "optional"
+extended-description = """\
+BPSL IT Support Ticket and Task Management desktop application with real-time Google Sheets synchronization."""
+
+[package.metadata.generate-rpm]
+name = "bpsl-it-support"
+summary = "BPSL IT Support Ticket and Task Management"
+license = "Proprietary"
+vendor = "Bhagwati Power and Steel Limited"
+url = "https://github.com/developershre/Ticket_management"
+
+# ============================================================
+# Production Release Optimization Profiles
+# ============================================================
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.desktop-release]
+inherits = "release"
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+

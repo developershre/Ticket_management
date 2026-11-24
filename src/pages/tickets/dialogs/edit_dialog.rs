@@ -377,7 +377,14 @@ pub fn EditTicketDialog(mut props: EditTicketDialogProps) -> Element {
                                             onchange: move |e: FormEvent| {
                                                 let val = e.value();
                                                 edit_kanban_state.set(val.clone());
-                                                let st = if val == "Completed" || val == "Cancelled" { "Closed" } else { "Open" };
+                                                let st = match val.as_str() {
+                                                    "InProgress" => "InProgress",
+                                                    "Hold" => "Hold",
+                                                    "Solved" => "Solved",
+                                                    "Completed" => "Closed",
+                                                    "Cancelled" => "Cancelled",
+                                                    _ => "Pending",
+                                                };
                                                 edit_status.set(st.to_string());
                                             },
                                             option { value: "Pending", "Pending" }
@@ -403,9 +410,18 @@ pub fn EditTicketDialog(mut props: EditTicketDialogProps) -> Element {
                                         select {
                                             class: "h-9 rounded-md border border-border/80 bg-card px-2 text-xs text-foreground focus:border-primary focus:outline-none cursor-pointer",
                                             value: "{edit_status}",
-                                            onchange: move |e: FormEvent| edit_status.set(e.value()),
-                                            option { value: "Open", "Open" }
+                                            onchange: move |e: FormEvent| {
+                                                let val = e.value();
+                                                edit_status.set(val.clone());
+                                                let kb = crate::sync::from_sheet_status(&val);
+                                                edit_kanban_state.set(kb.to_string());
+                                            },
+                                            option { value: "Pending", "Pending" }
+                                            option { value: "InProgress", "In Progress" }
+                                            option { value: "Hold", "On Hold" }
+                                            option { value: "Solved", "Solved" }
                                             option { value: "Closed", "Closed" }
+                                            option { value: "Cancelled", "Cancelled" }
                                         }
                                     }
                                 }

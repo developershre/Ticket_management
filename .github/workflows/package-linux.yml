@@ -1,0 +1,99 @@
+name: Build Linux Distribution Packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_build:
+        description: 'Build production release packages'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  build-linux-packages:
+    name: Package for Linux Distributions
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux build and packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            imagemagick \
+            rpm \
+            zstd \
+            dpkg-dev \
+            binutils \
+            file \
+            appstream
+
+      - name: Setup Node.js (for database seed generation)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install appimagetool
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sSL -o "$HOME/.local/bin/appimagetool" "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x "$HOME/.local/bin/appimagetool"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Run Linux packaging suite
+        run: |
+          chmod +x build-linux.sh
+          ./build-linux.sh --all
+
+      - name: Generate SHA-256 Checksums
+        working-directory: dist
+        run: |
+          sha256sum *.{deb,rpm,pkg.tar.zst,tar.gz,AppImage} 2>/dev/null > SHA256SUMS.txt || true
+          cat SHA256SUMS.txt
+
+      - name: Upload Linux packages as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-dist-packages
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.pkg.tar.zst
+            dist/*.tar.gz
+            dist/*.AppImage
+            dist/SHA256SUMS.txt
+            dist/flatpak/*
+            dist/arch/*
+
+      - name: Release assets (on tag push)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.pkg.tar.zst
+            dist/*.tar.gz
+            dist/*.AppImage
+            dist/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

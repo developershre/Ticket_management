@@ -26,10 +26,13 @@ pub fn EmployeeSearchInput(props: EmployeeSearchInputProps) -> Element {
 
     // Reactively refresh when database syncs (e.g. when Google Sheets employees are pulled)
     let db_sync = try_use_context::<Signal<crate::state::AppDbRevision>>();
-    if let Some(sync) = db_sync {
-        let _ = sync.read();
-    }
-    let all = crate::db::get_all_employees();
+    let all_memo = use_memo(move || {
+        if let Some(sync) = db_sync {
+            let _ = sync.read();
+        }
+        crate::db::get_all_employees()
+    });
+    let all = all_memo();
     let total_count = all.len();
 
     let mut emp_code_signal = props.employee_code;

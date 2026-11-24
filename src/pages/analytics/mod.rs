@@ -47,8 +47,8 @@ pub fn Analytics() -> Element {
     let activity_timeframe = use_signal(|| "this_week".to_string());
     let mut is_syncing = use_signal(|| false);
 
-    // Load data from SQLite
-    let (all_tickets, all_emps, all_reminders, all_notes) = {
+    // Load data from SQLite memoized on database revision changes
+    let raw_data = use_memo(move || {
         if let Some(sync) = db_sync {
             let _ = sync();
         }
@@ -58,7 +58,8 @@ pub fn Analytics() -> Element {
             get_all_reminders(),
             get_all_notes(),
         )
-    };
+    });
+    let (all_tickets, all_emps, all_reminders, all_notes) = raw_data();
 
     // Build department lookup map: emp_code -> department
     let emp_dept_map: std::collections::HashMap<String, String> = all_emps

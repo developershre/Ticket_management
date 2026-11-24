@@ -29,3 +29,26 @@ icon_path = "assets/favicon.ico"
 upgrade_code = "7A3E8D55-2248-4C87-8A7B-E5B7C2A961E3"
 digest_algorithm = "sha256"
 allow_downgrades = true
+
+[bundle.linux]
+icon_path = "assets/logo.svg"
+appimage_name = "BPSL_IT_Support"
+deb_depends = [
+    "libc6 (>= 2.31)",
+    "libgtk-3-0 (>= 3.24) | libgtk-3-0t64",
+    "libwebkit2gtk-4.1-0 (>= 2.36) | libwebkit2gtk-4.0-37",
+    "libssl3 | libssl1.1"
+]
+rpm_depends = [
+    "gtk3 >= 3.24",
+    "(webkit2gtk4.1 or webkit2gtk4.0 or webkit2gtk3)",
+    "openssl-libs",
+    "glib2",
+    "cairo",
+    "pango"
+]
+arch_depends = [
+    "gtk3",
+    "webkit2gtk-4.1",
+    "openssl"
+]

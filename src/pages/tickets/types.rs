@@ -53,6 +53,13 @@ pub struct TicketItem {
     pub last_updated_on: String,
     pub tag: String,
 
+    // Pre-computed employee & customer display cache (zero-cost in render loops)
+    pub cached_emp_name: String,
+    pub cached_emp_email: String,
+    pub cached_customer: String,
+    pub cached_department: String,
+    pub cached_division: String,
+
     // Aliases
     pub id: String,
     pub title: String,
@@ -89,6 +96,103 @@ impl TicketItem {
         last_updated_on: &str,
     ) -> Self {
         let id = format!("IT-{}", ticket_id);
+
+        let code_only = if let Some(idx) = employee_code.find('(') {
+            employee_code[..idx].trim()
+        } else {
+            employee_code.trim()
+        };
+
+        let emp_opt = if !code_only.is_empty() {
+            crate::db::find_employee_by_code(code_only)
+        } else {
+            None
+        };
+
+        let cached_emp_name = if let Some(ref emp) = emp_opt {
+            if !emp.emp_name.trim().is_empty() {
+                emp.emp_name.clone()
+            } else if !customer.trim().is_empty() && customer.trim() != "Internal" {
+                customer.to_string()
+            } else if !code_only.is_empty() {
+                code_only.to_string()
+            } else {
+                "Unassigned".to_string()
+            }
+        } else if let Some(start) = employee_code.find('(') {
+            if let Some(end) = employee_code.find(')') {
+                if end > start + 1 {
+                    employee_code[start + 1..end].trim().to_string()
+                } else if !customer.trim().is_empty() && customer.trim() != "Internal" {
+                    customer.to_string()
+                } else if !code_only.is_empty() {
+                    code_only.to_string()
+                } else {
+                    "Unassigned".to_string()
+                }
+            } else if !customer.trim().is_empty() && customer.trim() != "Internal" {
+                customer.to_string()
+            } else if !code_only.is_empty() {
+                code_only.to_string()
+            } else {
+                "Unassigned".to_string()
+            }
+        } else if !customer.trim().is_empty() && customer.trim() != "Internal" {
+            customer.to_string()
+        } else if !code_only.is_empty() {
+            code_only.to_string()
+        } else {
+            "Unassigned".to_string()
+        };
+
+        let cached_emp_email = if let Some(ref emp) = emp_opt {
+            if !emp.emp_email.trim().is_empty() {
+                emp.emp_email.clone()
+            } else {
+                email_address.to_string()
+            }
+        } else {
+            email_address.to_string()
+        };
+
+        let cached_customer = if !cached_emp_name.is_empty() && cached_emp_name != "Unassigned" {
+            cached_emp_name.clone()
+        } else if !customer.trim().is_empty() && customer.trim() != "Internal" {
+            customer.trim().to_string()
+        } else {
+            "N/A".to_string()
+        };
+
+        let cached_department = if let Some(ref emp) = emp_opt {
+            if !emp.department.trim().is_empty() {
+                emp.department.trim().to_string()
+            } else if !category.trim().is_empty() {
+                category.trim().to_string()
+            } else {
+                "Admin".to_string()
+            }
+        } else if !category.trim().is_empty() {
+            category.trim().to_string()
+        } else {
+            "Admin".to_string()
+        };
+
+        let cached_division = if let Some(ref emp) = emp_opt {
+            if !emp.division.trim().is_empty() {
+                emp.division.trim().to_string()
+            } else if emp.emp_email.trim().contains('@') {
+                emp.emp_email.trim().to_string()
+            } else if email_address.trim().contains('@') && !email_address.trim().is_empty() {
+                email_address.trim().to_string()
+            } else {
+                "N/A".to_string()
+            }
+        } else if email_address.trim().contains('@') && !email_address.trim().is_empty() {
+            email_address.trim().to_string()
+        } else {
+            "N/A".to_string()
+        };
+
         Self {
             ticket_id,
             employee_code: employee_code.to_string(),
@@ -115,6 +219,12 @@ impl TicketItem {
             last_updated_on: last_updated_on.to_string(),
             tag: String::new(),
 
+            cached_emp_name,
+            cached_emp_email,
+            cached_customer,
+            cached_department,
+            cached_division,
+
             id,
             title: subject.to_string(),
             employee: employee_code.to_string(),
@@ -126,7 +236,7 @@ impl TicketItem {
     pub fn from_db_ticket(t: crate::db::DbTicket) -> Self {
         let raw_kanban = if !t.kanban_state.trim().is_empty() {
             &t.kanban_state
-        } else if !t.stage.trim().is_empty() {
+        } else if !t.stage.trim().is_empty() && is_generic_status(&t.stage) {
             &t.stage
         } else {
             &t.status
@@ -142,7 +252,7 @@ impl TicketItem {
         } else if kanban_state == "Completed" || kanban_state == "Cancelled" {
             "Closed".to_string()
         } else {
-            "Open".to_string()
+            kanban_state.clone()
         };
 
         let resolved_my_activity = resolve_ticket_activity_all(&t.my_activity, &t.stage, &t.activities, &t.tag);
@@ -193,7 +303,7 @@ impl TicketItem {
     pub fn from_server_ticket(t: &crate::api::ServerTicket, local_id: i64) -> Self {
         let raw_kanban = if !t.kanban_state.trim().is_empty() {
             &t.kanban_state
-        } else if !t.stage.trim().is_empty() {
+        } else if !t.stage.trim().is_empty() && is_generic_status(&t.stage) {
             &t.stage
         } else {
             &t.status
@@ -209,7 +319,7 @@ impl TicketItem {
         } else if kanban_state == "Completed" || kanban_state == "Cancelled" {
             "Closed".to_string()
         } else {
-            "Open".to_string()
+            kanban_state.clone()
         };
 
         let resolved_my_activity = resolve_ticket_activity_all(&t.my_activity, &t.stage, &t.activities, "");
@@ -259,41 +369,18 @@ impl TicketItem {
         }
     }
 
+    #[inline]
     pub fn emp_name(&self) -> String {
-        let code = self.emp_code_only();
-        if !code.is_empty() {
-            if let Some(emp) = crate::db::find_employee_by_code(code) {
-                if !emp.emp_name.trim().is_empty() {
-                    return emp.emp_name;
-                }
-            }
+        if !self.cached_emp_name.is_empty() {
+            self.cached_emp_name.clone()
+        } else {
+            "Unassigned".to_string()
         }
-        if let Some(start) = self.employee_code.find('(') {
-            if let Some(end) = self.employee_code.find(')') {
-                if end > start + 1 {
-                    return self.employee_code[start + 1..end].trim().to_string();
-                }
-            }
-        }
-        if !self.customer.trim().is_empty() && self.customer.trim() != "Internal" {
-            return self.customer.clone();
-        }
-        if !code.is_empty() {
-            return code.to_string();
-        }
-        "Unassigned".to_string()
     }
 
+    #[inline]
     pub fn emp_email(&self) -> String {
-        let code = self.emp_code_only();
-        if !code.is_empty() {
-            if let Some(emp) = crate::db::find_employee_by_code(code) {
-                if !emp.emp_email.trim().is_empty() {
-                    return emp.emp_email;
-                }
-            }
-        }
-        self.email_address.clone()
+        self.cached_emp_email.clone()
     }
 
     pub fn assignee_name(&self) -> &str {
@@ -330,50 +417,56 @@ impl TicketItem {
     }
 
     #[allow(dead_code)]
+    #[inline]
     pub fn customer_display(&self) -> String {
-        let name = self.emp_name();
-        if !name.is_empty() && name != "Unassigned" {
-            name
-        } else if !self.customer.trim().is_empty() && self.customer.trim() != "Internal" {
-            self.customer.trim().to_string()
+        if !self.cached_customer.is_empty() {
+            self.cached_customer.clone()
         } else {
             "N/A".to_string()
         }
     }
 
     #[allow(dead_code)]
+    #[inline]
     pub fn department_display(&self) -> String {
-        let code = self.emp_code_only();
-        if !code.is_empty() {
-            if let Some(emp) = crate::db::find_employee_by_code(code) {
-                if !emp.department.trim().is_empty() {
-                    return emp.department.trim().to_string();
-                }
-            }
+        if !self.cached_department.is_empty() {
+            self.cached_department.clone()
+        } else {
+            "Admin".to_string()
         }
-        if !self.category.trim().is_empty() {
-            return self.category.trim().to_string();
-        }
-        "Admin".to_string()
     }
 
     #[allow(dead_code)]
+    #[inline]
     pub fn division_display(&self) -> String {
-        let code = self.emp_code_only();
-        if !code.is_empty() {
-            if let Some(emp) = crate::db::find_employee_by_code(code) {
-                if !emp.division.trim().is_empty() {
-                    return emp.division.trim().to_string();
-                }
-                if emp.emp_email.trim().contains('@') {
-                    return emp.emp_email.trim().to_string();
-                }
-            }
+        if !self.cached_division.is_empty() {
+            self.cached_division.clone()
+        } else {
+            "N/A".to_string()
         }
-        if self.email_address.trim().contains('@') && !self.email_address.trim().is_empty() {
-            return self.email_address.trim().to_string();
-        }
-        "N/A".to_string()
+    }
+
+    pub fn is_closed(&self) -> bool {
+        let st = self.status.trim();
+        let kb = self.kanban_state.trim();
+        st.eq_ignore_ascii_case("closed")
+            || st.eq_ignore_ascii_case("close")
+            || st.eq_ignore_ascii_case("completed")
+            || st.eq_ignore_ascii_case("solved(closed)")
+            || st.eq_ignore_ascii_case("solved (closed)")
+            || st.eq_ignore_ascii_case("cancelled")
+            || st.eq_ignore_ascii_case("canceled")
+            || kb.eq_ignore_ascii_case("completed")
+            || kb.eq_ignore_ascii_case("solved(closed)")
+            || kb.eq_ignore_ascii_case("solved (closed)")
+            || kb.eq_ignore_ascii_case("cancelled")
+            || kb.eq_ignore_ascii_case("canceled")
+    }
+
+    #[allow(dead_code)]
+    #[inline]
+    pub fn is_open(&self) -> bool {
+        !self.is_closed()
     }
 }
 
@@ -626,16 +719,16 @@ pub fn resolve_ticket_activity(my_activity: &str, stage: &str, activities: &str)
     resolve_ticket_activity_all(my_activity, stage, activities, "")
 }
 
-/// Standardizes a column / status ID to its corresponding Google Sheet status and macro status (Open/Closed).
+/// Standardizes a column / status ID to its corresponding Google Sheet status and macro/granular status.
 pub fn target_col_to_sheet_status(col: &str) -> (&str, &'static str) {
     match col {
-        "Pending" => ("Pending", "Open"),
-        "InProgress" => ("In Progress", "Open"),
-        "Hold" | "Onhold" => ("Hold", "Open"),
-        "Solved" => ("Solved", "Open"),
+        "Pending" => ("Pending", "Pending"),
+        "InProgress" => ("In Progress", "InProgress"),
+        "Hold" | "Onhold" => ("Hold", "Hold"),
+        "Solved" => ("Solved", "Solved"),
         "Completed" => ("Solved(closed)", "Closed"),
-        "Cancelled" => ("Cancelled", "Closed"),
-        _ => (col, "Open"),
+        "Cancelled" => ("Cancelled", "Cancelled"),
+        _ => (col, "Pending"),
     }
 }
 
@@ -649,10 +742,10 @@ pub fn priority_badge(priority: &str) -> &'static str {
 }
 
 pub fn status_badge_class(status: &str) -> &'static str {
-    match status {
+    match crate::sync::from_sheet_status(status) {
         "Pending" => "text-amber-500 dark:text-amber-400 border-amber-500/35 bg-amber-500/15",
         "InProgress" => "text-sky-500 dark:text-sky-400 border-sky-500/35 bg-sky-500/15",
-        "Hold" | "Onhold" => "text-amber-600 dark:text-amber-400 border-amber-500/35 bg-amber-500/15",
+        "Hold" => "text-amber-600 dark:text-amber-400 border-amber-500/35 bg-amber-500/15",
         "Solved" => "text-purple-500 dark:text-purple-400 border-purple-500/35 bg-purple-500/15",
         "Completed" => {
             "text-emerald-500 dark:text-emerald-400 border-emerald-500/35 bg-emerald-500/15"
@@ -663,10 +756,10 @@ pub fn status_badge_class(status: &str) -> &'static str {
 }
 
 pub fn status_badge_variant(status: &str) -> &'static str {
-    match status {
+    match crate::sync::from_sheet_status(status) {
         "Pending" => "warning",
         "InProgress" => "info",
-        "Hold" | "Onhold" => "warning",
+        "Hold" => "warning",
         "Solved" => "purple",
         "Completed" => "success",
         "Cancelled" => "destructive",
@@ -1101,5 +1194,61 @@ mod tests {
         // Deduplication across stage and my_activity
         let r8 = resolve_ticket_activity_all("PO, AMD", "PO, AMD, APPROVAL", "", "");
         assert_eq!(r8, "PO, AMD, APPROVAL");
+    }
+
+    #[test]
+    fn test_multiple_ticket_states_mapping_and_preservation() {
+        // Verify target_col_to_sheet_status returns appropriate sheet_kanban and granular status
+        assert_eq!(target_col_to_sheet_status("Pending"), ("Pending", "Pending"));
+        assert_eq!(target_col_to_sheet_status("InProgress"), ("In Progress", "InProgress"));
+        assert_eq!(target_col_to_sheet_status("Hold"), ("Hold", "Hold"));
+        assert_eq!(target_col_to_sheet_status("Solved"), ("Solved", "Solved"));
+        assert_eq!(target_col_to_sheet_status("Completed"), ("Solved(closed)", "Closed"));
+        assert_eq!(target_col_to_sheet_status("Cancelled"), ("Cancelled", "Cancelled"));
+
+        // Verify to_sheet_status preserves granular statuses
+        assert_eq!(crate::sync::to_sheet_status("Pending"), "Open");
+        assert_eq!(crate::sync::to_sheet_status("InProgress"), "In Progress");
+        assert_eq!(crate::sync::to_sheet_status("Hold"), "On Hold");
+        assert_eq!(crate::sync::to_sheet_status("Solved"), "Solved");
+        assert_eq!(crate::sync::to_sheet_status("Completed"), "Closed");
+        assert_eq!(crate::sync::to_sheet_status("Cancelled"), "Cancelled");
+
+        // Verify to_bpsl_status preserves granular statuses
+        assert_eq!(crate::sync::to_bpsl_status("Pending"), "Pending");
+        assert_eq!(crate::sync::to_bpsl_status("InProgress"), "InProgress");
+        assert_eq!(crate::sync::to_bpsl_status("Hold"), "Hold");
+        assert_eq!(crate::sync::to_bpsl_status("Solved"), "Solved");
+        assert_eq!(crate::sync::to_bpsl_status("Closed"), "Closed");
+        assert_eq!(crate::sync::to_bpsl_status("Cancelled"), "Cancelled");
+
+        // Verify TicketItem is_open vs is_closed
+        let mut ticket = TicketItem::new(
+            1, "EMP1", "emp@test.com", "IT", "Test", "Test issue", "", "",
+            "Medium", "Shreyansh", "Customer", 0.0, "", "", "", "Within SLA", "", "Unrated",
+            "InProgress", "Triage", "InProgress", "2026-11-24", "2026-11-24",
+        );
+        assert!(ticket.is_open());
+        assert!(!ticket.is_closed());
+
+        ticket.kanban_state = "Hold".to_string();
+        ticket.status = "Hold".to_string();
+        assert!(ticket.is_open());
+        assert!(!ticket.is_closed());
+
+        ticket.kanban_state = "Solved".to_string();
+        ticket.status = "Solved".to_string();
+        assert!(ticket.is_open());
+        assert!(!ticket.is_closed());
+
+        ticket.kanban_state = "Completed".to_string();
+        ticket.status = "Closed".to_string();
+        assert!(ticket.is_closed());
+        assert!(!ticket.is_open());
+
+        ticket.kanban_state = "Cancelled".to_string();
+        ticket.status = "Cancelled".to_string();
+        assert!(ticket.is_closed());
+        assert!(!ticket.is_open());
     }
 }

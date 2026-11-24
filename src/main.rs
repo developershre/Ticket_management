@@ -86,21 +86,30 @@ fn main() {
         }
     }
 
-    // Command-line tool to initialize a clean, empty SQLite database with all tables
-    if args.first().map(String::as_str) == Some("--init-clean-db") {
+    // Command-line tool to initialize a single pristine, empty SQLite database with all tables (0 rows, no settings)
+    if args.first().map(String::as_str) == Some("--init-clean-db")
+        || args.first().map(String::as_str) == Some("--bundle-prep")
+    {
         let target = args.get(1).cloned().unwrap_or_else(|| "management.db".to_string());
-        std::env::set_var("TMS_DB_PATH", &target);
-        let _ = db::init_database();
-        if let Ok(conn) = db::get_connection() {
-            let tables = ["USERS", "reminders", "tickets", "NOTES", "sync_queue", "sync_conflicts", "sync_meta", "sheet_changes"];
-            for t in tables {
-                let _ = conn.execute(&format!("DELETE FROM {}", t), []);
-            }
-            let _ = conn.execute_batch("VACUUM;");
+        if std::path::Path::new(&target).exists() {
+            let _ = std::fs::remove_file(&target);
         }
+        std::env::set_var("TMS_DB_PATH", &target);
         match db::init_database() {
             Ok(_) => {
-                println!("[BPSL IT Support] Successfully initialized clean empty database at '{}'", target);
+                if let Ok(conn) = db::get_connection() {
+                    let tables = ["USERS", "reminders", "tickets", "NOTES", "sync_queue", "sync_conflicts", "sync_meta", "sheet_changes"];
+                    for t in tables {
+                        let _ = conn.execute(&format!("DELETE FROM {}", t), []);
+                    }
+                    let _ = conn.execute_batch("VACUUM;");
+                    println!("[BPSL IT Support] Verified table row counts for '{}':", target);
+                    for t in tables {
+                        let count: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {}", t), [], |r| r.get(0)).unwrap_or(-1);
+                        println!("  - {}: {} rows", t, count);
+                    }
+                }
+                println!("[BPSL IT Support] Successfully initialized single pristine empty database at '{}' with 0 rows and no pre-entered data or settings.", target);
                 std::process::exit(0);
             }
             Err(e) => {
