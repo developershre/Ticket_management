@@ -809,7 +809,6 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         let mut api_key = api_key;
         let mut api_protocol = api_protocol;
         let mut test_status = test_status;
-        let toast = toast;
         move |id_to_del: String| {
             if sheet_sources.read().len() <= 1 {
                 toast.warning("Cannot Delete", "You must keep at least one Google Sheet source.");

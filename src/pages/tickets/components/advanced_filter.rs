@@ -112,17 +112,13 @@ impl AdvancedFilterState {
         }
 
         let priority = self.priority.read();
-        if *priority != "All" && !priority.is_empty() {
-            if !t.priority.eq_ignore_ascii_case(&priority) {
-                return false;
-            }
+        if *priority != "All" && !priority.is_empty() && !t.priority.eq_ignore_ascii_case(&priority) {
+            return false;
         }
 
         let category = self.category.read();
-        if *category != "All" && !category.is_empty() {
-            if !t.category.eq_ignore_ascii_case(&category) {
-                return false;
-            }
+        if *category != "All" && !category.is_empty() && !t.category.eq_ignore_ascii_case(&category) {
+            return false;
         }
 
         let assignee = self.assignee.read();
@@ -138,17 +134,13 @@ impl AdvancedFilterState {
         }
 
         let stage = self.stage.read();
-        if *stage != "All" && !stage.is_empty() {
-            if !t.stage.eq_ignore_ascii_case(&stage) {
-                return false;
-            }
+        if *stage != "All" && !stage.is_empty() && !t.stage.eq_ignore_ascii_case(&stage) {
+            return false;
         }
 
         let sla = self.sla_status.read();
-        if *sla != "All" && !sla.is_empty() {
-            if !t.sla_status.eq_ignore_ascii_case(&sla) {
-                return false;
-            }
+        if *sla != "All" && !sla.is_empty() && !t.sla_status.eq_ignore_ascii_case(&sla) {
+            return false;
         }
 
         let attach = self.has_attachment.read();
@@ -177,21 +169,9 @@ impl AdvancedFilterState {
                         return false;
                     }
                 }
-                "5" => {
-                    if !r.starts_with('5') {
-                        return false;
-                    }
-                }
-                "4+" => {
-                    if !r.starts_with('5') && !r.starts_with('4') {
-                        return false;
-                    }
-                }
-                "3+" => {
-                    if !r.starts_with('5') && !r.starts_with('4') && !r.starts_with('3') {
-                        return false;
-                    }
-                }
+                "5" if !r.starts_with('5') => return false,
+                "4+" if !r.starts_with('5') && !r.starts_with('4') => return false,
+                "3+" if !r.starts_with('5') && !r.starts_with('4') && !r.starts_with('3') => return false,
                 _ => {}
             }
         }
@@ -225,26 +205,10 @@ impl AdvancedFilterState {
                     .map(|dur| dur.as_secs() as i64)
                     .unwrap_or(0);
                 match date_preset.as_str() {
-                    "today" => {
-                        if now_secs.saturating_sub(ticket_secs) > 86_400 {
-                            return false;
-                        }
-                    }
-                    "yesterday" => {
-                        if now_secs.saturating_sub(ticket_secs) > 2 * 86_400 {
-                            return false;
-                        }
-                    }
-                    "week" => {
-                        if now_secs.saturating_sub(ticket_secs) > 7 * 86_400 {
-                            return false;
-                        }
-                    }
-                    "month" => {
-                        if now_secs.saturating_sub(ticket_secs) > 30 * 86_400 {
-                            return false;
-                        }
-                    }
+                    "today" if now_secs.saturating_sub(ticket_secs) > 86_400 => return false,
+                    "yesterday" if now_secs.saturating_sub(ticket_secs) > 2 * 86_400 => return false,
+                    "week" if now_secs.saturating_sub(ticket_secs) > 7 * 86_400 => return false,
+                    "month" if now_secs.saturating_sub(ticket_secs) > 30 * 86_400 => return false,
                     _ => {}
                 }
             }

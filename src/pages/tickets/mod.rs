@@ -309,7 +309,7 @@ pub fn Tickets() -> Element {
     });
 
     let filtered_table_tickets = use_memo({
-        let filter = advanced_filter.clone();
+        let filter = advanced_filter;
         move || {
             let list = tickets.read().clone();
             let mut res = list.into_iter()
@@ -674,7 +674,7 @@ pub fn Tickets() -> Element {
                     value: "table".to_string(),
                     class: "flex flex-col flex-1 min-h-0 w-full overflow-hidden pt-2 gap-2.5",
                     AdvancedFilterBar {
-                        filter: advanced_filter.clone(),
+                        filter: advanced_filter,
                         total_count: tickets.read().len(),
                         filtered_count: filtered_table_tickets.read().len(),
                         categories: table_categories.read().clone(),

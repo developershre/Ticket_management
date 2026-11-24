@@ -1089,7 +1089,7 @@ impl ApiClient {
                 Ok(t) => t,
                 Err(e) => {
                     if attempts < MAX_LOCK_ATTEMPTS {
-                        tokio::time::sleep(Duration::from_secs(1 * attempts as u64)).await;
+                        tokio::time::sleep(Duration::from_secs(attempts as u64)).await;
                         continue;
                     }
                     return Err(ApiError::Network(format!("failed to read response: {e}")));
@@ -1297,7 +1297,7 @@ impl ApiClient {
                 Ok(t) => t,
                 Err(e) => {
                     if attempts < MAX_LOCK_ATTEMPTS {
-                        tokio::time::sleep(Duration::from_secs(1 * attempts as u64)).await;
+                        tokio::time::sleep(Duration::from_secs(attempts as u64)).await;
                         continue;
                     }
                     return Err(ApiError::Network(format!("failed to read response: {e}")));

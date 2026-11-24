@@ -803,13 +803,15 @@ mod tests {
         assert_eq!(act4, "SO, TOL");
 
         // 8. TicketItem::from_db_ticket resolves activity into item.my_activity
-        let mut db_t = crate::db::DbTicket::default();
-        db_t.ticket_id = 1004;
-        db_t.subject = "Fly Ash WHRB".to_string();
-        db_t.stage = "WB,SALE ORDER,AMD".to_string();
-        db_t.my_activity = "Actioned: WB,SALE ORDER,AMD".to_string();
-        db_t.activities = "Processed WB,SALE ORDER,AMD in 1h 34m".to_string();
-        db_t.kanban_state = "Solved(closed)".to_string();
+        let db_t = crate::db::DbTicket {
+            ticket_id: 1004,
+            subject: "Fly Ash WHRB".to_string(),
+            stage: "WB,SALE ORDER,AMD".to_string(),
+            my_activity: "Actioned: WB,SALE ORDER,AMD".to_string(),
+            activities: "Processed WB,SALE ORDER,AMD in 1h 34m".to_string(),
+            kanban_state: "Solved(closed)".to_string(),
+            ..Default::default()
+        };
 
         let item = TicketItem::from_db_ticket(db_t);
         assert_eq!(item.my_activity, "WB, SALE ORDER, AMD");

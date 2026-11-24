@@ -149,8 +149,8 @@ pub fn Analytics() -> Element {
     let mut sla_breached_count = 0usize;
 
     let mut category_counts: BTreeMap<String, usize> = BTreeMap::new();
-    let mut assignee_map: BTreeMap<String, (usize, usize, usize, usize, usize, f64, Vec<f64>)> =
-        BTreeMap::new();
+    type AssigneeMapValue = (usize, usize, usize, usize, usize, f64, Vec<f64>);
+    let mut assignee_map: BTreeMap<String, AssigneeMapValue> = BTreeMap::new();
     let mut dept_counts: BTreeMap<String, usize> = BTreeMap::new();
     let mut monthly_counts: BTreeMap<(u32, u32), usize> = BTreeMap::new();
 
@@ -184,9 +184,7 @@ pub fn Analytics() -> Element {
         let sla_l = t.sla_status.to_lowercase();
         if sla_l.contains("breach") {
             sla_breached_count += 1;
-        } else if sla_l.contains("within") || sla_l.contains("met") || sla_l.contains("ok") {
-            sla_met_count += 1;
-        } else if st == "completed" {
+        } else if sla_l.contains("within") || sla_l.contains("met") || sla_l.contains("ok") || st == "completed" {
             sla_met_count += 1;
         }
 
@@ -278,7 +276,7 @@ pub fn Analytics() -> Element {
             }
         })
         .collect();
-    category_stats.sort_by(|a, b| b.count.cmp(&a.count));
+    category_stats.sort_by_key(|a| std::cmp::Reverse(a.count));
 
     // Department Stats (Sorted descending, top 8)
     let mut department_stats: Vec<DepartmentStat> = dept_counts
@@ -296,7 +294,7 @@ pub fn Analytics() -> Element {
             }
         })
         .collect();
-    department_stats.sort_by(|a, b| b.count.cmp(&a.count));
+    department_stats.sort_by_key(|a| std::cmp::Reverse(a.count));
     department_stats.truncate(8);
 
     // Assignee Stats (Sorted descending by total)
@@ -328,7 +326,7 @@ pub fn Analytics() -> Element {
             },
         )
         .collect();
-    assignee_stats.sort_by(|a, b| b.total.cmp(&a.total));
+    assignee_stats.sort_by_key(|a| std::cmp::Reverse(a.total));
 
     // Monthly volume trend (Last 8 months)
     let mut _monthly_vols: Vec<MonthlyVolume> = monthly_counts
@@ -347,7 +345,7 @@ pub fn Analytics() -> Element {
             }
         })
         .collect();
-    _monthly_vols.sort_by(|a, b| (a.year, a.month).cmp(&(b.year, b.month)));
+    _monthly_vols.sort_by_key(|a| (a.year, a.month));
     if _monthly_vols.len() > 8 {
         _monthly_vols = _monthly_vols.split_off(_monthly_vols.len() - 8);
     }
@@ -415,7 +413,7 @@ pub fn Analytics() -> Element {
     let (max_axis, activity_ticks): (usize, Vec<usize>) = if max_data <= 12 {
         (12, vec![12, 10, 8, 6, 4, 2, 0])
     } else {
-        let step = ((max_data + 5) / 6).max(2);
+        let step = max_data.div_ceil(6).max(2);
         let top = step * 6;
         let t = (0..=6).rev().map(|i| i * step).collect();
         (top, t)

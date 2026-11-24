@@ -47,6 +47,15 @@ vendor = "Bhagwati Power and Steel Limited"
 url = "https://github.com/developershre/Ticket_management"
 
 # ============================================================
+# Development Profiles (disable incremental hard-link warning on Windows)
+# ============================================================
+[profile.dev]
+incremental = false
+
+[profile.test]
+incremental = false
+
+# ============================================================
 # Production Release Optimization Profiles
 # ============================================================
 [profile.release]

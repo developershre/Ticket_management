@@ -359,19 +359,19 @@ pub fn NotesPage() -> Element {
         // Apply sorting
         match sort {
             SortOption::Newest => {
-                list.sort_by(|a, b| b.id.cmp(&a.id));
+                list.sort_by_key(|a| std::cmp::Reverse(a.id));
             }
             SortOption::Oldest => {
-                list.sort_by(|a, b| a.id.cmp(&b.id));
+                list.sort_by_key(|a| a.id);
             }
             SortOption::RecentlyUpdated => {
                 list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
             }
             SortOption::TitleAZ => {
-                list.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+                list.sort_by_key(|a| a.title.to_lowercase());
             }
             SortOption::TitleZA => {
-                list.sort_by(|a, b| b.title.to_lowercase().cmp(&a.title.to_lowercase()));
+                list.sort_by_key(|a| std::cmp::Reverse(a.title.to_lowercase()));
             }
         }
 

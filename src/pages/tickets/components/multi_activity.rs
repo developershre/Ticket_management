@@ -16,7 +16,7 @@ fn remove_tag(mut value: Signal<String>, idx: usize) {
     let raw = value.read().clone();
     let mut list: Vec<String> = raw
         .split(',')
-        .map(|s| clean_badge_item(s))
+        .map(clean_badge_item)
         .filter(|s| !s.is_empty())
         .collect();
 
@@ -32,7 +32,7 @@ fn add_tag(mut value: Signal<String>, mut tag_input: Signal<String>) {
         return;
     }
     let parts: Vec<&str> = text
-        .split(|c| c == ',' || c == '\n' || c == ';')
+        .split([',', '\n', ';'])
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .collect();
@@ -43,7 +43,7 @@ fn add_tag(mut value: Signal<String>, mut tag_input: Signal<String>) {
     let raw = value.read().clone();
     let mut list: Vec<String> = raw
         .split(',')
-        .map(|s| clean_badge_item(s))
+        .map(clean_badge_item)
         .filter(|s| !s.is_empty())
         .collect();
 
@@ -70,7 +70,7 @@ pub fn MultiActivitySelector(props: MultiActivitySelectorProps) -> Element {
     let raw_val = value.read().clone();
     let selected_items: Vec<String> = raw_val
         .split(',')
-        .map(|s| clean_badge_item(s))
+        .map(clean_badge_item)
         .filter(|s| !s.is_empty())
         .collect();
 

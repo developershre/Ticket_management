@@ -643,7 +643,7 @@ pub fn normalize_activity_badges(val: &str) -> String {
         return String::new();
     }
     let parts: Vec<String> = clean
-        .split(|c| c == ',' || c == '\n' || c == '\r' || c == ';')
+        .split([',', '\n', '\r', ';'])
         .map(|s| strip_actioned_prefix(s).trim().to_uppercase())
         .filter(|s| !s.is_empty() && !is_generic_placeholder(s) && !is_generic_status(s))
         .collect();
