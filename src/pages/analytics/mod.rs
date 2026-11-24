@@ -421,6 +421,13 @@ pub fn Analytics() -> Element {
 
     // Refresh action
     let handle_refresh = move |_| {
+        if !crate::sync::is_configured() {
+            if let Some(mut open_settings) = try_use_context::<Signal<crate::state::OpenSettingsDialog>>() {
+                open_settings.set(crate::state::OpenSettingsDialog(true));
+            }
+            toast.info("Setup Required", "Please enter your Google Sheet Web App URL to sync.");
+            return;
+        }
         is_syncing.set(true);
         spawn(async move {
             let res_t = crate::sync::pull_tickets_now().await;

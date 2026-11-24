@@ -11,6 +11,15 @@ const db = new sqlite3.DatabaseSync(dbPath);
 
 // Execute exact full schema
 db.exec(`
+DROP TABLE IF EXISTS tickets;
+DROP TABLE IF EXISTS reminders;
+DROP TABLE IF EXISTS NOTES;
+DROP TABLE IF EXISTS USERS;
+DROP TABLE IF EXISTS sync_queue;
+DROP TABLE IF EXISTS sync_conflicts;
+DROP TABLE IF EXISTS sheet_changes;
+DROP TABLE IF EXISTS sync_meta;
+
 CREATE TABLE IF NOT EXISTS USERS(
     emp_id INTEGER PRIMARY KEY AUTOINCREMENT,
     emp_code TEXT,

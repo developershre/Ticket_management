@@ -45,7 +45,12 @@ pub struct AvatarImageProps {
 
 #[component]
 pub fn AvatarImage(props: AvatarImageProps) -> Element {
+    let mut loaded = use_signal(|| true);
     let class = format!("aspect-square size-full object-cover {}", props.class);
+
+    if props.src.trim().is_empty() || !loaded() {
+        return rsx! {};
+    }
 
     rsx! {
         img {
@@ -53,6 +58,7 @@ pub fn AvatarImage(props: AvatarImageProps) -> Element {
             src: props.src,
             alt: props.alt,
             class: class,
+            onerror: move |_| loaded.set(false),
         }
     }
 }

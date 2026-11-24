@@ -2668,9 +2668,9 @@ pub fn clear_system_api_config() -> Result<()> {
     Ok(())
 }
 
-pub const DEFAULT_REST_SHEET_URL: &str = "https://script.google.com/macros/s/AKfycbw32a4pqW9KjOFZebB8dE8IwTcStKR9drNWlliLD4pve4moL8H6Il88SO8BrpvtOdY7/exec";
-pub const DEFAULT_V1_SHEET_URL: &str = "https://script.google.com/macros/s/AKfycbx6TTCZF1WfcFPpJWOqGoMXKhXq-wxJprGtCIKfAHZnm9wGmSgBuRCpiTWUu4519oyV/exec";
-pub const DEFAULT_V1_SHEET_KEY: &str = "032fd9719ace4011bf0e7dab1dbed3363ecff4adbaf84b328539038cdc19c8389bd8d285cfa2400d8b89c874485e2315";
+pub const DEFAULT_REST_SHEET_URL: &str = "";
+pub const DEFAULT_V1_SHEET_URL: &str = "";
+pub const DEFAULT_V1_SHEET_KEY: &str = "";
 
 /// Configured Google Sheet data source (URL, API key, protocol, display name).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -2701,7 +2701,7 @@ impl SheetSource {
 }
 
 /// Retrieves all configured Google Sheet sources from SQLite `sync_meta`.
-/// If no custom sources have been saved, seeds with the default Primary (REST) and Secondary (V1) sources.
+/// Fresh installs return an empty vector with zero default data or credentials.
 pub fn get_all_sheet_sources() -> Vec<SheetSource> {
     if let Some(json_str) = sync_meta_get("custom_sheet_sources") {
         if let Ok(sources) = serde_json::from_str::<Vec<SheetSource>>(&json_str) {
@@ -2711,43 +2711,30 @@ pub fn get_all_sheet_sources() -> Vec<SheetSource> {
         }
     }
 
-    // Seed directly from sync_meta keys or defaults to prevent any recursion
-    let rest_name = sync_meta_get("sheet_rest_name")
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "Primary Sheet".to_string());
+    // Check if user has saved a sheet URL in sync_meta
     let rest_url = sync_meta_get("sheet_rest_url")
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_REST_SHEET_URL.to_string());
-    let rest_key = sync_meta_get("sheet_rest_key").unwrap_or_default();
+        .or_else(|| sync_meta_get("system_api_base_url"))
+        .filter(|s| !s.trim().is_empty());
 
-    let v1_name = sync_meta_get("sheet_v1_name")
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "Secondary Sheet".to_string());
-    let v1_url = sync_meta_get("sheet_v1_url")
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_V1_SHEET_URL.to_string());
-    let v1_key = sync_meta_get("sheet_v1_key")
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_V1_SHEET_KEY.to_string());
+    if let Some(url) = rest_url {
+        let rest_name = sync_meta_get("sheet_rest_name")
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "Primary Sheet".to_string());
+        let rest_key = sync_meta_get("sheet_rest_key")
+            .or_else(|| sync_meta_get("system_api_key"))
+            .unwrap_or_default();
+        let proto = sync_meta_get("system_api_protocol").unwrap_or_else(|| "rest".to_string());
 
-    let initial = vec![
-        SheetSource {
-            id: "rest".to_string(),
+        return vec![SheetSource {
+            id: "primary".to_string(),
             name: rest_name,
-            base_url: rest_url,
+            base_url: url,
             api_key: rest_key,
-            protocol: "rest".to_string(),
-        },
-        SheetSource {
-            id: "v1".to_string(),
-            name: v1_name,
-            base_url: v1_url,
-            api_key: v1_key,
-            protocol: "v1".to_string(),
-        },
-    ];
-    let _ = save_all_sheet_sources(&initial);
-    initial
+            protocol: proto,
+        }];
+    }
+
+    Vec::new()
 }
 
 /// Saves the list of all Google Sheet sources in SQLite `sync_meta`.
@@ -2783,11 +2770,11 @@ pub fn get_active_sheet_source() -> SheetSource {
         .into_iter()
         .find(|s| s.id == active_id)
         .unwrap_or_else(|| SheetSource {
-            id: "rest".to_string(),
+            id: active_id,
             name: "Primary Sheet".to_string(),
-            base_url: DEFAULT_REST_SHEET_URL.to_string(),
-            api_key: String::new(),
-            protocol: "rest".to_string(),
+            base_url: sync_meta_get("system_api_base_url").unwrap_or_default(),
+            api_key: sync_meta_get("system_api_key").unwrap_or_default(),
+            protocol: sync_meta_get("system_api_protocol").unwrap_or_else(|| "rest".to_string()),
         })
 }
 
@@ -2883,16 +2870,18 @@ pub fn get_sheet_profile_config(profile: &str) -> (String, String) {
     if profile == "v1" {
         let url = sync_meta_get("sheet_v1_url")
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| DEFAULT_V1_SHEET_URL.to_string());
+            .unwrap_or_default();
         let key = sync_meta_get("sheet_v1_key")
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| DEFAULT_V1_SHEET_KEY.to_string());
+            .unwrap_or_default();
         (url, key)
     } else {
         let url = sync_meta_get("sheet_rest_url")
+            .or_else(|| sync_meta_get("system_api_base_url"))
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| DEFAULT_REST_SHEET_URL.to_string());
+            .unwrap_or_default();
         let key = sync_meta_get("sheet_rest_key")
+            .or_else(|| sync_meta_get("system_api_key"))
             .unwrap_or_default();
         (url, key)
     }
@@ -4083,19 +4072,86 @@ pub fn get_database_file_size() -> u64 {
     std::fs::metadata(db_path()).map(|m| m.len()).unwrap_or(0)
 }
 
+/// Completely purges all data across all tables and resets `sync_meta`.
+/// Also clears sqlite_sequence, cleans temporary attachments, and executes `VACUUM`.
+pub fn factory_reset_database() -> Result<()> {
+    let conn = get_connection()?;
+    conn.execute_batch(
+        r#"
+        DELETE FROM tickets;
+        DELETE FROM reminders;
+        DELETE FROM NOTES;
+        DELETE FROM USERS;
+        DELETE FROM sync_queue;
+        DELETE FROM sync_conflicts;
+        DELETE FROM sheet_changes;
+        DELETE FROM sync_meta;
+        DELETE FROM sqlite_sequence WHERE name IN ('tickets', 'reminders', 'NOTES', 'USERS', 'sync_queue', 'sync_conflicts', 'sheet_changes');
+        "#,
+    )?;
+    let _ = conn.execute("VACUUM", []);
+    invalidate_employee_lookup_cache();
+
+    // Clean up temporary attachments directory
+    let temp_dir = temp_attachments_dir();
+    if temp_dir.exists() {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let _ = std::fs::create_dir_all(&temp_dir);
+    }
+
+    // Also remove any saved .env in APPDATA/LOCALAPPDATA if present
+    if let Some(app_data) = std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA")) {
+        let app_dir = std::path::PathBuf::from(app_data).join("BPSL IT Support");
+        let env_path = app_dir.join(".env");
+        let _ = std::fs::remove_file(env_path);
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    static TEST_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    fn setup_test_db() -> (PathBuf, std::sync::MutexGuard<'static, ()>) {
+        let guard = TEST_LOCK.lock().unwrap();
+        let c = TEST_COUNT.fetch_add(1, Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!("tms_db_test_{}_{}.db", std::process::id(), c));
+        let _ = std::fs::remove_file(&path);
+        std::env::set_var("TMS_DB_PATH", path.to_str().unwrap());
+        init_database().expect("init test db");
+        (path, guard)
+    }
 
     #[test]
     fn test_sheet_sources_no_recursion() {
+        let (_path, _guard) = setup_test_db();
+        let test_src = vec![SheetSource::new("test", "Test Sheet", "https://example.com/exec", "", "rest")];
+        save_all_sheet_sources(&test_src).expect("save");
         let sources = get_all_sheet_sources();
         assert!(!sources.is_empty());
         let active_id = get_active_sheet_source_id();
         assert!(!active_id.is_empty());
         let name = get_sheet_profile_name(&sources[0].id);
-        assert!(!name.is_empty());
+        assert_eq!(name, "Test Sheet");
         let (url, _) = get_sheet_profile_config(&sources[0].id);
-        assert!(!url.is_empty());
+        assert_eq!(url, "https://example.com/exec");
+    }
+
+    #[test]
+    fn test_factory_reset_database() {
+        let (_path, _guard) = setup_test_db();
+        let conn = get_connection().expect("connection");
+        let _ = conn.execute("INSERT OR REPLACE INTO sync_meta (key, value) VALUES ('test_key', 'val')", []);
+        assert_eq!(sync_meta_get("test_key"), Some("val".to_string()));
+        factory_reset_database().expect("factory reset");
+        assert_eq!(sync_meta_get("test_key"), None);
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM sync_meta", [], |r| r.get(0)).unwrap_or(-1);
+        assert_eq!(count, 0);
     }
 }

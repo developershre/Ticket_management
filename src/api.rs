@@ -1005,6 +1005,9 @@ impl ApiClient {
         self.cfg.protocol
     }
     pub fn new(cfg: ApiConfig) -> Result<Self, String> {
+        if cfg.base_url.trim().is_empty() {
+            return Err("Google Sheet Web App URL is not configured".to_string());
+        }
         let http = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .user_agent("BPSL-IT-Support/1.0")

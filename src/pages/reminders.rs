@@ -515,9 +515,11 @@ pub fn Reminders() -> Element {
 
     // Fetch employee directory in real-time on mount
     use_effect(move || {
-        spawn(async move {
-            let _ = crate::sync::pull_employees_now().await;
-        });
+        if crate::sync::is_configured() {
+            spawn(async move {
+                let _ = crate::sync::pull_employees_now().await;
+            });
+        }
     });
 
     // Drag-and-drop reactive state
@@ -1158,6 +1160,13 @@ pub fn Reminders() -> Element {
                             class: "h-8 gap-1.5",
                             title: "Sync reminders with Google Sheets".to_string(),
                             onclick: move |_| {
+                                if !crate::sync::is_configured() {
+                                    if let Some(mut open_settings) = try_use_context::<Signal<crate::state::OpenSettingsDialog>>() {
+                                        open_settings.set(crate::state::OpenSettingsDialog(true));
+                                    }
+                                    toast.info("Setup Required", "Please enter your Google Sheet Web App URL to sync.");
+                                    return;
+                                }
                                 let _ = crate::db::sync_meta_set("last_reminder_pull_at", "0");
                                 crate::sync::kick();
                                 if let Some(mut sync) = db_sync {
@@ -1233,13 +1242,36 @@ pub fn Reminders() -> Element {
 
                 // Card Grid Layout with Drag-and-Drop
                 if filtered.is_empty() {
-                    div { class: "flex flex-1 flex-col items-center justify-center rounded-md border border-dashed border-border p-12 text-center",
-                        div { class: "flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground mb-3",
-                            SearchIcon { class: "size-6" }
+                    if reminders.read().is_empty() && !crate::sync::is_configured() {
+                        div { class: "flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-border/80 bg-card/40 p-8 text-center max-w-md mx-auto my-auto shadow-sm",
+                            div { class: "flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary border border-primary/20 mb-3",
+                                ClockIcon { class: "size-7" }
+                            }
+                            h3 { class: "text-base font-semibold text-foreground", "Google Sheet Not Connected" }
+                            p { class: "mt-1 text-xs text-muted-foreground leading-relaxed max-w-xs",
+                                "No Google Sheet Web App URL has been configured. Connect your Google Sheet to pull and synchronize scheduled reminders."
+                            }
+                            Button {
+                                variant: "default".to_string(),
+                                size: "default".to_string(),
+                                class: "mt-4 font-medium shadow-xs cursor-pointer",
+                                onclick: move |_| {
+                                    if let Some(mut open_settings) = try_use_context::<Signal<crate::state::OpenSettingsDialog>>() {
+                                        open_settings.set(crate::state::OpenSettingsDialog(true));
+                                    }
+                                },
+                                "Enter Info & Connect"
+                            }
                         }
-                        h3 { class: "text-sm font-semibold text-foreground", "No reminders found" }
-                        p { class: "mt-1 text-xs text-muted-foreground max-w-xs",
-                            "No reminders match your search or filter. Click 'New Reminder' above or right-click to add one."
+                    } else {
+                        div { class: "flex flex-1 flex-col items-center justify-center rounded-md border border-dashed border-border p-12 text-center",
+                            div { class: "flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground mb-3",
+                                SearchIcon { class: "size-6" }
+                            }
+                            h3 { class: "text-sm font-semibold text-foreground", "No reminders found" }
+                            p { class: "mt-1 text-xs text-muted-foreground max-w-xs",
+                                "No reminders match your search or filter. Click 'New Reminder' above or right-click to add one."
+                            }
                         }
                     }
                 } else {

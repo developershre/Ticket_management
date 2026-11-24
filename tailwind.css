@@ -4,7 +4,11 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* ============================================================
+ * OKLCH Color Tokens & Theme Configuration
+ * ============================================================ */
 :root {
+    --fluid-font-base: clamp(13px, 0.74rem + 0.28vw, 15.5px);
     --background: oklch(0.99 0 0);
     --foreground: oklch(0.12 0 0);
     --card: oklch(1 0 0);
@@ -138,26 +142,413 @@
     --radius-4xl: calc(var(--radius) * 2.67);
 }
 
+/* ============================================================
+ * Responsive Fluid Typography & Scaling Calibration
+ * ============================================================ */
+html {
+    font-size: var(--fluid-font-base);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+    letter-spacing: -0.006em;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: geometricPrecision;
+}
+
+html[data-font-scale="compact"] {
+    --fluid-font-base: clamp(11.5px, 0.65rem + 0.24vw, 13.5px);
+}
+html[data-font-scale="default"] {
+    --fluid-font-base: clamp(12.5px, 0.72rem + 0.26vw, 15px);
+}
+html[data-font-scale="comfortable"] {
+    --fluid-font-base: clamp(13.5px, 0.78rem + 0.3vw, 16.5px);
+}
+html[data-font-scale="large"] {
+    --fluid-font-base: clamp(15px, 0.86rem + 0.35vw, 18px);
+}
+
+@media screen and (max-width: 1024px) {
+    :root {
+        --fluid-font-base: clamp(12px, 0.68rem + 0.25vw, 13.5px);
+    }
+}
+@media screen and (min-width: 1025px) and (max-width: 1440px) {
+    :root {
+        --fluid-font-base: clamp(12.5px, 0.72rem + 0.24vw, 14.5px);
+    }
+}
+@media screen and (min-width: 1441px) and (max-width: 1920px) {
+    :root {
+        --fluid-font-base: clamp(13.5px, 0.78rem + 0.28vw, 15.8px);
+    }
+}
+@media screen and (min-width: 1921px) {
+    :root {
+        --fluid-font-base: clamp(15px, 0.88rem + 0.3vw, 18px);
+    }
+}
+
+/* ============================================================
+ * Safe Typography, Sizing & Line Height Defaults
+ * ============================================================ */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+p, span, h1, h2, h3, h4, h5, h6, label, button, input, select, textarea {
+    line-height: inherit;
+}
+
+.leading-none { line-height: 1.25 !important; }
+.leading-tight { line-height: 1.35 !important; }
+.leading-snug { line-height: 1.45 !important; }
+.leading-normal { line-height: 1.55 !important; }
+.leading-relaxed { line-height: 1.65 !important; }
+
+.truncate { padding-bottom: 1px; }
+.line-clamp-1, .line-clamp-2, .line-clamp-3 { padding-bottom: 2px; }
+
+/* ============================================================
+ * Accent Color Themes (Light & Dark)
+ * ============================================================ */
+html[data-accent="blue"] {
+    --primary: #2563eb !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(37, 99, 235, 0.4) !important;
+    --sidebar-primary: #2563eb !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="blue"].dark,
+html[data-accent="blue"] .dark {
+    --primary: #3b82f6 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(59, 130, 246, 0.4) !important;
+    --sidebar-primary: #3b82f6 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+
+html[data-accent="emerald"] {
+    --primary: #059669 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(5, 150, 105, 0.4) !important;
+    --sidebar-primary: #059669 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="emerald"].dark,
+html[data-accent="emerald"] .dark {
+    --primary: #10b981 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(16, 185, 129, 0.4) !important;
+    --sidebar-primary: #10b981 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+
+html[data-accent="violet"] {
+    --primary: #7c3aed !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(124, 58, 237, 0.4) !important;
+    --sidebar-primary: #7c3aed !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="violet"].dark,
+html[data-accent="violet"] .dark {
+    --primary: #8b5cf6 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(139, 92, 246, 0.4) !important;
+    --sidebar-primary: #8b5cf6 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+
+html[data-accent="amber"] {
+    --primary: #d97706 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(217, 119, 6, 0.4) !important;
+    --sidebar-primary: #d97706 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="amber"].dark,
+html[data-accent="amber"] .dark {
+    --primary: #f59e0b !important;
+    --primary-foreground: #111318 !important;
+    --ring: rgba(245, 158, 11, 0.4) !important;
+    --sidebar-primary: #f59e0b !important;
+    --sidebar-primary-foreground: #111318 !important;
+}
+
+html[data-accent="rose"] {
+    --primary: #e11d48 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(225, 29, 72, 0.4) !important;
+    --sidebar-primary: #e11d48 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="rose"].dark,
+html[data-accent="rose"] .dark {
+    --primary: #f43f5e !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(244, 63, 94, 0.4) !important;
+    --sidebar-primary: #f43f5e !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+
+html[data-accent="cyan"] {
+    --primary: #0891b2 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(8, 145, 178, 0.4) !important;
+    --sidebar-primary: #0891b2 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="cyan"].dark,
+html[data-accent="cyan"] .dark {
+    --primary: #06b6d4 !important;
+    --primary-foreground: #111318 !important;
+    --ring: rgba(6, 182, 212, 0.4) !important;
+    --sidebar-primary: #06b6d4 !important;
+    --sidebar-primary-foreground: #111318 !important;
+}
+
+html[data-accent="indigo"] {
+    --primary: #4f46e5 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(79, 70, 229, 0.4) !important;
+    --sidebar-primary: #4f46e5 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="indigo"].dark,
+html[data-accent="indigo"] .dark {
+    --primary: #6366f1 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(99, 102, 241, 0.4) !important;
+    --sidebar-primary: #6366f1 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+
+html[data-accent="teal"] {
+    --primary: #0d9488 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(13, 148, 136, 0.4) !important;
+    --sidebar-primary: #0d9488 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="teal"].dark,
+html[data-accent="teal"] .dark {
+    --primary: #14b8a6 !important;
+    --primary-foreground: #111318 !important;
+    --ring: rgba(20, 184, 166, 0.4) !important;
+    --sidebar-primary: #14b8a6 !important;
+    --sidebar-primary-foreground: #111318 !important;
+}
+
+html[data-accent="orange"] {
+    --primary: #ea580c !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(234, 88, 12, 0.4) !important;
+    --sidebar-primary: #ea580c !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="orange"].dark,
+html[data-accent="orange"] .dark {
+    --primary: #f97316 !important;
+    --primary-foreground: #111318 !important;
+    --ring: rgba(249, 115, 22, 0.4) !important;
+    --sidebar-primary: #f97316 !important;
+    --sidebar-primary-foreground: #111318 !important;
+}
+
+html[data-accent="slate"] {
+    --primary: #475569 !important;
+    --primary-foreground: #ffffff !important;
+    --ring: rgba(71, 85, 105, 0.4) !important;
+    --sidebar-primary: #475569 !important;
+    --sidebar-primary-foreground: #ffffff !important;
+}
+html[data-accent="slate"].dark,
+html[data-accent="slate"] .dark {
+    --primary: #94a3b8 !important;
+    --primary-foreground: #0f172a !important;
+    --ring: rgba(148, 163, 184, 0.4) !important;
+    --sidebar-primary: #94a3b8 !important;
+    --sidebar-primary-foreground: #0f172a !important;
+}
+
+/* High-Contrast Borders */
+html[data-high-contrast="true"] {
+    --border: rgba(0, 0, 0, 0.35) !important;
+}
+html[data-high-contrast="true"].dark,
+html[data-high-contrast="true"] .dark {
+    --border: rgba(255, 255, 255, 0.28) !important;
+}
+
+/* Glassmorphism Performance Toggle */
+html[data-glassmorphism="false"] * {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+/* OLED Pure Black Dark Mode */
+html[data-oled="true"].dark,
+html[data-oled="true"] .dark {
+    --background: #000000 !important;
+    --card: #080808 !important;
+    --popover: #0a0a0a !important;
+    --sidebar: #050505 !important;
+    --secondary: #121212 !important;
+    --muted: #141414 !important;
+    --border: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Corner Radius Presets */
+html[data-radius="sharp"] { --radius: 0rem !important; }
+html[data-radius="rounded"] { --radius: 0.375rem !important; }
+html[data-radius="smooth"] { --radius: 0.65rem !important; }
+html[data-radius="pill"] { --radius: 1rem !important; }
+
+/* Font Family Presets */
+html[data-font-family="system"] {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+}
+html[data-font-family="roboto"] {
+    font-family: 'Roboto', sans-serif !important;
+}
+html[data-font-family="mono"] {
+    font-family: 'Roboto Mono', monospace !important;
+}
+
+/* Card Density Presets */
+html[data-card-density="compact"] .p-3,
+html[data-card-density="compact"] .p-3\.5,
+html[data-card-density="compact"] .p-4 {
+    padding: 0.55rem !important;
+}
+html[data-card-density="compact"] .gap-3,
+html[data-card-density="compact"] .gap-3\.5,
+html[data-card-density="compact"] .gap-4 {
+    gap: 0.5rem !important;
+}
+
+html[data-card-density="comfortable"] .p-3,
+html[data-card-density="comfortable"] .p-3\.5 {
+    padding: 1.15rem !important;
+}
+html[data-card-density="comfortable"] .gap-3,
+html[data-card-density="comfortable"] .gap-3\.5 {
+    gap: 1.15rem !important;
+}
+
+/* Animations Toggle */
+html[data-animations="false"] *,
+html[data-animations="false"] *::before,
+html[data-animations="false"] *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+}
+
+/* ============================================================
+ * Fast Theme Transitioning
+ * ============================================================ */
+html.theme-transitioning,
+html.theme-transitioning body,
+html.theme-transitioning #app-shell,
+html.theme-transitioning [data-slot="sidebar"],
+html.theme-transitioning [data-slot="titlebar"],
+html.theme-transitioning [data-slot="card"],
+html.theme-transitioning .bg-background,
+html.theme-transitioning .bg-card,
+html.theme-transitioning .bg-sidebar,
+html.theme-transitioning .bg-popover,
+html.theme-transitioning .bg-muted,
+html.theme-transitioning .border-border,
+html.theme-transitioning .border-sidebar-border {
+    transition: background-color 0.08s ease-out,
+                border-color 0.08s ease-out,
+                color 0.08s ease-out !important;
+    transition-delay: 0s !important;
+}
+
+#app-shell,
+[data-slot="titlebar"],
+[data-slot="sidebar"],
+[data-slot="card"],
+.bg-background,
+.bg-card,
+.bg-sidebar,
+.bg-popover,
+.bg-muted,
+.border-border,
+.border-sidebar-border {
+    transition: background-color 0.08s ease-out, border-color 0.08s ease-out, color 0.08s ease-out;
+}
+
+/* Selective Elevation for Modals, Dropdowns & Popovers */
+button[role="switch"] span,
+[data-slot="switch-thumb"] {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.2) !important;
+}
+
+[role="dialog"],
+[data-slot="dialog-content"],
+[data-slot="dropdown-menu-content"],
+[data-slot="popover-content"],
+.toast-item {
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.22), 0 8px 10px -6px rgba(0, 0, 0, 0.12) !important;
+}
+
+.dark [role="dialog"],
+.dark [data-slot="dialog-content"],
+.dark [data-slot="dropdown-menu-content"],
+.dark [data-slot="popover-content"],
+.dark .toast-item {
+    box-shadow: 0 16px 36px -6px rgba(0, 0, 0, 0.75), 0 8px 16px -6px rgba(0, 0, 0, 0.5) !important;
+}
+
+:focus-visible {
+    outline: none;
+}
+
+/* ============================================================
+ * Base Layer Rules
+ * ============================================================ */
 @layer base {
     * {
         @apply border-border outline-ring/50;
     }
+    html,
     body {
-        @apply bg-background text-foreground font-sans;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background-color: var(--background, #0b0d13);
+        color: var(--foreground, #e6e9f0);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+        scroll-behavior: smooth;
     }
-    html {
-        @apply font-sans;
+
+    button,
+    a,
+    input,
+    select,
+    textarea,
+    [role="button"] {
+        transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     /* Thin, theme-adaptive scrollbars (light/dark via the --muted-foreground token) */
     * {
         scrollbar-width: thin;
-        scrollbar-color: color-mix(in oklab, var(--muted-foreground) 45%, transparent)
-            transparent;
+        scrollbar-color: color-mix(in oklab, var(--muted-foreground) 45%, transparent) transparent;
     }
     *::-webkit-scrollbar {
-        width: 10px;
-        height: 10px;
+        width: 8px;
+        height: 8px;
     }
     *::-webkit-scrollbar-track {
         background: transparent;
@@ -179,8 +570,6 @@
 /* ============================================================
  * Transitions & Micro-Animations Suite
  * ============================================================ */
-
-/* Base animation variables */
 :root {
     --tw-enter-opacity: 1;
     --tw-enter-scale: 1;
@@ -195,7 +584,6 @@
     --tw-exit-translate-y: 0;
 }
 
-/* Core keyframes for radix/shadcn-style animate-in and animate-out */
 @keyframes enter {
     from {
         opacity: var(--tw-enter-opacity, 1);

@@ -311,9 +311,11 @@ pub fn Employees() -> Element {
 
     // Fetch latest employee directory from Google Sheets in real-time on mount
     use_effect(move || {
-        spawn(async move {
-            let _ = crate::sync::pull_employees_now().await;
-        });
+        if crate::sync::is_configured() {
+            spawn(async move {
+                let _ = crate::sync::pull_employees_now().await;
+            });
+        }
     });
 
     let (employees, department_options, division_options) = {
@@ -376,6 +378,13 @@ pub fn Employees() -> Element {
                         class: "shrink-0 shadow-2xs",
                         title: "Pull the latest employee list from Google Sheets now".to_string(),
                         onclick: move |_| {
+                            if !crate::sync::is_configured() {
+                                if let Some(mut open_settings) = try_use_context::<Signal<crate::state::OpenSettingsDialog>>() {
+                                    open_settings.set(crate::state::OpenSettingsDialog(true));
+                                }
+                                toast.info("Setup Required", "Please enter your Google Sheet Web App URL to sync.");
+                                return;
+                            }
                             crate::sync::invalidate_employee_cache();
                             crate::sync::kick();
                             if let Some(mut sync) = db_sync {
@@ -408,13 +417,38 @@ pub fn Employees() -> Element {
             // ============================================================
             div { class: "flex flex-1 min-h-0 flex-col gap-3 p-2 overflow-hidden",
                 if total_count == 0 {
-                    div { class: "flex flex-1 flex-col items-center justify-center gap-3 rounded-lg bg-card/40 text-center",
-                        UsersIcon { class: "size-8 text-muted-foreground/50" }
-                        div { class: "flex flex-col gap-1",
-                            p { class: "text-sm font-semibold text-foreground", "No employees cached yet" }
-                            p { class: "text-xs text-muted-foreground max-w-sm",
-                                "The directory loads from Google Sheets during the next sync — \
-                                 hit \"Refresh from Sheet\" to pull it now."
+                    if !crate::sync::is_configured() {
+                        div { class: "flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border/80 bg-card/40 p-8 text-center max-w-md mx-auto my-auto shadow-sm",
+                            div { class: "flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary border border-primary/20",
+                                UsersIcon { class: "size-7" }
+                            }
+                            div { class: "flex flex-col gap-1.5",
+                                p { class: "text-base font-semibold text-foreground", "Google Sheet Not Connected" }
+                                p { class: "text-xs text-muted-foreground leading-relaxed",
+                                    "No Google Sheet Web App URL has been configured yet. Connect your Google Sheet to pull employee records and directory information."
+                                }
+                            }
+                            Button {
+                                variant: "default".to_string(),
+                                size: "default".to_string(),
+                                class: "mt-2 font-medium shadow-xs cursor-pointer",
+                                onclick: move |_| {
+                                    if let Some(mut open_settings) = try_use_context::<Signal<crate::state::OpenSettingsDialog>>() {
+                                        open_settings.set(crate::state::OpenSettingsDialog(true));
+                                    }
+                                },
+                                "Enter Info & Connect"
+                            }
+                        }
+                    } else {
+                        div { class: "flex flex-1 flex-col items-center justify-center gap-3 rounded-lg bg-card/40 text-center",
+                            UsersIcon { class: "size-8 text-muted-foreground/50" }
+                            div { class: "flex flex-col gap-1",
+                                p { class: "text-sm font-semibold text-foreground", "No employees cached yet" }
+                                p { class: "text-xs text-muted-foreground max-w-sm",
+                                    "The directory loads from Google Sheets during the next sync — \
+                                     hit \"Refresh from Sheet\" to pull it now."
+                                }
                             }
                         }
                     }

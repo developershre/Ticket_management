@@ -56,6 +56,7 @@ pub fn Titlebar(props: TitlebarProps) -> Element {
         Route::Reminders {} => "Reminders",
         Route::CalendarPage {} => "Calendar",
         Route::Analytics {} => "Analytics",
+        Route::NotFound { .. } => "Not Found",
     };
 
     // Shared with WindowControls so the maximize/restore icon stays in sync
@@ -156,16 +157,18 @@ fn SyncPill() -> Element {
     });
 
     let snap = status.read();
-    let (label, dot_class, tooltip) = match snap.state {
+    let (label, dot_class, tooltip, pill_class) = match snap.state {
         crate::sync::SyncState::Disabled => (
-            "Sync off".to_string(),
-            "bg-zinc-400",
-            format!("{} · sync resumes once the API is configured", snap.detail),
+            "Connect Sheet".to_string(),
+            "bg-amber-500 animate-pulse",
+            format!("{} · Click to enter URL and connect", snap.detail),
+            "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 font-semibold shadow-xs",
         ),
         crate::sync::SyncState::Syncing => (
             "Syncing…".to_string(),
             "bg-sky-400 animate-pulse",
             snap.detail.clone(),
+            "border-sidebar-border/80 bg-sidebar-accent/40 text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/70 font-medium",
         ),
         crate::sync::SyncState::Error => (
             "Sync error".to_string(),
@@ -174,6 +177,7 @@ fn SyncPill() -> Element {
                 "{} · {} pending · {} unresolved conflict(s)",
                 snap.detail, snap.pending_ops, snap.conflicts
             ),
+            "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 font-medium",
         ),
         crate::sync::SyncState::Idle => {
             if snap.pending_ops > 0 {
@@ -181,6 +185,7 @@ fn SyncPill() -> Element {
                     format!("{} pending", snap.pending_ops),
                     "bg-amber-400",
                     snap.detail.clone(),
+                    "border-sidebar-border/80 bg-sidebar-accent/40 text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/70 font-medium",
                 )
             } else {
                 (
@@ -195,18 +200,23 @@ fn SyncPill() -> Element {
                             String::new()
                         }
                     ),
+                    "border-sidebar-border/80 bg-sidebar-accent/40 text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/70 font-medium",
                 )
             }
         }
     };
 
-
     rsx! {
         div { class: "hidden sm:inline-flex items-center gap-1.5",
             button {
                 r#type: "button",
-                class: "inline-flex items-center gap-1.5 rounded-md border border-sidebar-border/80 bg-sidebar-accent/40 px-2 py-0.5 text-[11px] font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/70 transition-colors cursor-pointer",
+                class: "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] transition-colors cursor-pointer {pill_class}",
                 title: format!("{tooltip} · Click to configure API"),
+                onclick: move |_| {
+                    if let Some(mut open_settings) = try_use_context::<Signal<crate::state::OpenSettingsDialog>>() {
+                        open_settings.set(crate::state::OpenSettingsDialog(true));
+                    }
+                },
                 span { class: "size-1.5 shrink-0 rounded-full {dot_class}" }
                 span { "{label}" }
             }

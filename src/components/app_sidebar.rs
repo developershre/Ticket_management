@@ -59,12 +59,15 @@ pub fn AppSidebar() -> Element {
                         div { class: "relative w-full",
                             select {
                                 class: "w-full h-8 pl-2.5 pr-7 text-xs font-medium rounded-md border border-sidebar-border/80 bg-sidebar-accent/50 text-sidebar-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary truncate appearance-none hover:bg-sidebar-accent/80 transition-colors shadow-2xs",
-                                value: "{active_sheet_id}",
+                                value: if sheet_sources.is_empty() { "" } else { active_sheet_id.as_str() },
                                 onchange: {
                                     let sheet_sources_c = sheet_sources.clone();
                                     let active_id_c = active_sheet_id.clone();
                                     move |e: FormEvent| {
                                         let chosen = e.value();
+                                        if chosen.is_empty() {
+                                            return;
+                                        }
                                         if chosen == "__add_new__" {
                                             if let Some(mut open_settings) = try_use_context::<Signal<crate::state::OpenSettingsDialog>>() {
                                                 open_settings.set(crate::state::OpenSettingsDialog(true));
@@ -96,6 +99,13 @@ pub fn AppSidebar() -> Element {
                                         }
                                     }
                                 },
+                                if sheet_sources.is_empty() {
+                                    option {
+                                        value: "",
+                                        selected: true,
+                                        "No Sheet Configured"
+                                    }
+                                }
                                 for src in sheet_sources.iter() {
                                     option {
                                         key: "{src.id}",
@@ -113,6 +123,23 @@ pub fn AppSidebar() -> Element {
                                 svg { class: "size-3.5", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
                                     path { d: "M6 9l6 6 6-6" }
                                 }
+                            }
+                        }
+                        if sheet_sources.is_empty() {
+                            button {
+                                r#type: "button",
+                                class: "w-full mt-1.5 flex items-center justify-center gap-1.5 px-2 py-1 rounded-md bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 text-[11px] font-semibold transition-colors cursor-pointer shadow-2xs",
+                                title: "Click to enter Google Sheet Web App URL",
+                                onclick: move |_| {
+                                    if let Some(mut open_settings) = try_use_context::<Signal<crate::state::OpenSettingsDialog>>() {
+                                        open_settings.set(crate::state::OpenSettingsDialog(true));
+                                    }
+                                },
+                                svg { class: "size-3", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
+                                    path { d: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" }
+                                    path { d: "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" }
+                                }
+                                "Connect Sheet"
                             }
                         }
                     }

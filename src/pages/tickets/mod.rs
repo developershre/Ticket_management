@@ -326,10 +326,12 @@ pub fn Tickets() -> Element {
 
     // Fetch latest tickets and employee directory in real-time on mount
     use_effect(move || {
-        spawn(async move {
-            let _ = crate::sync::pull_tickets_now().await;
-            let _ = crate::sync::pull_employees_now().await;
-        });
+        if crate::sync::is_configured() {
+            spawn(async move {
+                let _ = crate::sync::pull_tickets_now().await;
+                let _ = crate::sync::pull_employees_now().await;
+            });
+        }
     });
 
     let is_create_open = use_signal(|| false);
@@ -435,18 +437,76 @@ pub fn Tickets() -> Element {
             return;
         }
 
-        let client = match crate::sync::get_client().or_else(|_| crate::sync::reload_client()) {
-            Ok(c) => c,
-            Err(_) => {
-                toast.error(
-                    "Google Sheet Disconnected",
-                    "Tickets cannot be created offline. Please connect your Google Sheet in Settings before quick-adding tickets.",
-                );
-                return;
-            }
+        let (sheet_kb, sheet_st) = target_col_to_sheet_status(&col);
+        let fallback_input = crate::db::NewTicketInput {
+            employee_code: employee.clone(),
+            email_address: email.clone(),
+            category: category.clone(),
+            subject: title.clone(),
+            problem_description: "Quick ticket created via column quick-add action".to_string(),
+            attachment_name: String::new(),
+            attachment_url: String::new(),
+            priority: priority.clone(),
+            assigned_to: assignee.clone(),
+            customer: customer.clone(),
+            time_spent: 0.0,
+            activities: "Ticket created".to_string(),
+            my_activity: "Initial triage & review".to_string(),
+            deadline: "Within 3 Business Days".to_string(),
+            sla_status: "Within SLA".to_string(),
+            sla_deadline: "Within 48 Hours (P3)".to_string(),
+            rating_avg_text: "Unrated".to_string(),
+            kanban_state: sheet_kb.to_string(),
+            stage: "Triage".to_string(),
+            status: sheet_st.to_string(),
         };
 
-        let (sheet_kb, sheet_st) = target_col_to_sheet_status(&col);
+        let client_opt = crate::sync::get_client().or_else(|_| crate::sync::reload_client()).ok();
+        if client_opt.is_none() {
+            // Offline fallback: save locally to SQLite
+            match crate::db::create_ticket_full(&fallback_input) {
+                Ok(local_id) => {
+                    let now_str = crate::state::format_local_now();
+                    let item = TicketItem::new(
+                        local_id,
+                        &employee,
+                        &email,
+                        &category,
+                        &title,
+                        "Quick ticket created via column quick-add action",
+                        "",
+                        "",
+                        &priority,
+                        &assignee,
+                        &customer,
+                        0.0,
+                        "Ticket created",
+                        "Initial triage & review",
+                        "Within 3 Business Days",
+                        "Within SLA",
+                        "Within 48 Hours (P3)",
+                        "Unrated",
+                        sheet_kb,
+                        "Triage",
+                        sheet_st,
+                        &now_str,
+                        &now_str,
+                    );
+                    tickets.write().insert(0, item);
+                    crate::sync::enqueue_create(local_id);
+                    toast.info(
+                        "Saved Locally (Offline Fallback)",
+                        format!("IT-{local_id} created in {col_disp} and queued for sync."),
+                    );
+                }
+                Err(e) => {
+                    toast.error("Database Error", format!("{e}"));
+                }
+            }
+            return;
+        }
+
+        let client = client_opt.unwrap();
         let payload = serde_json::json!({
             "employee_code": employee,
             "email_address": email,
@@ -466,6 +526,14 @@ pub fn Tickets() -> Element {
         });
 
         let sanitized = crate::sync::sanitize_ticket_payload(&client, &payload, true);
+        let emp_c = employee.clone();
+        let email_c = email.clone();
+        let cat_c = category.clone();
+        let prio_c = priority.clone();
+        let assign_c = assignee.clone();
+        let cust_c = customer.clone();
+        let sheet_kb_owned = sheet_kb.to_string();
+        let sheet_st_owned = sheet_st.to_string();
 
         spawn(async move {
             match client.tickets_create(&sanitized).await {
@@ -479,10 +547,46 @@ pub fn Tickets() -> Element {
                     );
                 }
                 Err(e) => {
-                    toast.error(
-                        "Google Sheet Creation Failed",
-                        format!("Could not create ticket in Google Sheet: {e}. Offline creation is disabled."),
-                    );
+                    // Fallback to local SQLite creation on network error!
+                    match crate::db::create_ticket_full(&fallback_input) {
+                        Ok(local_id) => {
+                            let now_str = crate::state::format_local_now();
+                            let item = TicketItem::new(
+                                local_id,
+                                &emp_c,
+                                &email_c,
+                                &cat_c,
+                                &title,
+                                "Quick ticket created via column quick-add action",
+                                "",
+                                "",
+                                &prio_c,
+                                &assign_c,
+                                &cust_c,
+                                0.0,
+                                "Ticket created",
+                                "Initial triage & review",
+                                "Within 3 Business Days",
+                                "Within SLA",
+                                "Within 48 Hours (P3)",
+                                "Unrated",
+                                &sheet_kb_owned,
+                                "Triage",
+                                &sheet_st_owned,
+                                &now_str,
+                                &now_str,
+                            );
+                            tickets.write().insert(0, item);
+                            crate::sync::enqueue_create(local_id);
+                            toast.warning(
+                                "Network Error · Saved to Local Fallback",
+                                format!("Could not reach Google Sheet ({e}). IT-{local_id} was safely saved locally in {col_disp}."),
+                            );
+                        }
+                        Err(db_err) => {
+                            toast.error("Creation Failed", format!("Online error: {e}; Local error: {db_err}"));
+                        }
+                    }
                 }
             }
         });
@@ -593,6 +697,13 @@ pub fn Tickets() -> Element {
                         class: "h-8 px-3 text-xs gap-1.5 font-medium cursor-pointer shadow-2xs shrink-0",
                         title: "Fetch the latest tickets from Google Sheets now",
                         onclick: move |_| {
+                            if !crate::sync::is_configured() {
+                                if let Some(mut open_settings) = try_use_context::<Signal<crate::state::OpenSettingsDialog>>() {
+                                    open_settings.set(crate::state::OpenSettingsDialog(true));
+                                }
+                                toast.info("Setup Required", "Please enter your Google Sheet Web App URL to sync.");
+                                return;
+                            }
                             spawn(async move {
                                 toast.info("Syncing", "Pulling latest tickets from Google Sheets…");
                                 match crate::sync::pull_tickets_now().await {

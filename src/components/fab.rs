@@ -132,23 +132,29 @@ pub fn Fab() -> Element {
         kind.set(k);
         match k {
             QuickKind::Ticket => {
-                ticket_employee_code.write().clear();
-                ticket_employee_name.write().clear();
-                ticket_email_address.write().clear();
+                let default_code = crate::db::configured_employee_code();
+                let default_name = crate::db::employee_name(&default_code);
+                let default_email = crate::db::employee_email(&default_code);
+                ticket_employee_code.set(default_code);
+                ticket_employee_name.set(default_name);
+                ticket_email_address.set(default_email);
                 ticket_category.set("Select category".to_string());
-                ticket_priority.set("Low".to_string());
+                ticket_priority.set("Medium".to_string());
                 ticket_subject.write().clear();
                 ticket_problem_description.write().clear();
                 ticket_attachment_name.write().clear();
                 ticket_attachment_url.write().clear();
             }
             QuickKind::Reminder => {
-                reminder_employee_code.write().clear();
-                reminder_employee_name.write().clear();
-                reminder_email_address.write().clear();
+                let default_code = crate::db::configured_employee_code();
+                let default_name = crate::db::employee_name(&default_code);
+                let default_email = crate::db::employee_email(&default_code);
+                reminder_employee_code.set(default_code);
+                reminder_employee_name.set(default_name);
+                reminder_email_address.set(default_email);
                 reminder_cc_emails.write().clear();
                 reminder_category.set("Select category".to_string());
-                reminder_priority.set("Low".to_string());
+                reminder_priority.set("Medium".to_string());
                 reminder_repeat_frequency.set("daily".to_string());
                 reminder_send_at.write().clear();
                 reminder_subject.write().clear();
@@ -253,7 +259,10 @@ pub fn Fab() -> Element {
 
         match crate::db::create_ticket_full(&input) {
             Ok(new_id) => {
-                toast.success("Ticket Created", format!("IT-{new_id} created successfully"));
+                toast.success(
+                    "Ticket Created",
+                    format!("IT-{new_id} created successfully"),
+                );
                 crate::sync::enqueue_create(new_id);
                 if let Some(mut sync) = db_sync {
                     sync.with_mut(|r| r.0 += 1);
@@ -261,7 +270,10 @@ pub fn Fab() -> Element {
                 dialog_open.set(false);
             }
             Err(e) => {
-                toast.error("Database Error", format!("Failed to create ticket: {:?}", e));
+                toast.error(
+                    "Database Error",
+                    format!("Failed to create ticket: {:?}", e),
+                );
             }
         }
     };
@@ -348,7 +360,10 @@ pub fn Fab() -> Element {
                 dialog_open.set(false);
             }
             Err(e) => {
-                toast.error("Database Error", format!("Failed to create reminder: {:?}", e));
+                toast.error(
+                    "Database Error",
+                    format!("Failed to create reminder: {:?}", e),
+                );
             }
         }
     };
@@ -369,7 +384,10 @@ pub fn Fab() -> Element {
 
         match crate::db::create_note(&crate::db::configured_employee_code(), &content) {
             Ok(new_id) => {
-                toast.success("Note Saved", format!("Note #{new_id} persisted to database."));
+                toast.success(
+                    "Note Saved",
+                    format!("Note #{new_id} persisted to database."),
+                );
                 if let Some(mut sync) = db_sync {
                     sync.with_mut(|r| r.0 += 1);
                 }
@@ -387,7 +405,7 @@ pub fn Fab() -> Element {
         // ------------------------------------------------------------
         if menu_open() {
             div {
-                class: "fixed inset-0 z-30 bg-background/40 backdrop-blur-xs transition-opacity duration-200",
+                class: "fixed inset-0 z-30 bg-background/40 transition-opacity duration-200",
                 onclick: move |_| menu_open.set(false),
             }
         }
@@ -424,7 +442,7 @@ pub fn Fab() -> Element {
             r#type: "button",
             title: "Quick actions",
             "aria-label": "Quick actions",
-            class: "fixed bottom-20 right-6 z-40 flex size-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-xl shadow-primary/30 hover:shadow-2xl hover:shadow-primary/45 fab-spring cursor-pointer border border-primary-foreground/15",
+            class: "fixed bottom-20 right-6 z-40 flex size-14 items-center justify-center rounded-full bg-primary text-primary-foreground fab-spring cursor-pointer border border-primary-foreground/15",
             onclick: move |_| {
                 let next = !*menu_open.read();
                 menu_open.set(next);

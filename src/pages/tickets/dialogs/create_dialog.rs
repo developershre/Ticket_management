@@ -90,17 +90,6 @@ pub fn CreateTicketDialog(mut props: CreateTicketDialogProps) -> Element {
             return;
         }
 
-        let client = match crate::sync::get_client().or_else(|_| crate::sync::reload_client()) {
-            Ok(c) => c,
-            Err(_) => {
-                toast.error(
-                    "Google Sheet Disconnected",
-                    "Tickets cannot be created offline. Please connect your Google Sheet Web App URL in Settings > API & Connection before creating tickets.",
-                );
-                return;
-            }
-        };
-
         let emp_combined = if name_val.is_empty() {
             emp_code.clone()
         } else {
@@ -145,6 +134,86 @@ pub fn CreateTicketDialog(mut props: CreateTicketDialogProps) -> Element {
             "Solved" => "Solved".to_string(),
             _ => "Pending".to_string(),
         };
+
+        let client_opt = crate::sync::get_client().or_else(|_| crate::sync::reload_client()).ok();
+        if client_opt.is_none() {
+            // Offline fallback: save locally to SQLite and queue in sync_queue!
+            let input = crate::db::NewTicketInput {
+                employee_code: emp_combined.clone(),
+                email_address: email_val.clone(),
+                category: cat_val.clone(),
+                subject: subj_val.clone(),
+                problem_description: desc_val.clone(),
+                attachment_name: att_name_val.clone(),
+                attachment_url: att_url_val.clone(),
+                priority: prio_val.clone(),
+                assigned_to: assigned_val.clone(),
+                customer: cust_val.clone(),
+                time_spent: time_val,
+                activities: act_val.clone(),
+                my_activity: my_act_val.clone(),
+                deadline: deadline_val.clone(),
+                sla_status: sla_stat_val.clone(),
+                sla_deadline: sla_dead_val.clone(),
+                rating_avg_text: rating_val.clone(),
+                kanban_state: kanban_val.clone(),
+                stage: stage_val.clone(),
+                status: status_val.clone(),
+            };
+
+            match crate::db::create_ticket_full(&input) {
+                Ok(local_id) => {
+                    let now_str = crate::state::format_local_now();
+                    let new_ticket = TicketItem::new(
+                        local_id,
+                        &emp_combined,
+                        &email_val,
+                        &cat_val,
+                        &subj_val,
+                        &desc_val,
+                        &att_name_val,
+                        &att_url_val,
+                        &prio_val,
+                        &assigned_val,
+                        &cust_val,
+                        time_val,
+                        &act_val,
+                        &my_act_val,
+                        &deadline_val,
+                        &sla_stat_val,
+                        &sla_dead_val,
+                        &rating_val,
+                        &kanban_val,
+                        &stage_val,
+                        &status_val,
+                        &now_str,
+                        &now_str,
+                    );
+                    state.tickets.write().insert(0, new_ticket);
+                    crate::sync::enqueue_create(local_id);
+                    if let Some(mut sync) = db_sync {
+                        sync.with_mut(|r| r.0 += 1);
+                    }
+                    toast.info(
+                        "Saved Locally (Offline Fallback)",
+                        format!("Ticket IT-{local_id} stored in local database. It will sync automatically when Google Sheet is connected."),
+                    );
+                    create_employee_code.set(String::new());
+                    create_emp_name.set(String::new());
+                    create_email_address.set(String::new());
+                    create_subject.set(String::new());
+                    create_problem_description.set(String::new());
+                    props.open.set(false);
+                }
+                Err(e) => {
+                    toast.error("Database Error", format!("Failed to create ticket: {e}"));
+                }
+            }
+            return;
+        }
+
+        let client = client_opt.unwrap();
+        is_submitting.set(true);
 
         let payload = serde_json::json!({
             "employee_code": emp_combined,
@@ -206,13 +275,79 @@ pub fn CreateTicketDialog(mut props: CreateTicketDialogProps) -> Element {
                     props.open.set(false);
                 }
                 Err(err) => {
-                    is_submitting.set(false);
-                    toast.error(
-                        "Google Sheet Creation Failed",
-                        format!(
-                            "Could not create ticket in Google Sheet: {err}. Offline ticket creation is disabled. Please verify your connection.",
-                        ),
-                    );
+                    // Fallback: persist locally in SQLite so user NEVER loses their ticket
+                    let fallback_input = crate::db::NewTicketInput {
+                        employee_code: emp_combined.clone(),
+                        email_address: email_val.clone(),
+                        category: cat_val.clone(),
+                        subject: subj_val.clone(),
+                        problem_description: desc_val.clone(),
+                        attachment_name: att_name_val.clone(),
+                        attachment_url: att_url_val.clone(),
+                        priority: prio_val.clone(),
+                        assigned_to: assigned_val.clone(),
+                        customer: cust_val.clone(),
+                        time_spent: time_val,
+                        activities: act_val.clone(),
+                        my_activity: my_act_val.clone(),
+                        deadline: deadline_val.clone(),
+                        sla_status: sla_stat_val.clone(),
+                        sla_deadline: sla_dead_val.clone(),
+                        rating_avg_text: rating_val.clone(),
+                        kanban_state: kanban_val.clone(),
+                        stage: stage_val.clone(),
+                        status: status_val.clone(),
+                    };
+                    match crate::db::create_ticket_full(&fallback_input) {
+                        Ok(local_id) => {
+                            let now_str = crate::state::format_local_now();
+                            let fallback_ticket = TicketItem::new(
+                                local_id,
+                                &emp_combined,
+                                &email_val,
+                                &cat_val,
+                                &subj_val,
+                                &desc_val,
+                                &att_name_val,
+                                &att_url_val,
+                                &prio_val,
+                                &assigned_val,
+                                &cust_val,
+                                time_val,
+                                &act_val,
+                                &my_act_val,
+                                &deadline_val,
+                                &sla_stat_val,
+                                &sla_dead_val,
+                                &rating_val,
+                                &kanban_val,
+                                &stage_val,
+                                &status_val,
+                                &now_str,
+                                &now_str,
+                            );
+                            state.tickets.write().insert(0, fallback_ticket);
+                            crate::sync::enqueue_create(local_id);
+                            if let Some(mut sync) = db_sync {
+                                sync.with_mut(|r| r.0 += 1);
+                            }
+                            toast.warning(
+                                "Network Error · Saved to Local Fallback",
+                                format!("Could not reach Google Sheet ({err}). Ticket IT-{local_id} was safely saved locally and queued for auto-sync."),
+                            );
+                            create_employee_code.set(String::new());
+                            create_emp_name.set(String::new());
+                            create_email_address.set(String::new());
+                            create_subject.set(String::new());
+                            create_problem_description.set(String::new());
+                            is_submitting.set(false);
+                            props.open.set(false);
+                        }
+                        Err(db_err) => {
+                            is_submitting.set(false);
+                            toast.error("Creation Failed", format!("Online error: {err}; Database error: {db_err}"));
+                        }
+                    }
                 }
             }
         });
@@ -231,13 +366,13 @@ pub fn CreateTicketDialog(mut props: CreateTicketDialogProps) -> Element {
 
                 if !is_sheet_configured {
                     div { class: "mb-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-500 text-xs flex items-center gap-2",
-                        span { class: "font-semibold", "Google Sheet Connection Required:" }
-                        span { "Offline ticket creation is disabled. Please connect your Google Sheet in Settings before submitting tickets." }
+                        span { class: "font-semibold", "Offline Fallback Mode:" }
+                        span { "Google Sheet is not configured. Tickets will be saved locally in SQLite and automatically synced once configured in Settings." }
                     }
                 } else {
                     div { class: "mb-2 px-3 py-1.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-xs flex items-center gap-2",
                         span { class: "inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" }
-                        span { class: "font-medium", "Google Sheet Connected · Direct Online Upload Active" }
+                        span { class: "font-medium", "Google Sheet Connected · Direct Online Upload Active (Offline Fallback Ready)" }
                     }
                 }
 
@@ -396,7 +531,7 @@ pub fn CreateTicketDialog(mut props: CreateTicketDialogProps) -> Element {
                             "Uploading to Google Sheet..."
                         }
                         if !*is_submitting.read() {
-                            "Submit Ticket to Sheet"
+                            if is_sheet_configured { "Submit Ticket to Sheet" } else { "Save Ticket Locally" }
                         }
                     }
                     button {

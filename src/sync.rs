@@ -201,7 +201,14 @@ fn worker_loop() {
 
     // Immediate startup cycle: loads queued ops from previous runs and
     // pulls server changes as soon as the app opens.
-    rt.block_on(run_cycle());
+    if is_configured() {
+        rt.block_on(run_cycle());
+    } else {
+        with_status(|s| {
+            s.state = SyncState::Disabled;
+            s.detail = "Google Sheet not configured".to_string();
+        });
+    }
 
     let mut deadline = Instant::now() + Duration::from_secs(CYCLE_SECS);
     loop {
@@ -262,7 +269,9 @@ fn worker_loop() {
         }
 
         deadline = Instant::now() + Duration::from_secs(cycle_secs);
-        rt.block_on(run_cycle());
+        if is_configured() {
+            rt.block_on(run_cycle());
+        }
     }
 }
 
@@ -278,11 +287,26 @@ pub fn run_cycle_blocking() {
     rt.block_on(run_cycle());
 }
 
+/// Returns true only if a valid Google Sheet Web App URL is configured and non-empty.
+pub fn is_configured() -> bool {
+    let Ok(cfg) = ApiConfig::load() else {
+        return false;
+    };
+    let u = cfg.base_url.trim();
+    !u.is_empty() && (u.starts_with("http://") || u.starts_with("https://"))
+}
+
 pub fn get_client() -> Result<Arc<ApiClient>, String> {
     ensure_client()
 }
 
 pub fn reload_client() -> Result<Arc<ApiClient>, String> {
+    if !is_configured() {
+        if let Ok(mut guard) = CLIENT.write() {
+            *guard = None;
+        }
+        return Err("Google Sheet Web App URL is not configured".to_string());
+    }
     let cfg = ApiConfig::load()?;
     let client = Arc::new(ApiClient::new(cfg)?);
     if let Ok(mut guard) = CLIENT.write() {
@@ -303,9 +327,14 @@ pub fn switch_sheet_profile_and_sync(profile: &str) -> Result<String, String> {
 }
 
 fn ensure_client() -> Result<Arc<ApiClient>, String> {
+    if !is_configured() {
+        return Err("Google Sheet Web App URL is not configured. Please enter your URL in Settings.".to_string());
+    }
     if let Ok(guard) = CLIENT.read() {
         if let Some(client) = guard.as_ref() {
-            return Ok(client.clone());
+            if !client.config().base_url.trim().is_empty() {
+                return Ok(client.clone());
+            }
         }
     }
     // Configuration problems are retried next cycle (e.g. the collection
@@ -384,6 +413,16 @@ pub fn now_epoch() -> i64 {
 // ============================================================
 
 pub async fn run_cycle() {
+    if !is_configured() {
+        with_status(|s| {
+            s.state = SyncState::Disabled;
+            s.detail = "Google Sheet not configured".to_string();
+            s.pending_ops = db::pending_op_count();
+            s.conflicts = db::unresolved_conflict_count();
+        });
+        return;
+    }
+
     let client = match ensure_client() {
         Ok(c) => c,
         Err(reason) => {
@@ -1527,6 +1566,14 @@ pub fn invalidate_ticket_cache() {
 
 /// Fetches all tickets from Google Sheets immediately in real-time.
 pub async fn pull_tickets_now() -> Result<usize, ApiError> {
+    if !is_configured() {
+        with_status(|s| {
+            s.state = SyncState::Disabled;
+            s.detail = "Google Sheet not configured".to_string();
+        });
+        return Ok(0);
+    }
+
     let client = match ensure_client() {
         Ok(c) => c,
         Err(e) => {
@@ -1624,6 +1671,9 @@ pub async fn pull_tickets_now() -> Result<usize, ApiError> {
 
 /// Fetches all employees from Google Sheets immediately in real-time.
 pub async fn pull_employees_now() -> Result<usize, ApiError> {
+    if !is_configured() {
+        return Ok(0);
+    }
     let client = ensure_client().map_err(ApiError::Network)?;
     let now = now_epoch();
     let last_emp_pull: i64 = db::sync_meta_get("last_employee_pull_at")

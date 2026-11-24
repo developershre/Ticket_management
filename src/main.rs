@@ -48,10 +48,11 @@ enum Route {
     CalendarPage {},
     #[route("/analytics")]
     Analytics {},
+    #[route("/:..route")]
+    NotFound { route: Vec<String> },
 }
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
-const MAIN_CSS: Asset = asset!("/assets/main.css");
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 const DND_JS: Asset = asset!("/assets/dnd.js");
 
@@ -97,12 +98,9 @@ fn main() {
         std::env::set_var("TMS_DB_PATH", &target);
         match db::init_database() {
             Ok(_) => {
+                let _ = db::factory_reset_database();
                 if let Ok(conn) = db::get_connection() {
                     let tables = ["USERS", "reminders", "tickets", "NOTES", "sync_queue", "sync_conflicts", "sync_meta", "sheet_changes"];
-                    for t in tables {
-                        let _ = conn.execute(&format!("DELETE FROM {}", t), []);
-                    }
-                    let _ = conn.execute_batch("VACUUM;");
                     println!("[BPSL IT Support] Verified table row counts for '{}':", target);
                     for t in tables {
                         let count: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {}", t), [], |r| r.get(0)).unwrap_or(-1);
@@ -377,8 +375,7 @@ fn App() -> Element {
             href: "https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100..900;1,100..900&family=Roboto+Mono:ital,wght@0,100..700;1,100..700&display=swap",
         }
         document::Link { rel: "icon", href: FAVICON }
-        document::Link { rel: "stylesheet", href: MAIN_CSS }
-        document::Link { rel: "stylesheet", href: TAILWIND_CSS }
+        document::Stylesheet { href: TAILWIND_CSS }
         document::Script { src: DND_JS }
         document::Title { "BPSL IT Support" }
         ThemeProvider {
@@ -390,6 +387,7 @@ fn App() -> Element {
 /// App shell: custom titlebar + sidebar + page outlet + FAB.
 #[component]
 fn AppShell() -> Element {
+    let nav = use_navigator();
     let theme = use_theme();
     let dark_cls = if theme.is_dark() { "dark" } else { "" };
     let db_sync = use_signal(state::AppDbRevision::default);
@@ -407,7 +405,7 @@ fn AppShell() -> Element {
     let is_sidebar_right = app_settings.read().sidebar_position == "right";
 
     // Restore and enforce appearance options from SQLite on launch
-    use_hook(|| {
+    use_effect(move || {
         let s = app_settings.peek().clone();
         crate::state::apply_appearance_to_dom(
             &s.accent_color,
@@ -420,7 +418,6 @@ fn AppShell() -> Element {
         );
         let landing = s.default_landing_page.clone();
         if landing != "tickets" {
-            let nav = use_navigator();
             match landing.as_str() {
                 "notes" => { let _ = nav.replace(Route::NotesPage {}); }
                 "employees" => { let _ = nav.replace(Route::Employees {}); }
@@ -457,6 +454,38 @@ fn AppShell() -> Element {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+#[component]
+fn NotFound(route: Vec<String>) -> Element {
+    let path = format!("/{}", route.join("/"));
+    rsx! {
+        div { class: "flex flex-col items-center justify-center flex-1 min-h-[60vh] p-8 text-center my-auto",
+            div { class: "flex size-16 items-center justify-center rounded-2xl bg-muted text-muted-foreground mb-4 shadow-xs",
+                svg { class: "size-8", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
+                    path { d: "M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" }
+                    line { x1: "12", y1: "9", x2: "12", y2: "13" }
+                    line { x1: "12", y1: "17", x2: "12.01", y2: "17" }
+                }
+            }
+            h2 { class: "text-2xl font-bold tracking-tight text-foreground", "Page Not Found" }
+            p { class: "text-sm text-muted-foreground mt-1 mb-2 max-w-sm",
+                "The requested path "
+                code { class: "font-mono text-xs px-1.5 py-0.5 rounded bg-muted text-foreground", "{path}" }
+                " does not exist."
+            }
+            p { class: "text-xs text-muted-foreground/80 mb-6", "Check the URL or return to the support ticket board." }
+            Link {
+                to: Route::Tickets {},
+                class: "inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground shadow-xs hover:bg-primary/90 transition-colors cursor-pointer",
+                svg { class: "size-4", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
+                    path { d: "m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" }
+                    polyline { points: "9 22 9 12 15 12 15 22" }
+                }
+                "Back to Support Tickets"
             }
         }
     }

@@ -366,7 +366,48 @@ pub fn KanbanBoard(props: KanbanBoardProps) -> Element {
             }
 
             // Dynamic Kanban Columns
-            if visible_view_defs.read().is_empty() {
+            if state.tickets.read().is_empty() {
+                div { class: "flex flex-col items-center justify-center p-8 text-center rounded-xl border border-dashed border-border/80 bg-card/40 flex-1 my-auto max-w-lg mx-auto gap-3",
+                    div { class: "flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary shadow-xs",
+                        svg { class: "size-7", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
+                            path { d: "M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z" }
+                            path { d: "M13 5v2M13 11v2M13 17v2" }
+                        }
+                    }
+                    div { class: "flex flex-col gap-1 max-w-sm",
+                        h3 { class: "text-base font-bold text-foreground", "No Support Tickets Found" }
+                        p { class: "text-xs text-muted-foreground leading-relaxed",
+                            "Your ticket database is currently empty. Create your first support ticket or connect to Google Sheets in Settings to pull tickets."
+                        }
+                    }
+                    div { class: "flex items-center gap-2.5 pt-2",
+                        Button {
+                            variant: "default",
+                            size: "sm",
+                            class: "h-8 px-4 text-xs font-semibold shadow-xs gap-1.5 cursor-pointer",
+                            onclick: move |_| state.is_create_open.set(true),
+                            PlusIcon { class: "size-3.5" }
+                            "Create First Ticket"
+                        }
+                        Button {
+                            variant: "outline",
+                            size: "sm",
+                            class: "h-8 px-3.5 text-xs shadow-2xs gap-1.5 cursor-pointer",
+                            onclick: move |_| {
+                                if let Some(mut open_settings) = try_use_context::<Signal<crate::state::OpenSettingsDialog>>() {
+                                    open_settings.set(crate::state::OpenSettingsDialog(true));
+                                }
+                            },
+                            svg { class: "size-3.5", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
+                                path { d: "M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" }
+                                path { d: "M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" }
+                                path { d: "M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" }
+                            }
+                            "Connect Google Sheet"
+                        }
+                    }
+                }
+            } else if visible_view_defs.read().is_empty() {
                 div { class: "flex flex-col items-center justify-center p-8 text-center rounded-lg border border-dashed border-border/80 bg-card/50 flex-1 my-auto max-w-md mx-auto",
                     EyeOffIcon { class: "size-10 text-muted-foreground/50 mb-3" }
                     h3 { class: "text-sm font-bold text-foreground", "All Kanban Views Hidden" }

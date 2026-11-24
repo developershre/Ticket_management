@@ -247,7 +247,15 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         .iter()
         .find(|s| s.id == initial_active_id)
         .cloned()
-        .unwrap_or_else(|| all_init_sources[0].clone());
+        .unwrap_or_else(|| {
+            all_init_sources.first().cloned().unwrap_or_else(|| crate::db::SheetSource {
+                id: "primary".to_string(),
+                name: "Primary Sheet".to_string(),
+                base_url: String::new(),
+                api_key: String::new(),
+                protocol: "rest".to_string(),
+            })
+        });
 
     let mut sheet_sources = use_signal(move || all_init_sources);
     let active_profile = use_signal(move || initial_active_src.id.clone());
@@ -769,6 +777,43 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         }
     };
 
+    // Factory Reset Database (Wipe All Local Data)
+    let handle_factory_reset_db = {
+        let mut sheet_sources = sheet_sources;
+        let mut active_profile = active_profile;
+        let mut current_profile_name = current_profile_name;
+        let mut base_url = base_url;
+        let mut api_key = api_key;
+        let mut api_protocol = api_protocol;
+        let mut employee_code = employee_code;
+        let mut test_status = test_status;
+        move |_| {
+            match crate::db::factory_reset_database() {
+                Ok(_) => {
+                    sheet_sources.set(Vec::new());
+                    active_profile.set("primary".to_string());
+                    current_profile_name.set("Primary Sheet".to_string());
+                    base_url.set(String::new());
+                    api_key.set(String::new());
+                    api_protocol.set("rest".to_string());
+                    employee_code.set(String::new());
+                    test_status.set(TestStatus::Idle);
+                    crate::state::play_sound("success");
+                    toast.success(
+                        "Factory Reset Complete",
+                        "All local tickets, reminders, employees, notes, credentials, and settings have been completely wiped.",
+                    );
+                    if let Some(mut r) = db_sync {
+                        r.with_mut(|rev| rev.0 += 1);
+                    }
+                }
+                Err(e) => {
+                    toast.error("Factory Reset Error", format!("{e}"));
+                }
+            }
+        }
+    };
+
     // API Handlers
     let handle_add_sheet = {
         let mut sheet_sources = sheet_sources;
@@ -810,10 +855,6 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
         let mut api_protocol = api_protocol;
         let mut test_status = test_status;
         move |id_to_del: String| {
-            if sheet_sources.read().len() <= 1 {
-                toast.warning("Cannot Delete", "You must keep at least one Google Sheet source.");
-                return;
-            }
             let mut list = sheet_sources.write();
             list.retain(|s| s.id != id_to_del);
             let remaining_first = list.first().cloned();
@@ -828,6 +869,12 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                     api_key.set(first.api_key.clone());
                     api_protocol.set(first.protocol.clone());
                     let _ = crate::sync::switch_sheet_profile_and_sync(&first.id);
+                } else {
+                    active_profile.set("primary".to_string());
+                    current_profile_name.set("Primary Sheet".to_string());
+                    base_url.set(String::new());
+                    api_key.set(String::new());
+                    api_protocol.set("rest".to_string());
                 }
             }
             test_status.set(TestStatus::Idle);
@@ -994,6 +1041,14 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
             item.base_url = url.clone();
             item.api_key = key.clone();
             item.protocol = proto.clone();
+        } else {
+            list.push(crate::db::SheetSource {
+                id: prof.clone(),
+                name: if name.is_empty() { "Primary Sheet".to_string() } else { name.clone() },
+                base_url: url.clone(),
+                api_key: key.clone(),
+                protocol: proto.clone(),
+            });
         }
         let sources_copy = list.clone();
         drop(list);
@@ -2252,13 +2307,18 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                         }
                                     }
                                     div { class: "flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-1",
+                                        if sheet_sources.read().is_empty() {
+                                            div { class: "py-3 px-2 text-center text-xs text-muted-foreground italic",
+                                                "No Google Sheet sources configured yet. Enter your details below and click Save Settings."
+                                            }
+                                        }
                                         for src in sheet_sources.read().clone() {
                                             {
                                                 let is_selected = *active_profile.read() == src.id;
                                                 let src_id = src.id.clone();
                                                 let src_name = src.name.clone();
                                                 let url_display = if src.base_url.is_empty() { "No URL configured".to_string() } else { src.base_url.clone() };
-                                                let can_delete = sheet_sources.read().len() > 1;
+                                                let can_delete = true;
                                                 rsx! {
                                                     div {
                                                         key: "{src.id}",
@@ -2872,6 +2932,15 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                                 path { d: "M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" }
                                             }
                                             "Vacuum & Optimize Database"
+                                        }
+                                        Button {
+                                            variant: "destructive",
+                                            class: "h-8 text-xs px-3.5 cursor-pointer shadow-2xs gap-1.5",
+                                            onclick: handle_factory_reset_db,
+                                            svg { class: "size-3.5", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
+                                                path { d: "M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6" }
+                                            }
+                                            "Factory Reset Database (Wipe All Data)"
                                         }
                                     }
                                 }
