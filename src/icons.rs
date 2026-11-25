@@ -45,6 +45,23 @@ pub fn ChevronDownIcon(props: IconProps) -> Element {
     }
 }
 
+#[allow(dead_code)]
+#[component]
+pub fn ChevronUpIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "m18 15-6-6-6 6" }
+        }
+    }
+}
+
 #[component]
 pub fn ChevronRightIcon(props: IconProps) -> Element {
     rsx! {
@@ -969,4 +986,186 @@ pub fn AwardIcon(props: IconProps) -> Element {
         }
     }
 }
+
+#[component]
+pub fn UserIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" }
+            circle { cx: "12", cy: "7", r: "4" }
+        }
+    }
+}
+
+#[component]
+pub fn LockIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            rect { width: "18", height: "11", x: "3", y: "11", rx: "2", ry: "2" }
+            path { d: "M7 11V7a5 5 0 0 1 10 0v4" }
+        }
+    }
+}
+
+#[component]
+pub fn LogOutIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" }
+            polyline { points: "16 17 21 12 16 7" }
+            line { x1: "21", y1: "12", x2: "9", y2: "12" }
+        }
+    }
+}
+
+#[component]
+pub fn ShieldCheckIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" }
+            path { d: "m9 12 2 2 4-4" }
+        }
+    }
+}
+
+#[component]
+pub fn MailIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            rect { width: "20", height: "16", x: "2", y: "4", rx: "2" }
+            path { d: "m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" }
+        }
+    }
+}
+
+#[component]
+pub fn PhoneIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" }
+        }
+    }
+}
+
+#[component]
+pub fn BuildingIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            rect { width: "16", height: "20", x: "4", y: "2", rx: "2", ry: "2" }
+            path { d: "M9 22v-4h6v4" }
+            path { d: "M8 6h.01" }
+            path { d: "M16 6h.01" }
+            path { d: "M12 6h.01" }
+            path { d: "M12 10h.01" }
+            path { d: "M12 14h.01" }
+            path { d: "M16 10h.01" }
+            path { d: "M16 14h.01" }
+            path { d: "M8 10h.01" }
+            path { d: "M8 14h.01" }
+        }
+    }
+}
+
+#[component]
+pub fn GlobeIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            circle { cx: "12", cy: "12", r: "10" }
+            line { x1: "2", x2: "22", y1: "12", y2: "12" }
+            path { d: "M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" }
+        }
+    }
+}
+
+#[component]
+pub fn LaptopIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16" }
+        }
+    }
+}
+
+#[component]
+pub fn DatabaseIcon(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: props.class,
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            ellipse { cx: "12", cy: "5", rx: "9", ry: "3" }
+            path { d: "M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" }
+            path { d: "M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" }
+        }
+    }
+}
+
+
 

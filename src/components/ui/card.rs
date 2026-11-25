@@ -96,7 +96,7 @@ pub struct CardContentProps {
 
 #[component]
 pub fn CardContent(props: CardContentProps) -> Element {
-    let class = format!("p-6 pt-0 {}", props.class);
+    let class = format!("p-6 {}", props.class);
 
     rsx! {
         div {
@@ -116,7 +116,7 @@ pub struct CardFooterProps {
 
 #[component]
 pub fn CardFooter(props: CardFooterProps) -> Element {
-    let class = format!("flex items-center p-6 pt-0 {}", props.class);
+    let class = format!("flex items-center p-6 {}", props.class);
 
     rsx! {
         div {

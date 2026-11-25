@@ -28,6 +28,12 @@ pub struct LifecyclePanelProps {
 pub fn LifecyclePanel(props: LifecyclePanelProps) -> Element {
     let total = props.total_count.max(1) as f64;
 
+    let sla_summary_text = if props.total_count == 0 {
+        "No SLA records evaluated".to_string()
+    } else {
+        format!("{} met · {} breached", props.sla_met_count, props.sla_breached_count)
+    };
+
     rsx! {
         div { class: "grid grid-cols-1 lg:grid-cols-2 gap-6",
 
@@ -50,40 +56,46 @@ pub fn LifecyclePanel(props: LifecyclePanelProps) -> Element {
 
                 CardContent { class: "p-5 flex flex-col gap-4",
                     // Stacked visual bar
-                    div { class: "h-3.5 w-full rounded-md bg-muted overflow-hidden flex shadow-inner",
-                        if props.solved_count > 0 {
-                            div {
-                                class: "bg-emerald-500 h-full transition-all duration-300",
-                                style: "width: {(props.solved_count as f64 / total) * 100.0}%;",
-                                title: "Solved: {props.solved_count}",
-                            }
+                    if props.total_count == 0 {
+                        div { class: "h-3.5 w-full rounded-md bg-muted/60 border border-border/40 flex items-center justify-center text-[10px] text-muted-foreground font-medium",
+                            "No tickets in selected period"
                         }
-                        if props.in_progress_count > 0 {
-                            div {
-                                class: "bg-blue-500 h-full transition-all duration-300",
-                                style: "width: {(props.in_progress_count as f64 / total) * 100.0}%;",
-                                title: "In Progress: {props.in_progress_count}",
+                    } else {
+                        div { class: "h-3.5 w-full rounded-md bg-muted overflow-hidden flex shadow-inner",
+                            if props.solved_count > 0 {
+                                div {
+                                    class: "bg-emerald-500 h-full transition-all duration-300",
+                                    style: "width: {(props.solved_count as f64 / total) * 100.0}%;",
+                                    title: "Solved: {props.solved_count}",
+                                }
                             }
-                        }
-                        if props.hold_count > 0 {
-                            div {
-                                class: "bg-amber-500 h-full transition-all duration-300",
-                                style: "width: {(props.hold_count as f64 / total) * 100.0}%;",
-                                title: "On Hold: {props.hold_count}",
+                            if props.in_progress_count > 0 {
+                                div {
+                                    class: "bg-blue-500 h-full transition-all duration-300",
+                                    style: "width: {(props.in_progress_count as f64 / total) * 100.0}%;",
+                                    title: "In Progress: {props.in_progress_count}",
+                                }
                             }
-                        }
-                        if props.pending_count > 0 {
-                            div {
-                                class: "bg-sky-500 h-full transition-all duration-300",
-                                style: "width: {(props.pending_count as f64 / total) * 100.0}%;",
-                                title: "Pending: {props.pending_count}",
+                            if props.hold_count > 0 {
+                                div {
+                                    class: "bg-amber-500 h-full transition-all duration-300",
+                                    style: "width: {(props.hold_count as f64 / total) * 100.0}%;",
+                                    title: "On Hold: {props.hold_count}",
+                                }
                             }
-                        }
-                        if props.cancelled_count > 0 {
-                            div {
-                                class: "bg-rose-500 h-full transition-all duration-300",
-                                style: "width: {(props.cancelled_count as f64 / total) * 100.0}%;",
-                                title: "Cancelled: {props.cancelled_count}",
+                            if props.pending_count > 0 {
+                                div {
+                                    class: "bg-sky-500 h-full transition-all duration-300",
+                                    style: "width: {(props.pending_count as f64 / total) * 100.0}%;",
+                                    title: "Pending: {props.pending_count}",
+                                }
+                            }
+                            if props.cancelled_count > 0 {
+                                div {
+                                    class: "bg-rose-500 h-full transition-all duration-300",
+                                    style: "width: {(props.cancelled_count as f64 / total) * 100.0}%;",
+                                    title: "Cancelled: {props.cancelled_count}",
+                                }
                             }
                         }
                     }
@@ -205,14 +217,18 @@ pub fn LifecyclePanel(props: LifecyclePanelProps) -> Element {
                     // SLA Health Pill banner
                     div { class: "mt-1 flex items-center justify-between rounded-lg border border-border/80 bg-muted/20 p-3 text-xs",
                         div { class: "flex items-center gap-2",
-                            CheckCircle2Icon { class: "size-4 text-emerald-500" }
+                            CheckCircle2Icon {
+                                class: if props.total_count == 0 { "size-4 text-muted-foreground" } else { "size-4 text-emerald-500" }
+                            }
                             span { class: "font-semibold text-foreground", "SLA Adherence Compliance" }
                         }
                         div { class: "flex items-center gap-3",
                             span { class: "text-muted-foreground",
-                                "{props.sla_met_count} met · {props.sla_breached_count} breached"
+                                "{sla_summary_text}"
                             }
-                            Badge { variant: "success", class: "font-mono font-bold",
+                            Badge {
+                                variant: if props.total_count == 0 { "secondary" } else if props.sla_compliance_rate >= 95.0 { "success" } else { "warning" },
+                                class: "font-mono font-bold",
                                 "{props.sla_compliance_rate:.1}%"
                             }
                         }

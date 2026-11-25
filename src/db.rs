@@ -572,6 +572,9 @@ pub fn init_database() -> Result<()> {
         "#,
     )?;
 
+    // Ensure authentication tables exist
+    let _ = crate::auth::init_auth_tables(&conn);
+
     // Crash recovery: operations interrupted mid-flight (application
     // restart during synchronization) go back to pending — an op is never
     // marked synced without server confirmation.
@@ -4082,11 +4085,14 @@ pub fn factory_reset_database() -> Result<()> {
         DELETE FROM reminders;
         DELETE FROM NOTES;
         DELETE FROM USERS;
+        DELETE FROM auth_sessions;
+        DELETE FROM auth_users;
+        DELETE FROM allowed_email_domains;
         DELETE FROM sync_queue;
         DELETE FROM sync_conflicts;
         DELETE FROM sheet_changes;
         DELETE FROM sync_meta;
-        DELETE FROM sqlite_sequence WHERE name IN ('tickets', 'reminders', 'NOTES', 'USERS', 'sync_queue', 'sync_conflicts', 'sheet_changes');
+        DELETE FROM sqlite_sequence WHERE name IN ('tickets', 'reminders', 'NOTES', 'USERS', 'auth_users', 'allowed_email_domains', 'sync_queue', 'sync_conflicts', 'sheet_changes');
         "#,
     )?;
     let _ = conn.execute("VACUUM", []);

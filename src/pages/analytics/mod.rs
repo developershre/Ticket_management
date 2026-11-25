@@ -42,7 +42,7 @@ pub fn Analytics() -> Element {
     let db_sync = try_use_context::<Signal<AppDbRevision>>();
 
     let mut selected_range = use_signal(|| TimeRange::AllTime);
-    let selected_category = use_signal(|| "All".to_string());
+    let mut selected_category = use_signal(|| "All".to_string());
     let mut search_query = use_signal(String::new);
     let activity_timeframe = use_signal(|| "this_week".to_string());
     let mut is_syncing = use_signal(|| false);
@@ -60,6 +60,7 @@ pub fn Analytics() -> Element {
         )
     });
     let (all_tickets, all_emps, all_reminders, all_notes) = raw_data();
+    let is_db_empty = all_tickets.is_empty();
 
     // Build department lookup map: emp_code -> department
     let emp_dept_map: std::collections::HashMap<String, String> = all_emps
@@ -247,7 +248,7 @@ pub fn Analytics() -> Element {
     let resolution_rate = if total_count > 0 {
         (solved_count as f64 / total_count as f64) * 100.0
     } else {
-        100.0
+        0.0
     };
 
     let sla_total_applicable = sla_met_count + sla_breached_count;
@@ -256,7 +257,7 @@ pub fn Analytics() -> Element {
     } else if total_count > 0 {
         98.5
     } else {
-        100.0
+        0.0
     };
 
     // Category Stats (Sorted descending)
@@ -550,6 +551,40 @@ pub fn Analytics() -> Element {
             // Main Dashboard Body
             // ========================================================
             div { class: "p-6 flex flex-col gap-6 max-w-[1600px] mx-auto w-full",
+
+                // Informative Notice Banner when data is empty
+                if is_db_empty {
+                    div { class: "flex items-start gap-3.5 p-4 rounded-xl border border-border/80 bg-card shadow-2xs text-xs text-muted-foreground",
+                        div { class: "flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary border border-primary/20",
+                            BarChart3Icon { class: "size-4" }
+                        }
+                        div { class: "flex-1 space-y-0.5",
+                            p { class: "font-bold text-foreground text-xs", "No Ticket Data in Database" }
+                            p { class: "text-[11px] leading-relaxed",
+                                "Resolution rates, SLA adherence, lifecycle distribution, and specialist leaderboards will automatically calculate once tickets are created or synced from your Google Sheet."
+                            }
+                        }
+                    }
+                } else if total_count == 0 {
+                    div { class: "flex items-center justify-between gap-3 p-3.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-xs shadow-2xs",
+                        div { class: "space-y-0.5",
+                            p { class: "font-bold text-foreground", "No tickets match your active filter" }
+                            p { class: "text-[11px] text-muted-foreground",
+                                "Adjust your time range, category, or search query to view matching performance analytics."
+                            }
+                        }
+                        button {
+                            r#type: "button",
+                            class: "px-3 py-1 text-xs font-semibold rounded-md bg-card border border-border/80 text-foreground hover:bg-muted cursor-pointer shadow-2xs transition-colors",
+                            onclick: move |_| {
+                                selected_range.set(TimeRange::AllTime);
+                                selected_category.set("All".to_string());
+                                search_query.set(String::new());
+                            },
+                            "Reset Filters"
+                        }
+                    }
+                }
 
                 // 1. Executive Summary KPI Cards
                 KpiCards {

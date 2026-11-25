@@ -20,6 +20,11 @@ pub struct DepartmentPanelProps {
 #[component]
 pub fn DepartmentPanel(props: DepartmentPanelProps) -> Element {
     let dept_stats = &props.department_stats;
+    let sla_target_text = if props.sla_compliance_rate > 0.0 {
+        format!("Target 95.0% · Met: {:.1}%", props.sla_compliance_rate)
+    } else {
+        "Target 95.0% · No ticket data".to_string()
+    };
 
     rsx! {
         div { class: "grid grid-cols-1 lg:grid-cols-2 gap-6 pb-8",
@@ -114,7 +119,10 @@ pub fn DepartmentPanel(props: DepartmentPanelProps) -> Element {
                             AwardIcon { class: "size-4 text-primary" }
                             span { class: "font-semibold text-foreground", "Helpdesk SLA Objective" }
                         }
-                        span { class: "font-mono font-bold text-primary", "Target 95.0% · Met: {props.sla_compliance_rate:.1}%" }
+                        span {
+                            class: if props.sla_compliance_rate > 0.0 { "font-mono font-bold text-primary" } else { "font-mono font-semibold text-muted-foreground" },
+                            "{sla_target_text}"
+                        }
                     }
                 }
             }

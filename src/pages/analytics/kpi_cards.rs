@@ -27,7 +27,15 @@ pub struct KpiCardsProps {
 pub fn KpiCards(props: KpiCardsProps) -> Element {
     let open_queue = props.pending_count + props.in_progress_count + props.hold_count;
 
-    let sla_subtext = if props.sla_breached_count == 0 {
+    let resolution_subtext = if props.total_count == 0 {
+        "No tickets in period".to_string()
+    } else {
+        format!("{} of {} resolved", props.solved_count, props.total_count)
+    };
+
+    let sla_subtext = if props.total_count == 0 {
+        "No SLA targets evaluated".to_string()
+    } else if props.sla_breached_count == 0 {
         "Zero breached deadlines".to_string()
     } else {
         format!("{} breaches recorded", props.sla_breached_count)
@@ -38,6 +46,8 @@ pub fn KpiCards(props: KpiCardsProps) -> Element {
             "{:.2}h avg per resolution",
             props.total_hours / props.solved_count as f64
         )
+    } else if props.total_count == 0 {
+        "No tickets recorded".to_string()
     } else {
         "0.00h avg per resolution".to_string()
     };
@@ -79,18 +89,35 @@ pub fn KpiCards(props: KpiCardsProps) -> Element {
                 }
                 div { class: "mt-3",
                     div { class: "flex items-baseline gap-1.5",
-                        span { class: "text-3xl font-black tracking-tight text-emerald-600 dark:text-emerald-400 tabular-nums",
+                        span {
+                            class: if props.total_count == 0 {
+                                "text-3xl font-black tracking-tight text-muted-foreground tabular-nums"
+                            } else if props.resolution_rate >= 80.0 {
+                                "text-3xl font-black tracking-tight text-emerald-600 dark:text-emerald-400 tabular-nums"
+                            } else if props.resolution_rate >= 50.0 {
+                                "text-3xl font-black tracking-tight text-blue-600 dark:text-blue-400 tabular-nums"
+                            } else {
+                                "text-3xl font-black tracking-tight text-amber-600 dark:text-amber-400 tabular-nums"
+                            },
                             "{props.resolution_rate:.1}%"
                         }
                     }
                     p { class: "text-[11px] text-muted-foreground mt-1",
-                        "{props.solved_count} of {props.total_count} resolved"
+                        "{resolution_subtext}"
                     }
                 }
                 div { class: "mt-3.5 flex flex-col gap-1.5 pt-2 border-t border-border/40",
                     div { class: "h-1.5 w-full rounded-full bg-muted overflow-hidden",
                         div {
-                            class: "h-full rounded-full bg-emerald-500 transition-all duration-500",
+                            class: if props.total_count == 0 {
+                                "h-full rounded-full bg-muted-foreground/20"
+                            } else if props.resolution_rate >= 80.0 {
+                                "h-full rounded-full bg-emerald-500 transition-all duration-500"
+                            } else if props.resolution_rate >= 50.0 {
+                                "h-full rounded-full bg-blue-500 transition-all duration-500"
+                            } else {
+                                "h-full rounded-full bg-amber-500 transition-all duration-500"
+                            },
                             style: "width: {props.resolution_rate}%;",
                         }
                     }
@@ -154,7 +181,9 @@ pub fn KpiCards(props: KpiCardsProps) -> Element {
                 }
                 div { class: "mt-3",
                     span {
-                        class: if props.sla_compliance_rate >= 95.0 {
+                        class: if props.total_count == 0 {
+                            "text-3xl font-black tracking-tight text-muted-foreground tabular-nums"
+                        } else if props.sla_compliance_rate >= 95.0 {
                             "text-3xl font-black tracking-tight text-emerald-600 dark:text-emerald-400 tabular-nums"
                         } else {
                             "text-3xl font-black tracking-tight text-amber-600 dark:text-amber-400 tabular-nums"
@@ -168,7 +197,13 @@ pub fn KpiCards(props: KpiCardsProps) -> Element {
                 div { class: "mt-3.5 flex flex-col gap-1.5 pt-2 border-t border-border/40",
                     div { class: "h-1.5 w-full rounded-full bg-muted overflow-hidden",
                         div {
-                            class: if props.sla_compliance_rate >= 95.0 { "bg-emerald-500 h-full rounded-full" } else { "bg-amber-500 h-full rounded-full" },
+                            class: if props.total_count == 0 {
+                                "bg-muted-foreground/20 h-full rounded-full"
+                            } else if props.sla_compliance_rate >= 95.0 {
+                                "bg-emerald-500 h-full rounded-full"
+                            } else {
+                                "bg-amber-500 h-full rounded-full"
+                            },
                             style: "width: {props.sla_compliance_rate}%;",
                         }
                     }

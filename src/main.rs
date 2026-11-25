@@ -3,6 +3,7 @@
 use dioxus::prelude::*;
 
 pub mod api;
+pub mod auth;
 mod components;
 pub mod db;
 mod icons;
@@ -21,6 +22,7 @@ use components::titlebar::Titlebar;
 use components::ui::sidebar::SidebarProvider;
 use components::ui::toast::ToastProvider;
 use pages::analytics::Analytics;
+use pages::auth::{Login, Profile, Register};
 use pages::calendar_page::CalendarPage;
 use pages::employees::Employees;
 use pages::notes::NotesPage;
@@ -48,6 +50,15 @@ enum Route {
     CalendarPage {},
     #[route("/analytics")]
     Analytics {},
+    #[route("/profile")]
+    Profile {},
+    #[end_layout]
+    #[layout(AuthShell)]
+    #[route("/login")]
+    Login {},
+    #[route("/register")]
+    Register {},
+    #[end_layout]
     #[route("/:..route")]
     NotFound { route: Vec<String> },
 }
@@ -62,7 +73,7 @@ fn main() {
     // Command-line tool to wipe the active database and leave all tables empty
     if args.first().map(String::as_str) == Some("--reset-db") {
         if let Ok(conn) = db::get_connection() {
-            let tables = ["USERS", "reminders", "tickets", "NOTES", "sync_queue", "sync_conflicts", "sync_meta", "sheet_changes"];
+            let tables = ["USERS", "auth_sessions", "auth_users", "allowed_email_domains", "reminders", "tickets", "NOTES", "sync_queue", "sync_conflicts", "sync_meta", "sheet_changes"];
             for t in tables {
                 let _ = conn.execute(&format!("DELETE FROM {}", t), []);
             }
@@ -100,7 +111,7 @@ fn main() {
             Ok(_) => {
                 let _ = db::factory_reset_database();
                 if let Ok(conn) = db::get_connection() {
-                    let tables = ["USERS", "reminders", "tickets", "NOTES", "sync_queue", "sync_conflicts", "sync_meta", "sheet_changes"];
+                    let tables = ["USERS", "auth_sessions", "auth_users", "allowed_email_domains", "reminders", "tickets", "NOTES", "sync_queue", "sync_conflicts", "sync_meta", "sheet_changes"];
                     println!("[BPSL IT Support] Verified table row counts for '{}':", target);
                     for t in tables {
                         let count: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {}", t), [], |r| r.get(0)).unwrap_or(-1);
@@ -367,6 +378,13 @@ use components::ui::theme::{use_theme, ThemeProvider};
 
 #[component]
 fn App() -> Element {
+    let auth_state = use_signal(|| {
+        let user = crate::auth::current_active_user();
+        let token = crate::db::sync_meta_get("auth_active_token");
+        crate::auth::AuthState { user, token }
+    });
+    use_context_provider(|| auth_state);
+
     rsx! {
         document::Link { rel: "preconnect", href: "https://fonts.googleapis.com" }
         document::Link { rel: "preconnect", href: "https://fonts.gstatic.com" }
@@ -380,6 +398,27 @@ fn App() -> Element {
         document::Title { "BPSL IT Support" }
         ThemeProvider {
             Router::<Route> {}
+        }
+    }
+}
+
+/// Authentication shell: dedicated minimal layout for /login and /register
+/// retaining the custom window titlebar for window dragging and theme control.
+#[component]
+fn AuthShell() -> Element {
+    let theme = use_theme();
+    let dark_cls = if theme.is_dark() { "dark" } else { "" };
+
+    rsx! {
+        ToastProvider {
+            div {
+                id: "app-shell",
+                class: "{dark_cls} flex h-screen w-full flex-col overflow-hidden bg-background text-foreground",
+                Titlebar { app_name: "BPSL IT Support".to_string() }
+                main { class: "relative flex flex-1 flex-col overflow-y-auto min-h-0 w-full items-center justify-center p-4",
+                    Outlet::<Route> {}
+                }
+            }
         }
     }
 }

@@ -56,6 +56,9 @@ pub fn Titlebar(props: TitlebarProps) -> Element {
         Route::Reminders {} => "Reminders",
         Route::CalendarPage {} => "Calendar",
         Route::Analytics {} => "Analytics",
+        Route::Profile {} => "Profile",
+        Route::Login {} => "Sign In",
+        Route::Register {} => "Create Account",
         Route::NotFound { .. } => "Not Found",
     };
 
@@ -114,6 +117,41 @@ pub fn Titlebar(props: TitlebarProps) -> Element {
                         }
                     },
                     crate::icons::SettingsIcon { class: "size-4" }
+                }
+            }
+
+            // User profile button (or Sign In)
+            {
+                let auth_state = try_use_context::<Signal<crate::auth::AuthState>>();
+                let user_opt = auth_state.as_ref().and_then(|s| s.read().user.clone());
+                let nav = use_navigator();
+
+                rsx! {
+                    div { class: "flex items-center px-0.5",
+                        if let Some(user) = user_opt {
+                            button {
+                                r#type: "button",
+                                title: format!("{} ({}) · Profile", user.display_name, user.role_label()),
+                                class: "size-7 inline-flex items-center justify-center rounded-md border-none hover:bg-sidebar-accent transition-colors cursor-pointer",
+                                onclick: move |_| {
+                                    let _ = nav.push(Route::Profile {});
+                                },
+                                div { class: "flex size-5.5 items-center justify-center rounded-md text-[10px] font-bold text-white shadow-2xs {user.avatar_color}",
+                                    "{user.initials()}"
+                                }
+                            }
+                        } else {
+                            button {
+                                r#type: "button",
+                                title: "Sign In",
+                                class: "size-7 inline-flex items-center justify-center rounded-md border-none bg-transparent hover:bg-sidebar-accent text-sidebar-foreground/80 hover:text-sidebar-foreground transition-colors cursor-pointer",
+                                onclick: move |_| {
+                                    let _ = nav.push(Route::Login {});
+                                },
+                                crate::icons::UserIcon { class: "size-4" }
+                            }
+                        }
+                    }
                 }
             }
 

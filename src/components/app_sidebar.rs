@@ -54,7 +54,7 @@ pub fn AppSidebar() -> Element {
         Sidebar {
             collapsible: SidebarCollapsible::Icon,
             SidebarHeader {
-                div { class: "flex flex-row items-center gap-2.5 w-full px-1.5 py-1",
+                div { class: "flex flex-row items-center gap-2.5 w-full px-1.5 py-2",
                     div { class: "sidebar-text flex flex-col gap-1 w-full",
                         div { class: "relative w-full",
                             select {
@@ -123,23 +123,6 @@ pub fn AppSidebar() -> Element {
                                 svg { class: "size-3.5", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
                                     path { d: "M6 9l6 6 6-6" }
                                 }
-                            }
-                        }
-                        if sheet_sources.is_empty() {
-                            button {
-                                r#type: "button",
-                                class: "w-full mt-1.5 flex items-center justify-center gap-1.5 px-2 py-1 rounded-md bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 text-[11px] font-semibold transition-colors cursor-pointer shadow-2xs",
-                                title: "Click to enter Google Sheet Web App URL",
-                                onclick: move |_| {
-                                    if let Some(mut open_settings) = try_use_context::<Signal<crate::state::OpenSettingsDialog>>() {
-                                        open_settings.set(crate::state::OpenSettingsDialog(true));
-                                    }
-                                },
-                                svg { class: "size-3", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
-                                    path { d: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" }
-                                    path { d: "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" }
-                                }
-                                "Connect Sheet"
                             }
                         }
                     }
@@ -238,17 +221,53 @@ pub fn AppSidebar() -> Element {
             }
 
             SidebarFooter {
-                SidebarMenu {
-                    SidebarMenuItem {
-                        SidebarMenuButton {
-                            tooltip: Some("Preferences & Customization (Ctrl+,)".to_string()),
-                            onclick: move |_| {
-                                if let Some(mut open_settings) = try_use_context::<Signal<crate::state::OpenSettingsDialog>>() {
-                                    open_settings.set(crate::state::OpenSettingsDialog(true));
+                {
+                    let auth_signal = try_use_context::<Signal<crate::auth::AuthState>>();
+                    let user_opt = auth_signal.as_ref().and_then(|s| s.read().user.clone());
+                    let nav = use_navigator();
+
+                    rsx! {
+                        SidebarMenu {
+                            if let Some(user) = user_opt {
+                                SidebarMenuItem {
+                                    SidebarMenuButton {
+                                        tooltip: Some(format!("{} ({})", user.display_name, user.role_label())),
+                                        onclick: move |_| {
+                                            let _ = nav.push(Route::Profile {});
+                                        },
+                                        div { class: "flex size-5.5 shrink-0 items-center justify-center rounded-md text-[10px] font-bold text-white shadow-2xs {user.avatar_color}",
+                                            "{user.initials()}"
+                                        }
+                                        div { class: "sidebar-text flex flex-col min-w-0 text-left leading-tight",
+                                            span { class: "text-xs font-semibold truncate", "{user.display_name}" }
+                                            span { class: "text-[10px] text-muted-foreground truncate", "{user.role_label()}" }
+                                        }
+                                    }
                                 }
-                            },
-                            crate::icons::SettingsIcon { class: "size-4 text-muted-foreground" }
-                            span { class: "sidebar-text", "Preferences" }
+                            } else {
+                                SidebarMenuItem {
+                                    SidebarMenuButton {
+                                        tooltip: Some("Sign In to BPSL IT Support".to_string()),
+                                        onclick: move |_| {
+                                            let _ = nav.push(Route::Login {});
+                                        },
+                                        crate::icons::UserIcon { class: "size-4 text-muted-foreground" }
+                                        span { class: "sidebar-text", "Sign In" }
+                                    }
+                                }
+                            }
+                            SidebarMenuItem {
+                                SidebarMenuButton {
+                                    tooltip: Some("Preferences & Customization (Ctrl+,)".to_string()),
+                                    onclick: move |_| {
+                                        if let Some(mut open_settings) = try_use_context::<Signal<crate::state::OpenSettingsDialog>>() {
+                                            open_settings.set(crate::state::OpenSettingsDialog(true));
+                                        }
+                                    },
+                                    crate::icons::SettingsIcon { class: "size-4 text-muted-foreground" }
+                                    span { class: "sidebar-text", "Preferences" }
+                                }
+                            }
                         }
                     }
                 }

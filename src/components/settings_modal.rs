@@ -123,6 +123,14 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
     let app_settings = try_use_context::<Signal<crate::state::AppSettings>>();
     let db_sync = try_use_context::<Signal<crate::state::AppDbRevision>>();
     let open_changes = try_use_context::<Signal<crate::state::OpenSheetChangesDialog>>();
+    let auth_signal = try_use_context::<Signal<crate::auth::AuthState>>();
+
+    let is_super_admin = auth_signal
+        .as_ref()
+        .and_then(|s| s.read().user.clone())
+        .or_else(crate::auth::current_active_user)
+        .map(|u| u.is_super_admin())
+        .unwrap_or(false);
 
     // Active tab
     let mut active_tab = use_signal(|| SettingsTab::Appearance);
@@ -2276,14 +2284,21 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                         if *active_tab.read() == SettingsTab::Api {
                             div { class: "flex flex-col gap-5 animate-in fade-in-0 duration-150",
 
-                                // Security notice
-                                div { class: "flex items-start gap-2.5 rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs text-muted-foreground",
-                                    div { class: "shrink-0 text-primary mt-0.5",
-                                        AlertCircleIcon { class: "size-4" }
+                                // Security notice & Super Admin Status
+                                if is_super_admin {
+                                    div { class: "flex items-center gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400 font-medium",
+                                        AlertCircleIcon { class: "size-4 shrink-0 text-amber-600 dark:text-amber-400" }
+                                        span { "Super Admin Authorized: You have administrative control to modify Google Sheets endpoints, authentication tokens, and schema definitions." }
                                     }
-                                    p { class: "leading-relaxed",
-                                        span { class: "font-semibold text-foreground", "Local System Storage: " }
-                                        "Credentials are saved to your local SQLite database and AppData. Never committed to git or exposed remotely."
+                                } else {
+                                    div { class: "flex items-start gap-2.5 rounded-lg border border-border/80 bg-muted/40 p-3 text-xs text-muted-foreground",
+                                        div { class: "shrink-0 mt-0.5",
+                                            AlertCircleIcon { class: "size-4" }
+                                        }
+                                        div { class: "space-y-0.5",
+                                            p { class: "font-semibold text-foreground", "Super Admin Managed" }
+                                            p { "Google Sheets Web App URLs and secret API keys can only be configured by a Super Administrator. You can test connection and inspect schema health." }
+                                        }
                                     }
                                 }
 
@@ -2933,14 +2948,16 @@ pub fn SettingsModal(props: SettingsModalProps) -> Element {
                                             }
                                             "Vacuum & Optimize Database"
                                         }
-                                        Button {
-                                            variant: "destructive",
-                                            class: "h-8 text-xs px-3.5 cursor-pointer shadow-2xs gap-1.5",
-                                            onclick: handle_factory_reset_db,
-                                            svg { class: "size-3.5", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
-                                                path { d: "M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6" }
+                                        if is_super_admin {
+                                            Button {
+                                                variant: "destructive",
+                                                class: "h-8 text-xs px-3.5 cursor-pointer shadow-2xs gap-1.5",
+                                                onclick: handle_factory_reset_db,
+                                                svg { class: "size-3.5", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2",
+                                                    path { d: "M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6" }
+                                                }
+                                                "Factory Reset Database (Wipe All Data)"
                                             }
-                                            "Factory Reset Database (Wipe All Data)"
                                         }
                                     }
                                 }

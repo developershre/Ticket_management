@@ -3376,12 +3376,15 @@ dependencies = [
  "dioxus",
  "futures-channel",
  "futures-util",
+ "hex",
  "notify-rust",
  "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
